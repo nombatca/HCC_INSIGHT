@@ -13,3 +13,7 @@ Local patches:
    `usb_host_config_t.enum_filter_cb`: selects USB configuration 3 for Apple 05AC:12A8
    (normal mode) so the USBMUX interface is exposed. Requires
    `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK=y` (set in `sdkconfig.defaults`).
+4. `esp32_p4_wifi6_touch_lcd_7b.c` - `usb_lib_task()` tolerates `ESP_ERR_NOT_FINISHED`
+   from `usb_host_device_free_all()` instead of `ESP_ERROR_CHECK`-aborting on it (the
+   ESP-IDF usb_host example pattern). Without this the board reboots when a device is
+   removed while it is still being freed asynchronously.

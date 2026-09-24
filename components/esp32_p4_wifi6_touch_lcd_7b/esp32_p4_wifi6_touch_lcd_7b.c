@@ -684,7 +684,13 @@ static void usb_lib_task(void *arg)
         usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS)
         {
-            ESP_ERROR_CHECK(usb_host_device_free_all());
+            // ESP_ERR_NOT_FINISHED is expected when devices are still being freed
+            // asynchronously; the ALL_FREE flag follows. Only other errors are fatal.
+            esp_err_t free_ret = usb_host_device_free_all();
+            if (free_ret != ESP_OK && free_ret != ESP_ERR_NOT_FINISHED)
+            {
+                ESP_ERROR_CHECK(free_ret);
+            }
         }
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE)
         {
