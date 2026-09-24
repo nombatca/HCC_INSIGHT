@@ -1,0 +1,49 @@
+# ESP-IDF generated
+build/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+
+# Local / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and secrets
+*.log
+.env
+.env.*
+*.pem
+*.key
+
+# Local backup/debug snapshots
+*.bak
+*.before_*
+
+# Accidental zero-byte/debug files
+/0
+/0.
+/_usb_*
+/callback
+/idProduct
+/idProduct,
+/idVendor
+/idVendor,
+/new_dev.address
+/new_dev.address,
+
+# Generated binaries
+*.elf
+*.map
+*.bin
+*.uf2
+*.hex
+
+# Root development copies - canonical HCC sources are under components/apps/hcc_home/
+/HCCHome.cpp
+/HCCUSBTransport.cpp
+/HCCUSBTransport.hpp

@@ -1,0 +1,26 @@
+#pragma once
+
+#include "vn_fonts.h"
+
+#define VN_FONT_ALIAS(size) lv_font_montserrat_##size
+#define lv_font_montserrat_8 lv_font_be_vietnam_8
+#define lv_font_montserrat_10 lv_font_be_vietnam_10
+#define lv_font_montserrat_12 lv_font_be_vietnam_12
+#define lv_font_montserrat_14 lv_font_be_vietnam_14
+#define lv_font_montserrat_16 lv_font_be_vietnam_16
+#define lv_font_montserrat_18 lv_font_be_vietnam_18
+#define lv_font_montserrat_20 lv_font_be_vietnam_20
+#define lv_font_montserrat_22 lv_font_be_vietnam_22
+#define lv_font_montserrat_24 lv_font_be_vietnam_24
+#define lv_font_montserrat_26 lv_font_be_vietnam_26
+#define lv_font_montserrat_28 lv_font_be_vietnam_28
+#define lv_font_montserrat_30 lv_font_be_vietnam_30
+#define lv_font_montserrat_32 lv_font_be_vietnam_32
+#define lv_font_montserrat_34 lv_font_be_vietnam_34
+#define lv_font_montserrat_36 lv_font_be_vietnam_36
+#define lv_font_montserrat_38 lv_font_be_vietnam_38
+#define lv_font_montserrat_40 lv_font_be_vietnam_40
+#define lv_font_montserrat_42 lv_font_be_vietnam_42
+#define lv_font_montserrat_44 lv_font_be_vietnam_44
+#define lv_font_montserrat_46 lv_font_be_vietnam_46
+#define lv_font_montserrat_48 lv_font_be_vietnam_48
