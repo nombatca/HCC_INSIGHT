@@ -12,6 +12,7 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "nvs.h"
+#include "nvs_flash.h"
 #include "hal/usb_dwc_ll.h"
 #include "soc/usb_dwc_struct.h"
 
@@ -21,6 +22,7 @@
 
 namespace {
 
+constexpr char kPairRecordPartition[] = "hcc_pair";
 constexpr char kPairRecordNamespace[] = "hcc_pairrec";
 constexpr char kLegacyPairRecordKey[] = "current";
 constexpr char kPairRecordIndexKey[] = "index";
@@ -40,6 +42,33 @@ struct PairRecordIndex {
     uint32_t count;
     PairRecordIndexEntry entries[kPairRecordMaximumDevices];
 };
+
+esp_err_t openPairRecordPartition(nvs_open_mode_t mode, nvs_handle_t *handle)
+{
+    if (handle == nullptr) return ESP_ERR_INVALID_ARG;
+    static bool initialized = false;
+    static esp_err_t init_result = ESP_FAIL;
+    if (!initialized) {
+        init_result = nvs_flash_init_partition(kPairRecordPartition);
+        if (init_result == ESP_ERR_NVS_NO_FREE_PAGES || init_result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            // Only the dedicated pair-record partition is erased; the default nvs is never touched.
+            printf("[HCC PAIR] dedicated NVS reformat partition=%s reason=%s\n",
+                   kPairRecordPartition, esp_err_to_name(init_result));
+            init_result = nvs_flash_erase_partition(kPairRecordPartition);
+            if (init_result == ESP_OK) {
+                init_result = nvs_flash_init_partition(kPairRecordPartition);
+            }
+        }
+        initialized = true;
+        if (init_result == ESP_OK) {
+            printf("[HCC PAIR] dedicated NVS ready partition=%s\n", kPairRecordPartition);
+        } else {
+            printf("[HCC PAIR] dedicated NVS init failed: %s\n", esp_err_to_name(init_result));
+        }
+    }
+    if (init_result != ESP_OK) return init_result;
+    return nvs_open_from_partition(kPairRecordPartition, kPairRecordNamespace, mode, handle);
+}
 
 bool makePairRecordSlotKey(uint32_t slot, char *key, size_t key_capacity)
 {
@@ -80,6 +109,62 @@ bool findPairRecordSlot(const PairRecordIndex &index, const char *udid, uint32_t
     }
     return false;
 }
+
+// Copies an already validated legacy record into the dedicated partition. Legacy data is left intact.
+esp_err_t storePairRecordInPartition(const char *udid, const uint8_t *blob, size_t blob_size, uint32_t *stored_slot)
+{
+    if (udid == nullptr || blob == nullptr || blob_size == 0) return ESP_ERR_INVALID_ARG;
+    const size_t udid_length = strnlen(udid, kPairRecordStoredUdidCapacity);
+    if (udid_length == 0 || udid_length >= kPairRecordStoredUdidCapacity) return ESP_ERR_INVALID_SIZE;
+
+    PairRecordIndex *index = static_cast<PairRecordIndex *>(
+        heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (index == nullptr) return ESP_ERR_NO_MEM;
+
+    nvs_handle_t handle = 0;
+    char record_key[16] = {};
+    uint32_t record_slot = 0;
+    bool index_changed = false;
+    esp_err_t ret = openPairRecordPartition(NVS_READWRITE, &handle);
+    if (ret == ESP_OK && !loadPairRecordIndex(handle, index)) {
+        ret = ESP_ERR_INVALID_STATE;
+    }
+    if (ret == ESP_OK && !findPairRecordSlot(*index, udid, &record_slot)) {
+        if (index->count >= kPairRecordMaximumDevices) {
+            ret = ESP_ERR_NO_MEM;
+        } else {
+            bool used[kPairRecordMaximumDevices] = {};
+            for (uint32_t i = 0; i < index->count; ++i) used[index->entries[i].slot] = true;
+            while (record_slot < kPairRecordMaximumDevices && used[record_slot]) ++record_slot;
+            if (record_slot >= kPairRecordMaximumDevices) {
+                ret = ESP_ERR_INVALID_SIZE;
+            } else {
+                PairRecordIndexEntry &entry = index->entries[index->count++];
+                entry.slot = record_slot;
+                memcpy(entry.udid, udid, udid_length);
+                entry.udid[udid_length] = '\0';
+                index_changed = true;
+            }
+        }
+    }
+    if (ret == ESP_OK && !makePairRecordSlotKey(record_slot, record_key, sizeof(record_key))) {
+        ret = ESP_ERR_INVALID_ARG;
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_blob(handle, record_key, blob, blob_size);
+    }
+    if (ret == ESP_OK && index_changed) {
+        ret = nvs_set_blob(handle, kPairRecordIndexKey, index, sizeof(*index));
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    if (handle != 0) nvs_close(handle);
+    heap_caps_free(index);
+    if (ret == ESP_OK && stored_slot != nullptr) *stored_slot = record_slot;
+    return ret;
+}
+
 constexpr uint32_t kPairRecordMagic = 0x48434350; // "HCCP"
 constexpr uint32_t kPairRecordVersion = 1;
 
@@ -1509,7 +1594,8 @@ bool HCCUSBTransport::loadPairRecordForReuse(const char *udid, uint32_t generati
     size_t blob_size = 0;
     uint8_t *blob = nullptr;
     char record_key[16] = {};
-    esp_err_t err = nvs_open(kPairRecordNamespace, NVS_READONLY, &handle);
+    bool loaded_from_legacy = false;
+    esp_err_t err = openPairRecordPartition(NVS_READONLY, &handle);
     if (err == ESP_OK) {
         PairRecordIndex *index = static_cast<PairRecordIndex *>(
             heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -1523,6 +1609,30 @@ bool HCCUSBTransport::loadPairRecordForReuse(const char *udid, uint32_t generati
             err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
         }
         if (index != nullptr) heap_caps_free(index);
+    }
+    if (err != ESP_OK) {
+        if (handle != 0) { nvs_close(handle); handle = 0; }
+        blob_size = 0;
+        record_key[0] = '\0';
+        err = nvs_open(kPairRecordNamespace, NVS_READONLY, &handle);
+        if (err == ESP_OK) {
+            PairRecordIndex *legacy_index = static_cast<PairRecordIndex *>(
+                heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            uint32_t legacy_slot = 0;
+            if (legacy_index != nullptr && loadPairRecordIndex(handle, legacy_index) &&
+                findPairRecordSlot(*legacy_index, udid, &legacy_slot) &&
+                makePairRecordSlotKey(legacy_slot, record_key, sizeof(record_key))) {
+                err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
+            } else {
+                snprintf(record_key, sizeof(record_key), "%s", kLegacyPairRecordKey);
+                err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
+            }
+            if (legacy_index != nullptr) heap_caps_free(legacy_index);
+            if (err == ESP_OK) {
+                loaded_from_legacy = true;
+                printf("[HCC PAIR] PAIR RECORD LEGACY FALLBACK\n");
+            }
+        }
     }
     if (err == ESP_OK && blob_size >= sizeof(PairRecordBlobHeader)) {
         blob = static_cast<uint8_t *>(heap_caps_malloc(blob_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -1561,6 +1671,16 @@ bool HCCUSBTransport::loadPairRecordForReuse(const char *udid, uint32_t generati
         _session_generation = generation;
         _session_record_loaded = buildStartSessionXml();
         valid = _session_record_loaded;
+    }
+    if (valid && loaded_from_legacy) {
+        // Migration failure is non-fatal: reuse proceeds and the legacy fallback remains available.
+        uint32_t migrated_slot = 0;
+        const esp_err_t migrate_ret = storePairRecordInPartition(udid, blob, blob_size, &migrated_slot);
+        if (migrate_ret == ESP_OK) {
+            printf("[HCC PAIR] PAIR RECORD MIGRATED slot=%u\n", static_cast<unsigned>(migrated_slot));
+        } else {
+            printf("[HCC PAIR] PAIR RECORD MIGRATE FAILED: %s\n", esp_err_to_name(migrate_ret));
+        }
     }
     if (blob != nullptr) {
         mbedtls_platform_zeroize(blob, blob_size);
@@ -1903,7 +2023,7 @@ bool HCCUSBTransport::loadTlsCredentials()
     uint8_t *blob = nullptr;
     uint8_t *pem = nullptr;
     char record_key[16] = {};
-    esp_err_t err = nvs_open(kPairRecordNamespace, NVS_READONLY, &handle);
+    esp_err_t err = openPairRecordPartition(NVS_READONLY, &handle);
     if (err == ESP_OK) {
         PairRecordIndex *index = static_cast<PairRecordIndex *>(
             heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -1917,6 +2037,26 @@ bool HCCUSBTransport::loadTlsCredentials()
             err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
         }
         if (index != nullptr) heap_caps_free(index);
+    }
+    if (err != ESP_OK) {
+        if (handle != 0) { nvs_close(handle); handle = 0; }
+        blob_size = 0;
+        record_key[0] = '\0';
+        err = nvs_open(kPairRecordNamespace, NVS_READONLY, &handle);
+        if (err == ESP_OK) {
+            PairRecordIndex *legacy_index = static_cast<PairRecordIndex *>(
+                heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            uint32_t legacy_slot = 0;
+            if (legacy_index != nullptr && loadPairRecordIndex(handle, legacy_index) &&
+                findPairRecordSlot(*legacy_index, _session_udid.data(), &legacy_slot) &&
+                makePairRecordSlotKey(legacy_slot, record_key, sizeof(record_key))) {
+                err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
+            } else {
+                snprintf(record_key, sizeof(record_key), "%s", kLegacyPairRecordKey);
+                err = nvs_get_blob(handle, record_key, nullptr, &blob_size);
+            }
+            if (legacy_index != nullptr) heap_caps_free(legacy_index);
+        }
     }
     if (err == ESP_OK && blob_size >= sizeof(PairRecordBlobHeader)) {
         blob = static_cast<uint8_t *>(heap_caps_malloc(blob_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -3457,7 +3597,7 @@ bool HCCUSBTransport::persistPendingPairRecord()
         heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     uint32_t record_slot = 0;
     bool index_changed = false;
-    esp_err_t ret = success ? nvs_open(kPairRecordNamespace, NVS_READWRITE, &handle) : ESP_ERR_NO_MEM;
+    esp_err_t ret = success ? openPairRecordPartition(NVS_READWRITE, &handle) : ESP_ERR_NO_MEM;
     if (ret == ESP_OK && index == nullptr) {
         ret = ESP_ERR_NO_MEM;
     }
