@@ -262,6 +262,10 @@ private:
     bool _start_session_body_requested = false;
     bool _session_reconnect_pending = false;
     bool _session_reconnect_attempted = false;
+    // InvalidHostID recovery: the reused record was rejected; reconnect once for fresh pairing.
+    bool _pair_record_rejected = false;
+    bool _repair_reconnect_pending = false;
+    bool _repair_attempted = false;
     uint16_t _tx_seq = 0;
     uint16_t _rx_seq = 0;
     uint16_t _next_source_port = 1;

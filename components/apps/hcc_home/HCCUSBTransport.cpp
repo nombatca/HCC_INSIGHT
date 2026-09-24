@@ -166,6 +166,55 @@ esp_err_t storePairRecordInPartition(const char *udid, const uint8_t *blob, size
     return ret;
 }
 
+// Removes a rejected record from the dedicated partition. The legacy default-nvs store is never touched.
+esp_err_t erasePairRecordInPartition(const char *udid, uint32_t *erased_slot)
+{
+    if (udid == nullptr || udid[0] == '\0') return ESP_ERR_INVALID_ARG;
+
+    PairRecordIndex *index = static_cast<PairRecordIndex *>(
+        heap_caps_calloc(1, sizeof(PairRecordIndex), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (index == nullptr) return ESP_ERR_NO_MEM;
+
+    nvs_handle_t handle = 0;
+    char record_key[16] = {};
+    uint32_t record_slot = 0;
+    esp_err_t ret = openPairRecordPartition(NVS_READWRITE, &handle);
+    if (ret == ESP_OK && !loadPairRecordIndex(handle, index)) {
+        ret = ESP_ERR_INVALID_STATE;
+    }
+    if (ret == ESP_OK && !findPairRecordSlot(*index, udid, &record_slot)) {
+        ret = ESP_ERR_NOT_FOUND;
+    }
+    if (ret == ESP_OK && !makePairRecordSlotKey(record_slot, record_key, sizeof(record_key))) {
+        ret = ESP_ERR_INVALID_ARG;
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_erase_key(handle, record_key);
+        if (ret == ESP_ERR_NVS_NOT_FOUND) ret = ESP_OK;
+    }
+    if (ret == ESP_OK) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < index->count; ++i) {
+            if (strcmp(index->entries[i].udid, udid) != 0) {
+                if (kept != i) index->entries[kept] = index->entries[i];
+                ++kept;
+            }
+        }
+        for (uint32_t i = kept; i < index->count; ++i) {
+            memset(&index->entries[i], 0, sizeof(index->entries[i]));
+        }
+        index->count = kept;
+        ret = nvs_set_blob(handle, kPairRecordIndexKey, index, sizeof(*index));
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    if (handle != 0) nvs_close(handle);
+    heap_caps_free(index);
+    if (ret == ESP_OK && erased_slot != nullptr) *erased_slot = record_slot;
+    return ret;
+}
+
 constexpr uint32_t kPairRecordMagic = 0x48434350; // "HCCP"
 constexpr uint32_t kPairRecordVersion = 1;
 
@@ -861,6 +910,9 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     _trust_pair_retry_requested = false;
     _session_reconnect_pending = false;
     _session_reconnect_attempted = false;
+    _pair_record_rejected = false;
+    _repair_reconnect_pending = false;
+    _repair_attempted = false;
     _primary_connection_purpose = PrimaryConnectionPurpose::InitialDiscovery;
     _pair_after_querytype_ack = false;
     _pair_success_epoch = 0;
@@ -999,6 +1051,15 @@ bool HCCUSBTransport::submitPendingTcp()
         _primary_reconnect_pending = false;
         _primary_reconnect_attempted = true;
         _tcp_syn_requested = true;
+    } else if (_repair_reconnect_pending) {
+        // No record is loaded, so QueryType on this connection takes the fresh pairing path.
+        _primary_connection_purpose = PrimaryConnectionPurpose::InitialDiscovery;
+        resetPrimaryTcpForPairReconnect();
+        _repair_reconnect_pending = false;
+        _repair_attempted = true;
+        _pair_record_rejected = false;
+        _tcp_syn_requested = true;
+        printf("[HCC PAIR] reconnecting for fresh pairing\n");
     }
 
     // Preserve the established Lockdown stream first: acknowledge its latest
@@ -2821,6 +2882,9 @@ void HCCUSBTransport::stopForDeviceGone()
     _pair_success_epoch = 0;
     _session_reconnect_pending = false;
     _session_reconnect_attempted = false;
+    _pair_record_rejected = false;
+    _repair_reconnect_pending = false;
+    _repair_attempted = false;
     clearStartSessionConnectionState(false);
     resetServiceTcpContext();
     destroyPairState();
@@ -2868,6 +2932,9 @@ void HCCUSBTransport::stopForShutdown()
     _pair_success_epoch = 0;
     _session_reconnect_pending = false;
     _session_reconnect_attempted = false;
+    _pair_record_rejected = false;
+    _repair_reconnect_pending = false;
+    _repair_attempted = false;
     clearStartSessionConnectionState(false);
     resetServiceTcpContext();
     destroyPairState();
@@ -3170,6 +3237,9 @@ bool HCCUSBTransport::handleInboundTcp(const uint8_t *data, size_t length)
         if (can_reconnect_for_session) {
             _session_reconnect_pending = true;
             printf("[HCC LOCKDOWN] session reconnect pending\n");
+        } else if (_pair_record_rejected && !_repair_attempted && !_stopping) {
+            _repair_reconnect_pending = true;
+            printf("[HCC PAIR] fresh pairing reconnect pending\n");
         }
         printf("[HCC USB MUX] TCP RST received sport=%u dport=%u\n", sport, dport);
         return true;
@@ -3836,6 +3906,25 @@ bool HCCUSBTransport::handleStartSessionResponse(const uint8_t *body, size_t len
         } else {
             printf("[HCC LOCKDOWN] StartSession failed: invalid Error\n");
         }
+        if (strcmp(error, "InvalidHostID") == 0 && _session_record_loaded && !_repair_attempted &&
+            !_stopping) {
+            // The device no longer trusts the reused record: drop it and pair afresh once.
+            printf("[HCC PAIR] PAIR RECORD REJECTED InvalidHostID\n");
+            uint32_t erased_slot = 0;
+            const esp_err_t erase_ret = erasePairRecordInPartition(_session_udid.data(), &erased_slot);
+            if (erase_ret == ESP_OK) {
+                printf("[HCC PAIR] PAIR RECORD ERASED slot=%u\n", static_cast<unsigned>(erased_slot));
+            } else {
+                printf("[HCC PAIR] PAIR RECORD ERASE: %s\n", esp_err_to_name(erase_ret));
+            }
+            _pair_record_rejected = true;
+            clearStartSessionConnectionState(false);
+            // The device may keep this connection open: start fresh pairing on it right away.
+            // If it closes first, the RST handler falls back to a fresh-pairing reconnect.
+            _getvalue_product_version_after_ack = true;
+            printf("[HCC PAIR] fresh pairing on current connection\n");
+            return true;
+        }
         clearStartSessionConnectionState(true);
         return true;
     }
@@ -4020,6 +4109,8 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
                 printf("[HCC LOCKDOWN] GETVALUE DEVICEPUBLICKEY PASS data_bytes=%u base64_chars=%u\n",
                        static_cast<unsigned>(data_bytes), static_cast<unsigned>(base64_chars));
                 _getvalue_wifi_address_after_ack = true;
+                // Key is now queued for pairing; the fresh-pairing reconnect fallback must not replay it.
+                _pair_record_rejected = false;
             } else {
                 mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
                 _device_public_key_length = 0;
