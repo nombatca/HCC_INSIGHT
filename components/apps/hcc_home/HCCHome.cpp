@@ -270,6 +270,9 @@ bool HCCHome::closeUSBDevice(HCCHome *app)
 
     app->_usb_device = nullptr;
     printf("[HCC USB] Device closed\n");
+    // Runs in hcc_usb_client: lowest free stack reached so far, including the TLS application phase.
+    printf("[HCC USB] client stack_hwm_bytes=%u\n",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 
@@ -1674,7 +1677,7 @@ void HCCHome::onUSBClicked(lv_event_t *event)
         BaseType_t task_created = xTaskCreate(
             HCCHome::usbClientTask,
             "hcc_usb_client",
-            4096,
+            6144,
             app,
             5,
             &app->_usb_client_task
