@@ -62,6 +62,14 @@ public:
     bool beginPair(HCCPairCredentialBundle *bundle, uint32_t generation,
                    const char *host_id, const char *system_buid, const char *udid);
 
+    // Read-only device info captured during the plaintext lockdown queries (fresh-pair sessions).
+    // Empty string when a value has not been captured this connection.
+    const char *productVersion() const { return _product_version.data(); }
+    const char *deviceClass() const { return _device_class.data(); }
+    const char *wifiAddress() const { return _wifi_address_valid ? _wifi_address.data() : ""; }
+    // True once the encrypted lockdown session is up (device is trusted and ready).
+    bool sessionEstablished() const { return _tls_state == TlsState::TlsEstablished; }
+
 private:
     static constexpr size_t kRxMinimumBufferSize = 8192;
     static constexpr size_t kRxTransferCount = 3;
@@ -349,6 +357,9 @@ private:
     TlsState _tls_state = TlsState::PlainLockdown;
     std::array<char, 64> _wifi_address{};
     bool _wifi_address_valid = false;
+    // Captured lockdown GetValue results for on-screen device info.
+    std::array<char, 32> _product_version{};
+    std::array<char, 32> _device_class{};
     std::array<uint8_t, kDevicePublicKeyCapacity> _device_public_key{};
     size_t _device_public_key_length = 0;
     bool _device_public_key_pending = false;

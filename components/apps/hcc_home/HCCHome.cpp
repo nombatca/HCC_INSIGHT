@@ -321,6 +321,7 @@ HCCHome::HCCHome()
       _usb_device_gone_pending(false),
       _usb_new_device_address(0),
       _usb_new_device_pending(false),
+      _usb_session_reported(false),
       _usb_get_mode_transfer(nullptr),
       _usb_get_mode_pending(false),
       _usb_string_descriptor_transfer(nullptr),
@@ -990,6 +991,24 @@ void HCCHome::usbClientTask(void *arg)
         HCCHome::consumeCompletedCredentialBundle(app);
         app->_usb_transport.persistPendingPairRecord();
 
+        // Once the encrypted lockdown session is up, surface the device as trusted/ready
+        // and append any lockdown-derived info captured this connection. Runs in this task,
+        // which owns _usb_info, so the transport strings are read where they are written.
+        if (!app->_usb_session_reported && app->_usb_transport.sessionEstablished()) {
+            app->_usb_session_reported = true;
+            const char *ios = app->_usb_transport.productVersion();
+            const char *wifi = app->_usb_transport.wifiAddress();
+            size_t len = strnlen(app->_usb_info, sizeof(app->_usb_info));
+            if (ios[0] != '\0' && len < sizeof(app->_usb_info)) {
+                len += snprintf(app->_usb_info + len, sizeof(app->_usb_info) - len, "\niOS: %s", ios);
+            }
+            if (wifi[0] != '\0' && len < sizeof(app->_usb_info)) {
+                snprintf(app->_usb_info + len, sizeof(app->_usb_info) - len, "\nWi-Fi: %s", wifi);
+            }
+            snprintf(app->_usb_status, sizeof(app->_usb_status), "SESSION READY - iPhone trusted");
+            lv_async_call(HCCHome::applyUSBResult, app);
+        }
+
         if (app->_usb_new_device_pending) {
             HCCHome::processUSBNewDevice(app);
         }
@@ -1561,15 +1580,13 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
                 "USB DEVICE DETECTED"
             );
 
+            // Compact identity so the encrypted-session lines (iOS, Wi-Fi) also fit the panel.
             snprintf(
                 app->_usb_info,
                 sizeof(app->_usb_info),
-                "Address: %u\nVID: 0x%04X\nPID: 0x%04X\nSpeed: %s\nManufacturer: %s\nProduct: %s\nSerial: %s",
-                dev_info.dev_addr,
+                "VID:PID  %04X:%04X\nProduct: %s\nSerial: %s",
                 dev_desc->idVendor,
                 dev_desc->idProduct,
-                speed,
-                manufacturer,
                 product,
                 serial
             );
@@ -1635,6 +1652,7 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
         app->_usb_new_device_address = event_msg->new_dev.address;
         app->_usb_new_device_pending = true;
+        app->_usb_session_reported = false;
         } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
         if (event_msg->dev_gone.dev_hdl == app->_usb_device) {
             ++app->_usb_generation;
@@ -1650,6 +1668,7 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         app->_usb_mode = USBMode::NO_DEVICE;
         app->_usb_vid = 0;
         app->_usb_pid = 0;
+        app->_usb_session_reported = false;
 
         snprintf(
             app->_usb_status,

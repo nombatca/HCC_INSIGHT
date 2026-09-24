@@ -97,6 +97,8 @@ private:
     bool _usb_device_gone_pending;
     uint8_t _usb_new_device_address;
     bool _usb_new_device_pending;
+    // Rising-edge guard so the encrypted-session info is rendered once per connection.
+    bool _usb_session_reported;
     usb_transfer_t *_usb_get_mode_transfer;
     bool _usb_get_mode_pending;
     usb_transfer_t *_usb_string_descriptor_transfer;
@@ -115,7 +117,7 @@ private:
     uint16_t _usb_vid;
     uint16_t _usb_pid;
     char _usb_status[64];
-    char _usb_info[256];
+    char _usb_info[384];
 
     volatile bool _scan_scanning;
 

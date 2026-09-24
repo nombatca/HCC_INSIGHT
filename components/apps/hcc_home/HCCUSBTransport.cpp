@@ -887,6 +887,8 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     _getvalue_wifi_address_body_requested = false;
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
+    _product_version[0] = '\0';
+    _device_class[0] = '\0';
     _lockdown_expected_response = LockdownResponse::None;
     _tx_seq = 0;
     _rx_seq = 0;
@@ -2889,6 +2891,8 @@ void HCCUSBTransport::stopForDeviceGone()
     resetServiceTcpContext();
     destroyPairState();
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
+    _product_version[0] = '\0';
+    _device_class[0] = '\0';
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;
@@ -2939,6 +2943,8 @@ void HCCUSBTransport::stopForShutdown()
     resetServiceTcpContext();
     destroyPairState();
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
+    _product_version[0] = '\0';
+    _device_class[0] = '\0';
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;
@@ -4074,6 +4080,7 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
             strcmp(request, "GetValue") == 0 &&
             extractXmlStringForKey(body, length, "Value", value, sizeof(value))) {
             printf("[HCC LOCKDOWN] GETVALUE PRODUCTVERSION PASS value=%s\n", value);
+            snprintf(_product_version.data(), _product_version.size(), "%s", value);
             _getvalue_device_class_after_ack = true;
         } else {
             printf("[HCC LOCKDOWN] GetValue ProductVersion XML response validation failed\n");
@@ -4085,6 +4092,7 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
             strcmp(request, "GetValue") == 0 &&
             extractXmlStringForKey(body, length, "Value", value, sizeof(value))) {
             printf("[HCC LOCKDOWN] GETVALUE DEVICECLASS PASS value=%s\n", value);
+            snprintf(_device_class.data(), _device_class.size(), "%s", value);
             _getvalue_device_public_key_after_ack = true;
         } else {
             printf("[HCC LOCKDOWN] GetValue DeviceClass XML response validation failed\n");
