@@ -59,7 +59,8 @@ esp_err_t openPairRecordPartition(nvs_open_mode_t mode, nvs_handle_t *handle)
                 init_result = nvs_flash_init_partition(kPairRecordPartition);
             }
         }
-        initialized = true;
+        // Cache success only, so a failed early init is retried lazily on first pair record access.
+        initialized = init_result == ESP_OK;
         if (init_result == ESP_OK) {
             printf("[HCC PAIR] dedicated NVS ready partition=%s\n", kPairRecordPartition);
         } else {
@@ -886,17 +887,27 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     static constexpr const char *kRxHeapFailure[] = {"RX0 FAIL", "RX1 FAIL", "RX2 FAIL"};
     logUsbAllocationHeap("BEFORE RX");
     for (size_t slot = 0; slot < kRxTransferCount; ++slot) {
-        ret = usb_host_transfer_alloc(_rx_buffer_size, 0, &_rx_transfers[slot]);
-        if (ret != ESP_OK || _rx_transfers[slot] == nullptr) {
-            logUsbAllocationHeap(kRxHeapFailure[slot]);
-            _state = State::Failed;
-            printf("[HCC USB MUX] VERSION failed: RX[%u] alloc: %s\n",
-                   static_cast<unsigned>(slot), esp_err_to_name(ret));
-            freeUnsubmittedRxTransfers();
-            return false;
+        // RX transfers persist across devices so the DMA heap is not re-fragmented on every
+        // reconnect. hasPendingTransfers() above guarantees every slot is fully retired here.
+        if (_rx_transfers[slot] != nullptr && _rx_transfers[slot]->data_buffer_size < _rx_buffer_size) {
+            usb_host_transfer_free(_rx_transfers[slot]);
+            _rx_transfers[slot] = nullptr;
+        }
+        if (_rx_transfers[slot] != nullptr) {
+            printf("[HCC USB MUX] RX[%u] reusing persistent transfer\n", static_cast<unsigned>(slot));
+        } else {
+            ret = usb_host_transfer_alloc(_rx_buffer_size, 0, &_rx_transfers[slot]);
+            if (ret != ESP_OK || _rx_transfers[slot] == nullptr) {
+                _rx_transfers[slot] = nullptr;
+                logUsbAllocationHeap(kRxHeapFailure[slot]);
+                _state = State::Failed;
+                printf("[HCC USB MUX] VERSION failed: RX[%u] alloc: %s\n",
+                       static_cast<unsigned>(slot), esp_err_to_name(ret));
+                return false;
+            }
+            logUsbAllocationHeap(kRxHeapSuccess[slot]);
         }
 
-        logUsbAllocationHeap(kRxHeapSuccess[slot]);
         _rx_transfers[slot]->num_bytes = _rx_buffer_size;
         _rx_transfers[slot]->device_handle = _device;
         _rx_transfers[slot]->bEndpointAddress = _in_endpoint;
@@ -908,7 +919,6 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     if (ret != ESP_OK || _tx_transfer == nullptr) {
         _state = State::Failed;
         printf("[HCC USB MUX] VERSION failed: TX alloc: %s\n", esp_err_to_name(ret));
-        freeUnsubmittedRxTransfers();
         return false;
     }
 
@@ -937,7 +947,6 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
         printf("[HCC USB MUX] VERSION failed: TX submit: %s\n", esp_err_to_name(ret));
         usb_host_transfer_free(_tx_transfer);
         _tx_transfer = nullptr;
-        freeUnsubmittedRxTransfers();
         return false;
     }
 
@@ -951,7 +960,6 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
 
         _state = State::Failed;
         stopForShutdown();
-        freeUnsubmittedRxTransfers();
         return false;
     }
 
@@ -2931,13 +2939,8 @@ bool HCCUSBTransport::hasPendingTransfers() const
         return true;
     }
 
-    for (const usb_transfer_t *transfer : _rx_transfers) {
-        if (transfer != nullptr) {
-            return true;
-        }
-    }
-
-    return false;
+    // RX transfers stay allocated across devices; only in-flight ones are pending.
+    return hasRxTransfersInFlight();
 }
 
 HCCUSBTransport::State HCCUSBTransport::state() const
@@ -3497,6 +3500,16 @@ bool HCCUSBTransport::handlePairResponse(const uint8_t *body, size_t length)
     printf("[HCC PAIR] escrow_bag_bytes=%u\n", static_cast<unsigned>(escrow_bytes));
     printf("[HCC PAIR] PHASE2A PASS\n");
     return true;
+}
+
+bool HCCUSBTransport::initPairRecordStorage()
+{
+    // Runs once at boot so the NVS page cache is allocated before USB RX buffers churn the DMA heap.
+    nvs_handle_t handle = 0;
+    const esp_err_t ret = openPairRecordPartition(NVS_READONLY, &handle);
+    if (handle != 0) nvs_close(handle);
+    // An empty partition has no namespace yet; the partition itself is initialized.
+    return ret == ESP_OK || ret == ESP_ERR_NVS_NOT_FOUND;
 }
 
 bool HCCUSBTransport::persistPendingPairRecord()
@@ -4156,8 +4169,9 @@ void HCCUSBTransport::retireTransfer(usb_transfer_t *transfer, bool is_rx)
     if (is_rx) {
         const int slot = findRxSlot(transfer);
         if (slot >= 0) {
+            // Keep the persistent RX transfer allocated for reuse by the next start().
             _rx_in_flight[slot] = false;
-            _rx_transfers[slot] = nullptr;
+            return;
         }
     } else if (_tx_transfer == transfer) {
         _tx_in_flight = false;
@@ -4187,16 +4201,6 @@ bool HCCUSBTransport::hasRxTransfersInFlight() const
     }
 
     return false;
-}
-
-void HCCUSBTransport::freeUnsubmittedRxTransfers()
-{
-    for (size_t slot = 0; slot < kRxTransferCount; ++slot) {
-        if (_rx_transfers[slot] != nullptr && !_rx_in_flight[slot]) {
-            usb_host_transfer_free(_rx_transfers[slot]);
-            _rx_transfers[slot] = nullptr;
-        }
-    }
 }
 
 void HCCUSBTransport::onRxComplete(usb_transfer_t *transfer)

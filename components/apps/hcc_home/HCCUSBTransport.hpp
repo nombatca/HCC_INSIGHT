@@ -55,6 +55,8 @@ public:
     using DevicePublicKeyConsumer = bool (*)(void *context, const uint8_t *data, size_t length);
     bool handoffDevicePublicKey(DevicePublicKeyConsumer consumer, void *context);
     bool preparePairTimeWait();
+    // Initializes the dedicated hcc_pair NVS partition ahead of USB sessions; lazy init remains as fallback.
+    static bool initPairRecordStorage();
     bool persistPendingPairRecord();
     bool loadPairRecordForReuse(const char *udid, uint32_t generation);
     bool beginPair(HCCPairCredentialBundle *bundle, uint32_t generation,
@@ -218,7 +220,6 @@ private:
     void retireTransfer(usb_transfer_t *transfer, bool is_rx);
     int findRxSlot(const usb_transfer_t *transfer) const;
     bool hasRxTransfersInFlight() const;
-    void freeUnsubmittedRxTransfers();
 
     usb_device_handle_t _device = nullptr;
     uint8_t _out_endpoint = 0;

@@ -339,6 +339,10 @@ HCCHome::HCCHome()
 }
 bool HCCHome::init(void)
 {
+    // Non-fatal: pair record access falls back to lazy initialization.
+    if (!HCCUSBTransport::initPairRecordStorage()) {
+        printf("[HCC PAIR] early pair record storage init failed; using lazy init\n");
+    }
     return _pair_identity.initialize();
 }
 
