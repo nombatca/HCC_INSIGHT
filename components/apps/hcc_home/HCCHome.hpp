@@ -103,6 +103,9 @@ private:
     bool _usb_new_device_pending;
     // Rising-edge guard so the encrypted-session info is rendered once per connection.
     bool _usb_session_reported;
+    // App closed while a device is still attached: defer client shutdown until it is removed,
+    // so the host stack never frees a present device (which later aborts in the hub driver).
+    bool _usb_close_pending;
     // Two-tap confirmation state for the RECOVERY action.
     bool _recovery_confirm_pending;
     uint32_t _recovery_confirm_tick;

@@ -323,6 +323,7 @@ HCCHome::HCCHome()
       _usb_new_device_address(0),
       _usb_new_device_pending(false),
       _usb_session_reported(false),
+      _usb_close_pending(false),
       _recovery_confirm_pending(false),
       _recovery_confirm_tick(0),
       _recovery_exit_requested(false),
@@ -361,6 +362,9 @@ bool HCCHome::init(void)
 bool HCCHome::run(void)
 {
     _screen = lv_scr_act();
+
+    // Reopened before a deferred close completed: keep the running client alive.
+    _usb_close_pending = false;
 
     showHome();
 
@@ -1040,6 +1044,14 @@ void HCCHome::usbClientTask(void *arg)
             if (HCCHome::closeUSBDevice(app)) {
                 app->_usb_device_gone_pending = false;
             }
+        }
+
+        // Deferred shutdown: the app was closed while a device was attached; now that
+        // it is gone, stop the client cleanly (no present device for the host to free).
+        if (app->_usb_close_pending && app->_usb_device == nullptr &&
+            !app->_usb_device_gone_pending) {
+            app->_usb_close_pending = false;
+            app->requestUSBClientShutdown();
         }
     }
 
@@ -1898,7 +1910,26 @@ bool HCCHome::back(void)
 
 bool HCCHome::close(void)
 {
-    requestUSBClientShutdown();
+    // Brookesia cleans the app's LVGL objects after this returns; detach the label
+    // pointers so the background USB client task never writes to freed objects.
+    _usb_status_label = nullptr;
+    _usb_info_label = nullptr;
+    _usb_mode_label = nullptr;
+    _recovery_button_label = nullptr;
+    _scan_status_label = nullptr;
+    _scan_result_label = nullptr;
+    _scan_button = nullptr;
+
+    if (_usb_device == nullptr) {
+        // No device attached: stopping the client now is safe.
+        _usb_close_pending = false;
+        requestUSBClientShutdown();
+    } else {
+        // A device is still attached. Deregistering the client now would make the
+        // USB host free a present device and later abort in the hub driver, so keep
+        // the client running and shut it down once the device is removed.
+        _usb_close_pending = true;
+    }
     return true;
 }
 
