@@ -322,6 +322,8 @@ HCCHome::HCCHome()
       _usb_new_device_address(0),
       _usb_new_device_pending(false),
       _usb_session_reported(false),
+      _recovery_confirm_pending(false),
+      _recovery_confirm_tick(0),
       _usb_get_mode_transfer(nullptr),
       _usb_get_mode_pending(false),
       _usb_string_descriptor_transfer(nullptr),
@@ -1736,6 +1738,46 @@ void HCCHome::onBackClicked(lv_event_t *event)
     app->showHome();
 }
 
+void HCCHome::onRecoveryClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) {
+        return;
+    }
+
+    // EnterRecovery is only meaningful once the encrypted session is up.
+    if (!app->_usb_transport.sessionEstablished()) {
+        app->_recovery_confirm_pending = false;
+        if (app->_usb_status_label != nullptr) {
+            lv_label_set_text(app->_usb_status_label, "RECOVERY: chưa sẵn sàng");
+        }
+        return;
+    }
+
+    // First tap arms a 5s confirmation window; a second tap within it sends the request.
+    if (!app->_recovery_confirm_pending || lv_tick_elaps(app->_recovery_confirm_tick) > 5000) {
+        app->_recovery_confirm_pending = true;
+        app->_recovery_confirm_tick = lv_tick_get();
+        if (app->_usb_status_label != nullptr) {
+            lv_label_set_text(app->_usb_status_label, "Bấm RECOVERY lần nữa để xác nhận");
+        }
+        return;
+    }
+
+    app->_recovery_confirm_pending = false;
+    if (app->_usb_transport.requestEnterRecovery()) {
+        // Wake the USB client so the queued request is flushed over the session.
+        if (app->_usb_client_registered && app->_usb_client != nullptr) {
+            usb_host_client_unblock(app->_usb_client);
+        }
+        if (app->_usb_status_label != nullptr) {
+            lv_label_set_text(app->_usb_status_label, "ĐANG VÀO RECOVERY...");
+        }
+    } else if (app->_usb_status_label != nullptr) {
+        lv_label_set_text(app->_usb_status_label, "RECOVERY: chưa sẵn sàng");
+    }
+}
+
 bool HCCHome::back(void)
 {
     notifyCoreClosed();
@@ -1880,7 +1922,13 @@ void HCCHome::showUSB()
         lv_label_set_text(label, action_names[i]);
         lv_obj_center(label);
         lv_obj_set_style_text_font(label, &lv_font_be_vietnam_16, 0);
+
+        // Only RECOVERY is wired for now; the other actions remain inert placeholders.
+        if (i == 0) {
+            lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
+        }
     }
+    _recovery_confirm_pending = false;
 
     /* Back */
     lv_obj_t *back_button = lv_btn_create(_screen);

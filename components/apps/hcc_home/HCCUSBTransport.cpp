@@ -449,6 +449,20 @@ static constexpr char kLockdownStartNotificationServiceXml[] =
 static constexpr size_t kLockdownStartNotificationServiceBodySize =
     sizeof(kLockdownStartNotificationServiceXml) - 1;
 
+// Lockdown request sent over the established TLS session to reboot the device into recovery.
+static constexpr char kLockdownEnterRecoveryXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>EnterRecovery</string>\n"
+    "</dict>\n"
+    "</plist>";
+
+static constexpr size_t kLockdownEnterRecoveryBodySize =
+    sizeof(kLockdownEnterRecoveryXml) - 1;
+
 static constexpr char kNotificationObservePairXml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
     "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
@@ -827,6 +841,8 @@ struct HCCUSBTransport::TlsContext {
         StartServiceWrite,
         StartServiceRead,
         StartServicePassed,
+        EnterRecoveryWrite,
+        EnterRecoverySent,
         PeerClosed,
         Failed,
     };
@@ -889,6 +905,7 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    _enter_recovery_requested = false;
     _lockdown_expected_response = LockdownResponse::None;
     _tx_seq = 0;
     _rx_seq = 0;
@@ -2276,6 +2293,13 @@ bool HCCUSBTransport::sendTlsCiphertext()
                          _tls->tx_staging + _tls->tx_offset, length);
 }
 
+bool HCCUSBTransport::requestEnterRecovery()
+{
+    if (_tls == nullptr || _tls_state != TlsState::TlsEstablished) return false;
+    _enter_recovery_requested = true;
+    return true;
+}
+
 bool HCCUSBTransport::processTlsApplication()
 {
     if (_tls == nullptr || _tls_state != TlsState::TlsEstablished ||
@@ -2285,6 +2309,48 @@ bool HCCUSBTransport::processTlsApplication()
     }
     if (_tx_in_flight) return true;
     if (_tls->tx_offset < _tls->tx_length) return sendTlsCiphertext();
+
+    // A UI-requested EnterRecovery is sent once the session is idle after StartService.
+    if (_enter_recovery_requested &&
+        _tls->app_state == TlsContext::AppState::StartServicePassed &&
+        _tls->lockdown_tx_offset >= _tls->lockdown_tx_length) {
+        _enter_recovery_requested = false;
+        writeBigEndianU32(_tls->lockdown_tx, static_cast<uint32_t>(kLockdownEnterRecoveryBodySize));
+        memcpy(_tls->lockdown_tx + sizeof(uint32_t), kLockdownEnterRecoveryXml,
+               kLockdownEnterRecoveryBodySize);
+        _tls->lockdown_tx_length = sizeof(uint32_t) + kLockdownEnterRecoveryBodySize;
+        _tls->lockdown_tx_offset = 0;
+        _tls->app_state = TlsContext::AppState::EnterRecoveryWrite;
+        printf("[HCC RECOVERY] EnterRecovery request queued\n");
+    }
+
+    if (_tls->app_state == TlsContext::AppState::EnterRecoveryWrite) {
+        if (_tls->lockdown_tx_offset >= _tls->lockdown_tx_length) {
+            if (_tls->tx_length == 0) {
+                _tls->app_state = TlsContext::AppState::EnterRecoverySent;
+                printf("[HCC RECOVERY] ENTER RECOVERY sent - device will reboot into recovery\n");
+            }
+            return true;
+        }
+        const int ret = mbedtls_ssl_write(
+            &_tls->ssl,
+            _tls->lockdown_tx + _tls->lockdown_tx_offset,
+            _tls->lockdown_tx_length - _tls->lockdown_tx_offset);
+        if (ret > 0) {
+            _tls->lockdown_tx_offset += static_cast<size_t>(ret);
+            if (_tls->tx_offset < _tls->tx_length) return sendTlsCiphertext();
+            return true;
+        }
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            if (_tls->tx_offset < _tls->tx_length) return sendTlsCiphertext();
+            return true;
+        }
+        logTlsError("EnterRecovery write failed", ret);
+        _tls->app_state = TlsContext::AppState::Failed;
+        return false;
+    }
+
+    if (_tls->app_state == TlsContext::AppState::EnterRecoverySent) return true;
 
     if (_tls->app_state == TlsContext::AppState::StartServiceWrite) {
         if (_tls->lockdown_tx_offset >= _tls->lockdown_tx_length) {
@@ -2893,6 +2959,7 @@ void HCCUSBTransport::stopForDeviceGone()
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    _enter_recovery_requested = false;
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;
@@ -2945,6 +3012,7 @@ void HCCUSBTransport::stopForShutdown()
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    _enter_recovery_requested = false;
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;

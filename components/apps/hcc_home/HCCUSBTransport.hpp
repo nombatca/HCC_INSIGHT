@@ -69,6 +69,9 @@ public:
     const char *wifiAddress() const { return _wifi_address_valid ? _wifi_address.data() : ""; }
     // True once the encrypted lockdown session is up (device is trusted and ready).
     bool sessionEstablished() const { return _tls_state == TlsState::TlsEstablished; }
+    // Arm sending EnterRecovery over the established session. Returns false if not ready.
+    // The caller must unblock the USB client so the request is flushed.
+    bool requestEnterRecovery();
 
 private:
     static constexpr size_t kRxMinimumBufferSize = 8192;
@@ -360,6 +363,8 @@ private:
     // Captured lockdown GetValue results for on-screen device info.
     std::array<char, 32> _product_version{};
     std::array<char, 32> _device_class{};
+    // Set by the UI to send EnterRecovery on the established session; consumed by the USB task.
+    volatile bool _enter_recovery_requested = false;
     std::array<uint8_t, kDevicePublicKeyCapacity> _device_public_key{};
     size_t _device_public_key_length = 0;
     bool _device_public_key_pending = false;

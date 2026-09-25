@@ -59,6 +59,7 @@ private:
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
+    static void onRecoveryClicked(lv_event_t *event);
 
     static void onScanClicked(lv_event_t *event);
 
@@ -99,6 +100,9 @@ private:
     bool _usb_new_device_pending;
     // Rising-edge guard so the encrypted-session info is rendered once per connection.
     bool _usb_session_reported;
+    // Two-tap confirmation state for the RECOVERY action.
+    bool _recovery_confirm_pending;
+    uint32_t _recovery_confirm_tick;
     usb_transfer_t *_usb_get_mode_transfer;
     bool _usb_get_mode_pending;
     usb_transfer_t *_usb_string_descriptor_transfer;
