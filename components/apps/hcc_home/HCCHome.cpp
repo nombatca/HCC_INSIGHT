@@ -254,6 +254,7 @@ bool HCCHome::closeUSBDevice(HCCHome *app)
         app->_usb_get_mode_transfer != nullptr ||
         app->_usb_string_descriptor_pending ||
         app->_usb_string_descriptor_transfer != nullptr ||
+        app->_recovery_exit_transfer != nullptr ||
         app->_usb_transport.hasPendingTransfers()) {
         return false;
     }
@@ -324,6 +325,11 @@ HCCHome::HCCHome()
       _usb_session_reported(false),
       _recovery_confirm_pending(false),
       _recovery_confirm_tick(0),
+      _recovery_exit_requested(false),
+      _recovery_exit_active(false),
+      _recovery_exit_step(0),
+      _recovery_exit_transfer(nullptr),
+      _recovery_button_label(nullptr),
       _usb_get_mode_transfer(nullptr),
       _usb_get_mode_pending(false),
       _usb_string_descriptor_transfer(nullptr),
@@ -369,6 +375,7 @@ void HCCHome::showHome()
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
+    _recovery_button_label = nullptr;
     lv_obj_clean(_screen);
 
     /* Background */
@@ -1011,6 +1018,15 @@ void HCCHome::usbClientTask(void *arg)
             lv_async_call(HCCHome::applyUSBResult, app);
         }
 
+        // UI-requested recovery-mode exit: start the iBoot command sequence from this task.
+        if (app->_recovery_exit_requested && !app->_recovery_exit_active &&
+            app->_usb_device != nullptr) {
+            app->_recovery_exit_requested = false;
+            app->_recovery_exit_active = true;
+            app->_recovery_exit_step = 0;
+            HCCHome::submitRecoveryExitCommand(app);
+        }
+
         if (app->_usb_new_device_pending) {
             HCCHome::processUSBNewDevice(app);
         }
@@ -1172,6 +1188,12 @@ void HCCHome::applyUSBResult(void *arg)
 
     if (app->_usb_info_label != nullptr) {
         lv_label_set_text(app->_usb_info_label, app->_usb_info);
+    }
+
+    // The RECOVERY button enters recovery in normal mode and exits it in recovery mode.
+    if (app->_recovery_button_label != nullptr) {
+        lv_label_set_text(app->_recovery_button_label,
+                          app->_usb_mode == USBMode::RECOVERY ? "EXIT REC" : "RECOVERY");
     }
 }
 
@@ -1655,6 +1677,9 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         app->_usb_new_device_address = event_msg->new_dev.address;
         app->_usb_new_device_pending = true;
         app->_usb_session_reported = false;
+        app->_recovery_exit_requested = false;
+        app->_recovery_exit_active = false;
+        app->_recovery_exit_step = 0;
         } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
         if (event_msg->dev_gone.dev_hdl == app->_usb_device) {
             ++app->_usb_generation;
@@ -1745,8 +1770,10 @@ void HCCHome::onRecoveryClicked(lv_event_t *event)
         return;
     }
 
-    // EnterRecovery is only meaningful once the encrypted session is up.
-    if (!app->_usb_transport.sessionEstablished()) {
+    // Exit (recovery mode) uses iBoot control commands and needs no session; only the
+    // enter path requires the encrypted session to be up.
+    const bool in_recovery = (app->_usb_mode == USBMode::RECOVERY);
+    if (!in_recovery && !app->_usb_transport.sessionEstablished()) {
         app->_recovery_confirm_pending = false;
         if (app->_usb_status_label != nullptr) {
             lv_label_set_text(app->_usb_status_label, "RECOVERY: chưa sẵn sàng");
@@ -1765,6 +1792,19 @@ void HCCHome::onRecoveryClicked(lv_event_t *event)
     }
 
     app->_recovery_confirm_pending = false;
+
+    // In recovery mode the same button exits recovery via iBoot commands.
+    if (in_recovery) {
+        app->_recovery_exit_requested = true;
+        if (app->_usb_client_registered && app->_usb_client != nullptr) {
+            usb_host_client_unblock(app->_usb_client);
+        }
+        if (app->_usb_status_label != nullptr) {
+            lv_label_set_text(app->_usb_status_label, "ĐANG THOÁT RECOVERY...");
+        }
+        return;
+    }
+
     if (app->_usb_transport.requestEnterRecovery()) {
         // Wake the USB client so the queued request is flushed over the session.
         if (app->_usb_client_registered && app->_usb_client != nullptr) {
@@ -1775,6 +1815,78 @@ void HCCHome::onRecoveryClicked(lv_event_t *event)
         }
     } else if (app->_usb_status_label != nullptr) {
         lv_label_set_text(app->_usb_status_label, "RECOVERY: chưa sẵn sàng");
+    }
+}
+
+bool HCCHome::submitRecoveryExitCommand(HCCHome *app)
+{
+    static const char *const kExitCommands[] = {"setenv auto-boot true", "saveenv", "reboot"};
+    if (app == nullptr || app->_usb_client == nullptr || app->_usb_device == nullptr) {
+        if (app != nullptr) app->_recovery_exit_active = false;
+        return false;
+    }
+    if (app->_recovery_exit_step >= 3) {
+        app->_recovery_exit_active = false;
+        return true;
+    }
+
+    const char *command = kExitCommands[app->_recovery_exit_step];
+    const size_t command_length = strlen(command) + 1;  // include the NUL iBoot expects
+
+    usb_transfer_t *transfer = nullptr;
+    esp_err_t ret = usb_host_transfer_alloc(sizeof(usb_setup_packet_t) + command_length, 0, &transfer);
+    if (ret != ESP_OK || transfer == nullptr) {
+        printf("[HCC RECOVERY] exit cmd alloc failed: %s\n", esp_err_to_name(ret));
+        app->_recovery_exit_active = false;
+        return false;
+    }
+
+    usb_setup_packet_t *setup = reinterpret_cast<usb_setup_packet_t *>(transfer->data_buffer);
+    setup->bmRequestType = 0x40;  // host-to-device, vendor, device
+    setup->bRequest = 0;
+    setup->wValue = 0;
+    setup->wIndex = 0;
+    setup->wLength = static_cast<uint16_t>(command_length);
+    memcpy(transfer->data_buffer + sizeof(usb_setup_packet_t), command, command_length);
+
+    transfer->device_handle = app->_usb_device;
+    transfer->bEndpointAddress = 0x00;  // control OUT
+    transfer->num_bytes = sizeof(usb_setup_packet_t) + command_length;
+    transfer->callback = HCCHome::onRecoveryExitComplete;
+    transfer->context = app;
+
+    app->_recovery_exit_transfer = transfer;
+    ret = usb_host_transfer_submit_control(app->_usb_client, transfer);
+    if (ret != ESP_OK) {
+        printf("[HCC RECOVERY] exit cmd submit failed: %s\n", esp_err_to_name(ret));
+        usb_host_transfer_free(transfer);
+        app->_recovery_exit_transfer = nullptr;
+        app->_recovery_exit_active = false;
+        return false;
+    }
+    printf("[HCC RECOVERY] exit cmd: %s\n", command);
+    return true;
+}
+
+void HCCHome::onRecoveryExitComplete(usb_transfer_t *transfer)
+{
+    if (transfer == nullptr) {
+        return;
+    }
+    HCCHome *app = static_cast<HCCHome *>(transfer->context);
+    printf("[HCC RECOVERY] exit cmd complete: status=%d\n", static_cast<int>(transfer->status));
+    usb_host_transfer_free(transfer);
+    if (app == nullptr) {
+        return;
+    }
+    app->_recovery_exit_transfer = nullptr;
+    // Advance regardless of status so 'reboot' still runs even if an earlier command stalls.
+    app->_recovery_exit_step++;
+    if (app->_recovery_exit_step < 3 && !app->_usb_shutdown_requested && app->_usb_device != nullptr) {
+        HCCHome::submitRecoveryExitCommand(app);
+    } else {
+        app->_recovery_exit_active = false;
+        printf("[HCC RECOVERY] exit sequence done\n");
     }
 }
 
@@ -1810,6 +1922,7 @@ void HCCHome::showUSB()
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
+    _recovery_button_label = nullptr;
 
     lv_obj_clean(_screen);
 
@@ -1925,6 +2038,7 @@ void HCCHome::showUSB()
 
         // Only RECOVERY is wired for now; the other actions remain inert placeholders.
         if (i == 0) {
+            _recovery_button_label = label;
             lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
         }
     }

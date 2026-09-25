@@ -60,6 +60,9 @@ private:
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
     static void onRecoveryClicked(lv_event_t *event);
+    // Recovery-mode exit: send iBoot commands (setenv auto-boot true / saveenv / reboot).
+    static bool submitRecoveryExitCommand(HCCHome *app);
+    static void onRecoveryExitComplete(usb_transfer_t *transfer);
 
     static void onScanClicked(lv_event_t *event);
 
@@ -103,6 +106,12 @@ private:
     // Two-tap confirmation state for the RECOVERY action.
     bool _recovery_confirm_pending;
     uint32_t _recovery_confirm_tick;
+    // Recovery-mode exit sequence state.
+    volatile bool _recovery_exit_requested;
+    bool _recovery_exit_active;
+    uint8_t _recovery_exit_step;
+    usb_transfer_t *_recovery_exit_transfer;
+    lv_obj_t *_recovery_button_label;
     usb_transfer_t *_usb_get_mode_transfer;
     bool _usb_get_mode_pending;
     usb_transfer_t *_usb_string_descriptor_transfer;
