@@ -19,6 +19,8 @@
 
 static const char *TAG = "main";
 
+LV_IMG_DECLARE(img_hcc_home_wallpaper);
+
 extern "C" void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -66,6 +68,8 @@ extern "C" void app_main(void)
         bsp_display_unlock();
         return;
     }
+    // HCC INSIGHT wallpaper (1024x600) replaces the default 480x480 home background.
+    phone_stylesheet->core.background.wallpaper_image_resource = ESP_BROOKESIA_STYLE_IMAGE(&img_hcc_home_wallpaper);
     if (!phone->addStylesheet(*phone_stylesheet)) {
         ESP_LOGE(TAG, "Failed to add phone stylesheet");
         bsp_display_unlock();

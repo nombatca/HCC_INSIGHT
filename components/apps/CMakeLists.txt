@@ -6,6 +6,7 @@ list(FILTER APPS_CPP_SRCS EXCLUDE REGEX "/camera/")
 
 # HCC INSIGHT app icon: keep asset discovery deterministic (same assets/ pattern as Settings).
 list(APPEND APPS_C_SRCS ${APPS_DIR}/hcc_home/assets/img_app_hcc_insight.c)
+list(APPEND APPS_C_SRCS ${APPS_DIR}/hcc_home/assets/img_hcc_home_wallpaper.c)
 
 idf_component_register(
     SRCS ${APPS_C_SRCS} ${APPS_CPP_SRCS}
