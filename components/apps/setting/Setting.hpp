@@ -62,6 +62,9 @@ private:
     // NVS Parameters
     bool loadNvsParam(void);
     bool setNvsParam(std::string key, int value);
+    // Lưu / nạp thông tin đăng nhập WiFi (SSID + mật khẩu) trong NVS.
+    bool saveWifiCredentials(const char *ssid, const char *password);
+    bool loadWifiCredentials(char *ssid, size_t ssid_size, char *password, size_t password_size);
     void updateUiByNvsParam(void);
     // WiFi
     esp_err_t initWifi(void);

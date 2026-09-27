@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
 #include "usb/usb_host.h"
 #include "HCCPairCredentials.hpp"
@@ -67,8 +69,37 @@ public:
     const char *productVersion() const { return _product_version.data(); }
     const char *deviceClass() const { return _device_class.data(); }
     const char *wifiAddress() const { return _wifi_address_valid ? _wifi_address.data() : ""; }
+    // Session-protected values, read over the encrypted session right after the TLS handshake.
+    const char *serialNumber() const { return _session_info[SessionInfoSerialNumber].data(); }
+    const char *productType() const { return _session_info[SessionInfoProductType].data(); }
+    const char *bluetoothAddress() const { return _session_info[SessionInfoBluetoothAddress].data(); }
+    const char *basebandVersion() const { return _session_info[SessionInfoBasebandVersion].data(); }
+    const char *imei() const { return _session_info[SessionInfoImei].data(); }
+    const char *basebandStatus() const { return _session_info[SessionInfoBasebandStatus].data(); }
+    const char *iccid() const { return _session_info[SessionInfoIccid].data(); }
+    const char *meid() const { return _session_info[SessionInfoMeid].data(); }
+    const char *phoneNumber() const { return _session_info[SessionInfoPhoneNumber].data(); }
+
+    // ---- Evidence từ os_trace (chỉ đọc log lỗi subsystem; không đụng dữ liệu sinh trắc) ----
+    bool osTraceActive() const { return _ostrace_active; }
+    uint32_t osTraceBasebandMatches() const { return _ost_bb_matches; }
+    uint32_t osTraceBasebandErrors() const { return _ost_bb_errors; }
+    const char *osTraceLastBaseband() const { return _ost_bb_last; }
+    uint32_t osTraceBioMatches() const { return _ost_bio_matches; }
+    uint32_t osTraceBioErrors() const { return _ost_bio_errors; }
+    const char *osTraceLastBio() const { return _ost_bio_last; }
+
+    // ---- Battery (GasGauge) từ diagnostics_relay {"Request":"All"} ----
+    bool batteryAvailable() const { return _battery_available; }
+    int32_t batteryCycleCount() const { return _batt_cycle; }
+    int32_t batteryDesignCapacity() const { return _batt_design; }
+    int32_t batteryFullChargeCapacity() const { return _batt_fcc; }
     // True once the encrypted lockdown session is up (device is trusted and ready).
     bool sessionEstablished() const { return _tls_state == TlsState::TlsEstablished; }
+    // True once every session-protected info query above has completed (pass or error).
+    bool deviceInfoReady() const { return sessionEstablished() && _device_info_ready; }
+    // True while StartService waits to be retried (device locked); the USB task must poll.
+    bool serviceRetryPending() const { return _service_retry_pending; }
     // Arm sending EnterRecovery over the established session. Returns false if not ready.
     // The caller must unblock the USB client so the request is flushed.
     bool requestEnterRecovery();
@@ -127,6 +158,8 @@ private:
         PrimaryTrustCloseAck,
         NotificationPrefix,
         NotificationBody,
+        OsTraceStart,
+        ServiceTlsCiphertext,
     };
 
     enum class LockdownResponse {
@@ -188,8 +221,28 @@ private:
     bool processTlsDeferred();
     bool processTlsApplication();
     bool prepareTls();
-    bool loadTlsCredentials();
+    bool loadTlsCredentials(mbedtls_x509_crt *certificate, mbedtls_pk_context *private_key,
+                            mbedtls_ctr_drbg_context *drbg);
     bool sendTlsCiphertext();
+    void queueNextTlsLockdownRequest();
+    void markTlsLockdownRequestSent();
+    void handleSessionInfoResponse(const uint8_t *body, size_t length);
+    bool sendOsTraceStart();
+    bool appendOsTraceRx(const uint8_t *data, size_t length);
+    bool appendDiagRx(const uint8_t *data, size_t length);  // V2: dump RAW diagnostics_relay
+    void finishDiagFrameHead();
+    void handleOsTraceRecord(const uint8_t *record, size_t length);
+    void releaseOsTrace();
+    // TLS on TCP #2, for services whose StartService reply has EnableServiceSSL=true.
+    bool prepareServiceTls();
+    bool processServiceTls();
+    bool sendServiceTlsCiphertext();
+    void onServiceTlsCiphertextSent(size_t length);
+    bool appendServiceTlsRx(const uint8_t *data, size_t length);
+    bool drainServiceTls();
+    void releaseServiceTls();
+    static int serviceTlsBioSend(void *context, const unsigned char *buffer, size_t length);
+    static int serviceTlsBioRecv(void *context, unsigned char *buffer, size_t length);
     bool appendTlsRx(const uint8_t *data, size_t length);
     void cleanupTls();
     static int tlsBioSend(void *context, const unsigned char *buffer, size_t length);
@@ -333,6 +386,49 @@ private:
     } _service_tcp;
     std::array<uint8_t, kNotificationRxCapacity> _notification_rx_stream{};
     size_t _notification_rx_stream_length = 0;
+    // Experiment C (kOsTraceExperiment): os_trace_relay capture on TCP #2 after the session.
+    static constexpr size_t kOsTraceRxCapacity = 64 * 1024;
+    bool _ostrace_start_requested = false;
+    bool _ostrace_active = false;   // StartActivity sent; TCP #2 RX goes to the os_trace parser
+    bool _ostrace_desynced = false; // framing lost; further RX is counted but not parsed
+    uint8_t *_ostrace_rx = nullptr; // PSRAM, kOsTraceRxCapacity
+    size_t _ostrace_rx_length = 0;
+    uint32_t _ostrace_frames = 0;
+    uint32_t _ostrace_bytes = 0;
+    uint32_t _ostrace_matched = 0;
+    uint8_t _ostrace_hexdumps = 0;
+    TickType_t _ostrace_stats_tick = 0;
+    TickType_t _ostrace_start_tick = 0;
+    std::array<uint32_t, 192> _ostrace_seen_procs{}; // hashes of process names already printed
+    size_t _ostrace_seen_count = 0;
+    // Evidence gom từ os_trace cho Hardware Check (baseband + biometric/Face ID).
+    uint32_t _ost_bb_matches = 0;
+    uint32_t _ost_bb_errors = 0;
+    char _ost_bb_last[200] = {0};
+    uint32_t _ost_bio_matches = 0;
+    uint32_t _ost_bio_errors = 0;
+    char _ost_bio_last[200] = {0};
+    // V2 diagnostics_relay capture (streaming - chịu được response lớn như IORegistry).
+    bool _diag_capture = false;
+    uint32_t _diag_frames = 0;
+    uint8_t _diag_hdr[4] = {0};
+    uint8_t _diag_hdr_have = 0;
+    uint32_t _diag_frame_remaining = 0;
+    uint32_t _diag_printed = 0;
+    uint8_t _diag_head[4096] = {0};   // 4KB đầu của frame để parse (GasGauge...)
+    uint32_t _diag_head_len = 0;
+    char _diag_line[256] = {0};       // scan theo dòng để lọc node phần cứng
+    uint32_t _diag_line_len = 0;
+    // Battery (GasGauge) parse từ response diagnostics_relay All.
+    bool _battery_available = false;
+    int32_t _batt_cycle = -1;
+    int32_t _batt_design = -1;
+    int32_t _batt_fcc = -1;
+    struct ServiceTlsContext;
+    ServiceTlsContext *_service_tls = nullptr;
+    bool _service_tls_prepare_requested = false;
+    bool _service_retry_pending = false;
+    TickType_t _service_retry_due = 0;
     std::array<char, 128> _pair_udid{};
     std::array<char, 37> _pair_host_id{};
     std::array<char, 37> _pair_system_buid{};
@@ -363,8 +459,27 @@ private:
     // Captured lockdown GetValue results for on-screen device info.
     std::array<char, 32> _product_version{};
     std::array<char, 32> _device_class{};
+    // Indexed like kSessionInfoKeys in the .cpp; filled in order before StartService.
+    enum SessionInfoField : uint8_t {
+        SessionInfoSerialNumber,
+        SessionInfoProductType,
+        SessionInfoBluetoothAddress,
+        SessionInfoBasebandVersion,
+        SessionInfoImei,
+        SessionInfoBasebandStatus,
+        SessionInfoIccid,
+        SessionInfoMeid,
+        SessionInfoPhoneNumber,
+        SessionInfoCount,
+    };
+    std::array<std::array<char, 48>, SessionInfoCount> _session_info{};
+    uint8_t _session_info_index = 0;
+    bool _device_info_ready = false;
     // Set by the UI to send EnterRecovery on the established session; consumed by the USB task.
     volatile bool _enter_recovery_requested = false;
+    // On a reuse connect, query iOS/Wi-Fi over plaintext lockdown before StartSession so the
+    // device info is always shown. Any query outcome (pass or error) falls through to StartSession.
+    bool _reuse_info_query = false;
     std::array<uint8_t, kDevicePublicKeyCapacity> _device_public_key{};
     size_t _device_public_key_length = 0;
     bool _device_public_key_pending = false;

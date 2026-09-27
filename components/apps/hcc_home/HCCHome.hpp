@@ -10,6 +10,9 @@
 #include "HCCPairCredentials.hpp"
 #include "HCCPairIdentity.hpp"
 #include "HCCUSBTransport.hpp"
+#include "HCCEeprom.hpp"
+#include "HCCPanicTypes.hpp"
+#include "HCCiPhoneDiagnostics.hpp"
 class HCCHome : public ESP_Brookesia_PhoneApp {
 private:
     enum class USBMode {
@@ -60,6 +63,14 @@ private:
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
     static void onRecoveryClicked(lv_event_t *event);
+    // IPHONE HARDWARE CHECK (trong màn USB HUB).
+    static void onHardwareCheckClicked(lv_event_t *event);
+    void showHardwareCheck();
+    void updateHwCards();
+    static void onHwRunFullClicked(lv_event_t *event);
+    static void onHwCardClicked(lv_event_t *event);
+    static void onHwDialogCloseClicked(lv_event_t *event);
+    static void onHwBackClicked(lv_event_t *event);
     // Recovery-mode exit: send iBoot commands (setenv auto-boot true / saveenv / reboot).
     static bool submitRecoveryExitCommand(HCCHome *app);
     static void onRecoveryExitComplete(usb_transfer_t *transfer);
@@ -70,6 +81,62 @@ private:
     void performScan();
     i2c_master_bus_handle_t _external_i2c_bus;
     static void applyScanResult(void *arg);
+
+    // EEPROM module: đọc EEPROM I2C và lưu bản dump ra thẻ SD.
+    static void onEepromClicked(lv_event_t *event);
+    static void onEepromDumpClicked(lv_event_t *event);
+    static void onEepromProgramClicked(lv_event_t *event);
+    static void onEepromFileChanged(lv_event_t *event);
+    static void onEepromRefreshClicked(lv_event_t *event);
+    static void onEepromViewClicked(lv_event_t *event);
+    static void onEepromDialogCloseClicked(lv_event_t *event);
+    void populateEepromFileList();
+    void showEeprom();
+    void showBinaryDialog(const uint8_t *data, size_t len);
+    static void eepromTask(void *arg);
+    static void eepromProgramTask(void *arg);
+    static void eepromViewTask(void *arg);
+    void performEepromDump();
+    void performEepromProgram();
+    void performEepromView();
+    void beginEepromOp(const char *status);
+    static void applyEepromResult(void *arg);
+    static void applyEepromView(void *arg);
+    i2c_master_bus_handle_t ensureI2CBus();
+
+    // PANIC & AI ANALYZE module.
+    static void onPanicClicked(lv_event_t *event);
+    static void onPanicAnalyzeClicked(lv_event_t *event);
+    static void onPanicRefreshClicked(lv_event_t *event);
+    static void onPanicFileChanged(lv_event_t *event);
+    static void onPanicApiKeyClicked(lv_event_t *event);
+    static void onPanicApiKeySaveClicked(lv_event_t *event);
+    static void onPanicApiKeyCloseClicked(lv_event_t *event);
+    // Xem nội dung RAW panic của file đang chọn.
+    static void onPanicViewClicked(lv_event_t *event);
+    static void onPanicViewCloseClicked(lv_event_t *event);
+    // CONFIRM REPAIR / VERIFY (xây Verified KB từ sửa chữa thực tế).
+    static void onConfirmRepairClicked(lv_event_t *event);
+    static void onRepairSaveClicked(lv_event_t *event);
+    static void onRepairVerifyClicked(lv_event_t *event);
+    static void onRepairCloseClicked(lv_event_t *event);
+    static void onRepairFieldFocused(lv_event_t *event);
+    void openConfirmRepair();
+    bool submitRepairCase(bool verified);
+    void showPanic();
+    void populatePanicFileList();
+    // Đọc raw panic của mục đang chọn: từ RAM (mục "[RAM] ...") hoặc file SD.
+    bool loadSelectedRaw(std::string &raw);
+    // Layout mới: cập nhật panel chi tiết (thiết bị, mức độ lỗi, key panic string).
+    void refreshPanicDetail();
+    static void onPanicListItemClicked(lv_event_t *event);
+    static void onPanicListItemDeleted(lv_event_t *event);
+    static void onPanicChooseFileClicked(lv_event_t *event);
+    static void onPanicDeleteFileClicked(lv_event_t *event);
+    static void onPanicExportClicked(lv_event_t *event);
+    static void panicAnalyzeTask(void *arg);
+    void performPanicAnalyze();
+    static void applyPanicResult(void *arg);
 
     void requestUSBClientShutdown();
 
@@ -129,6 +196,14 @@ private:
     HCCPairIdentity _pair_identity;
     HCCPairCredentials _pair_credentials;
     HCCUSBTransport _usb_transport;
+    // Hardware Check UI state.
+    lv_obj_t *_hw_sensors_status;
+    lv_obj_t *_hw_faceid_status;
+    lv_obj_t *_hw_baseband_status;
+    lv_obj_t *_hw_battery_status;
+    lv_obj_t *_hw_dialog;
+    HCCiPhoneDiagnostics::FullResult _hw_result;
+    bool _hw_has_result;
     USBMode _usb_mode;
     uint16_t _usb_vid;
     uint16_t _usb_pid;
@@ -139,4 +214,70 @@ private:
 
     char _scan_result[512];
     char _scan_status[64];
+
+    // EEPROM screen state.
+    lv_obj_t *_eeprom_status_label;
+    lv_obj_t *_eeprom_result_label;
+    lv_obj_t *_eeprom_button;
+    lv_obj_t *_eeprom_program_button;
+    lv_obj_t *_eeprom_file_dropdown;
+    lv_obj_t *_eeprom_dialog;
+    // File trên thẻ SD đang chọn: đích khi ĐỌC, nguồn khi GHI.
+    char _eeprom_file[64];
+    // Buffer tạm giữ nội dung file để dựng hex dump trên luồng LVGL.
+    uint8_t *_eeprom_view_buf;
+    size_t _eeprom_view_len;
+
+    // PANIC screen state.
+    lv_obj_t *_panic_file_dropdown;
+    lv_obj_t *_panic_status_label;
+    lv_obj_t *_panic_url_label;
+    lv_obj_t *_panic_analyze_button;
+    lv_obj_t *_panic_error_label;
+    lv_obj_t *_panic_cause_label;
+    lv_obj_t *_panic_repair_label;
+    lv_obj_t *_panic_conf_label;
+    lv_obj_t *_panic_tier_label;
+    lv_obj_t *_panic_apikey_dialog;
+    lv_obj_t *_panic_apikey_input;
+    lv_obj_t *_panic_keyboard;
+    lv_obj_t *_panic_view_dialog;
+    // CONFIRM REPAIR form.
+    lv_obj_t *_repair_dialog;
+    lv_obj_t *_repair_kb;
+    lv_obj_t *_repair_model;
+    lv_obj_t *_repair_sig;
+    lv_obj_t *_repair_code;
+    lv_obj_t *_repair_source;
+    lv_obj_t *_repair_hw;
+    lv_obj_t *_repair_action;
+    lv_obj_t *_repair_note;
+    ParsedPanic _repair_parsed;
+    // Panel layout mới (theo mockup).
+    lv_obj_t *_pi_list;         // danh sách panic (trái)
+    lv_obj_t *_pi_list_count;   // "(N)"
+    lv_obj_t *_pi_model;
+    lv_obj_t *_pi_ios;
+    lv_obj_t *_pi_soc;
+    lv_obj_t *_pi_file;
+    lv_obj_t *_pi_sev;
+    lv_obj_t *_pi_sevsub;
+    lv_obj_t *_pi_keystr;
+    lv_obj_t *_pi_cause;        // NGUYÊN NHÂN DỰ ĐOÁN (AI)
+    lv_obj_t *_pi_check;        // HƯỚNG KIỂM TRA / ĐỀ XUẤT
+    lv_obj_t *_pi_kb;           // THAM KHẢO KB
+    lv_obj_t *_pi_conclusion;   // KẾT LUẬN
+    lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
+    ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
+    volatile bool _panic_busy;
+    char _panic_file[96];
+    char _panic_status[96];
+    PanicResult _panic_result;
+    HCCEeprom::Config _eeprom_config;
+    volatile bool _eeprom_busy;
+    // Two-tap confirmation before writing EEPROM (SD -> EEPROM overwrites the chip).
+    bool _eeprom_program_confirm_pending;
+    uint32_t _eeprom_program_confirm_tick;
+    char _eeprom_status[64];
+    char _eeprom_result[256];
 };

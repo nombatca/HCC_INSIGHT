@@ -94,8 +94,8 @@ void app_sntp_init(void)
     ESP_LOGI(TAG, "[HCC TIME DIAG] app_sntp_init enter unix=%lld", (long long)now);
     localtime_r(&now, &timeinfo);
 
-    // Set timezone to China Standard Time
-    setenv("TZ", "CST-8", 1);
+    // Set timezone to Vietnam / Indochina Time (UTC+7)
+    setenv("TZ", "ICT-7", 1);
     tzset();
     // Is time set? If not, tm_year will be (1970 - 1900).
     if (timeinfo.tm_year < (2016 - 1900)) {
@@ -128,7 +128,7 @@ void app_sntp_init(void)
     char strftime_buf[64];
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "The current date/time in Shanghai is: %s", strftime_buf);
+    ESP_LOGI(TAG, "The current date/time in Vietnam is: %s", strftime_buf);
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;

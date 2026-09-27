@@ -3,41 +3,53 @@
 #include "driver/i2c_master.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <string>
+#include "HCCPanicStorage.hpp"
+#include "HCCPanicParser.hpp"
+#include "HCCPanicKB.hpp"
+#include "HCCPanicAI.hpp"
+#include "HCCPanicServer.hpp"
+#include "HCCViText.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
-static void usbStringToAscii(
-    const usb_str_desc_t *desc,
-    char *out,
-    size_t out_size
-)
+// Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
+static const struct {
+    const char *product_type;
+    const char *name;
+} kIPhoneModelNames[] = {
+    {"iPhone8,1", "iPhone 6s"},           {"iPhone8,2", "iPhone 6s Plus"},
+    {"iPhone8,4", "iPhone SE"},           {"iPhone9,1", "iPhone 7"},
+    {"iPhone9,3", "iPhone 7"},            {"iPhone9,2", "iPhone 7 Plus"},
+    {"iPhone9,4", "iPhone 7 Plus"},       {"iPhone10,1", "iPhone 8"},
+    {"iPhone10,4", "iPhone 8"},           {"iPhone10,2", "iPhone 8 Plus"},
+    {"iPhone10,5", "iPhone 8 Plus"},      {"iPhone10,3", "iPhone X"},
+    {"iPhone10,6", "iPhone X"},           {"iPhone11,2", "iPhone XS"},
+    {"iPhone11,4", "iPhone XS Max"},      {"iPhone11,6", "iPhone XS Max"},
+    {"iPhone11,8", "iPhone XR"},          {"iPhone12,1", "iPhone 11"},
+    {"iPhone12,3", "iPhone 11 Pro"},      {"iPhone12,5", "iPhone 11 Pro Max"},
+    {"iPhone12,8", "iPhone SE (2nd gen)"}, {"iPhone13,1", "iPhone 12 mini"},
+    {"iPhone13,2", "iPhone 12"},          {"iPhone13,3", "iPhone 12 Pro"},
+    {"iPhone13,4", "iPhone 12 Pro Max"},  {"iPhone14,4", "iPhone 13 mini"},
+    {"iPhone14,5", "iPhone 13"},          {"iPhone14,2", "iPhone 13 Pro"},
+    {"iPhone14,3", "iPhone 13 Pro Max"},  {"iPhone14,6", "iPhone SE (3rd gen)"},
+    {"iPhone14,7", "iPhone 14"},          {"iPhone14,8", "iPhone 14 Plus"},
+    {"iPhone15,2", "iPhone 14 Pro"},      {"iPhone15,3", "iPhone 14 Pro Max"},
+    {"iPhone15,4", "iPhone 15"},          {"iPhone15,5", "iPhone 15 Plus"},
+    {"iPhone16,1", "iPhone 15 Pro"},      {"iPhone16,2", "iPhone 15 Pro Max"},
+    {"iPhone17,3", "iPhone 16"},          {"iPhone17,4", "iPhone 16 Plus"},
+    {"iPhone17,1", "iPhone 16 Pro"},      {"iPhone17,2", "iPhone 16 Pro Max"},
+    {"iPhone17,5", "iPhone 16e"},         {"iPhone18,3", "iPhone 17"},
+    {"iPhone18,4", "iPhone Air"},         {"iPhone18,1", "iPhone 17 Pro"},
+    {"iPhone18,2", "iPhone 17 Pro Max"},
+};
+
+static const char *iPhoneModelName(const char *product_type)
 {
-    if (out == nullptr || out_size == 0) {
-        return;
+    for (const auto &entry : kIPhoneModelNames) {
+        if (strcmp(entry.product_type, product_type) == 0) return entry.name;
     }
-
-    out[0] = '\0';
-
-    if (desc == nullptr || desc->bLength < 2) {
-        snprintf(out, out_size, "N/A");
-        return;
-    }
-
-    size_t char_count = (desc->bLength - 2) / 2;
-    if (char_count >= out_size) {
-        char_count = out_size - 1;
-    }
-
-    for (size_t i = 0; i < char_count; ++i) {
-        uint16_t ch = desc->wData[i];
-
-        if (ch >= 0x20 && ch <= 0x7E) {
-            out[i] = (char)ch;
-        } else {
-            out[i] = '?';
-        }
-    }
-
-    out[char_count] = '\0';
+    return nullptr;
 }
 
 enum class AppleUdidDecodeResult {
@@ -339,16 +351,75 @@ HCCHome::HCCHome()
       _usb_i_serial_number(0),
       _usb_generation(0),
       _usb_udid_generation(0),
+      _hw_sensors_status(nullptr),
+      _hw_faceid_status(nullptr),
+      _hw_baseband_status(nullptr),
+      _hw_battery_status(nullptr),
+      _hw_dialog(nullptr),
+      _hw_has_result(false),
       _usb_mode(USBMode::NO_DEVICE),
       _usb_vid(0),
       _usb_pid(0),
-      _scan_scanning(false)
+      _scan_scanning(false),
+      _eeprom_status_label(nullptr),
+      _eeprom_result_label(nullptr),
+      _eeprom_button(nullptr),
+      _eeprom_program_button(nullptr),
+      _eeprom_file_dropdown(nullptr),
+      _eeprom_dialog(nullptr),
+      _eeprom_view_buf(nullptr),
+      _eeprom_view_len(0),
+      _panic_file_dropdown(nullptr),
+      _panic_status_label(nullptr),
+      _panic_url_label(nullptr),
+      _panic_analyze_button(nullptr),
+      _panic_error_label(nullptr),
+      _panic_cause_label(nullptr),
+      _panic_repair_label(nullptr),
+      _panic_conf_label(nullptr),
+      _panic_tier_label(nullptr),
+      _panic_apikey_dialog(nullptr),
+      _panic_apikey_input(nullptr),
+      _panic_keyboard(nullptr),
+      _panic_view_dialog(nullptr),
+      _repair_dialog(nullptr),
+      _repair_kb(nullptr),
+      _repair_model(nullptr),
+      _repair_sig(nullptr),
+      _repair_code(nullptr),
+      _repair_source(nullptr),
+      _repair_hw(nullptr),
+      _repair_action(nullptr),
+      _repair_note(nullptr),
+      _pi_list(nullptr),
+      _pi_list_count(nullptr),
+      _pi_model(nullptr),
+      _pi_ios(nullptr),
+      _pi_soc(nullptr),
+      _pi_file(nullptr),
+      _pi_sev(nullptr),
+      _pi_sevsub(nullptr),
+      _pi_keystr(nullptr),
+      _pi_cause(nullptr),
+      _pi_check(nullptr),
+      _pi_kb(nullptr),
+      _pi_conclusion(nullptr),
+      _pi_detail(nullptr),
+      _panic_busy(false),
+      _eeprom_busy(false),
+      _eeprom_program_confirm_pending(false),
+      _eeprom_program_confirm_tick(0)
 {
     _usb_status[0] = '\0';
     _usb_udid[0] = '\0';
     _usb_info[0] = '\0';
     _scan_result[0] = '\0';
     _scan_status[0] = '\0';
+    _eeprom_status[0] = '\0';
+    _eeprom_result[0] = '\0';
+    snprintf(_eeprom_file, sizeof(_eeprom_file), "eeprom_dump.bin");
+    _panic_file[0] = '\0';
+    _panic_status[0] = '\0';
 }
 bool HCCHome::init(void)
 {
@@ -380,6 +451,50 @@ void HCCHome::showHome()
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
+    // Detach EEPROM labels before the old screen is cleaned so a pending
+    // eepromTask result never writes to freed LVGL objects.
+    _eeprom_status_label = nullptr;
+    _eeprom_result_label = nullptr;
+    _eeprom_button = nullptr;
+    _eeprom_program_button = nullptr;
+    _eeprom_file_dropdown = nullptr;
+    _eeprom_dialog = nullptr;
+    _panic_file_dropdown = nullptr;
+    _panic_status_label = nullptr;
+    _panic_url_label = nullptr;
+    _panic_analyze_button = nullptr;
+    _panic_error_label = nullptr;
+    _panic_cause_label = nullptr;
+    _panic_repair_label = nullptr;
+    _panic_conf_label = nullptr;
+    _panic_tier_label = nullptr;
+    _panic_apikey_dialog = nullptr;
+    _panic_apikey_input = nullptr;
+    _panic_keyboard = nullptr;
+    _panic_view_dialog = nullptr;
+    _repair_dialog = nullptr;
+    _repair_kb = nullptr;
+    _repair_model = nullptr;
+    _repair_sig = nullptr;
+    _repair_code = nullptr;
+    _repair_source = nullptr;
+    _repair_hw = nullptr;
+    _repair_action = nullptr;
+    _repair_note = nullptr;
+    _pi_list = nullptr;
+    _pi_list_count = nullptr;
+    _pi_model = nullptr;
+    _pi_ios = nullptr;
+    _pi_soc = nullptr;
+    _pi_file = nullptr;
+    _pi_sev = nullptr;
+    _pi_sevsub = nullptr;
+    _pi_keystr = nullptr;
+    _pi_cause = nullptr;
+    _pi_check = nullptr;
+    _pi_kb = nullptr;
+    _pi_conclusion = nullptr;
+    _pi_detail = nullptr;
     lv_obj_clean(_screen);
 
     /* Background */
@@ -555,7 +670,7 @@ void HCCHome::showHome()
     lv_obj_align(eeprom_button, LV_ALIGN_TOP_LEFT, 28, 176);
     lv_obj_add_event_cb(
         eeprom_button,
-        onModuleClicked,
+        onEepromClicked,
         LV_EVENT_CLICKED,
         this
     );
@@ -616,7 +731,7 @@ void HCCHome::showHome()
     lv_obj_align(panic_button, LV_ALIGN_TOP_LEFT, 494, 256);
     lv_obj_add_event_cb(
         panic_button,
-        onModuleClicked,
+        onPanicClicked,
         LV_EVENT_CLICKED,
         this
     );
@@ -959,7 +1074,8 @@ void HCCHome::usbClientTask(void *arg)
         const bool dwc_delayed_snapshot_pending = app->_usb_transport.needsDwcDelayedSnapshot();
         const bool pair_time_wait = !dwc_delayed_snapshot_pending && app->_usb_transport.preparePairTimeWait();
         const bool credential_work_wait = !dwc_delayed_snapshot_pending && !pair_time_wait &&
-                                          app->_pair_credentials.hasDeferredWork();
+                                          (app->_pair_credentials.hasDeferredWork() ||
+                                           app->_usb_transport.serviceRetryPending());
         const TickType_t event_timeout = dwc_delayed_snapshot_pending ? pdMS_TO_TICKS(250) :
                                          (pair_time_wait ? pdMS_TO_TICKS(1000) :
                                           (credential_work_wait ? pdMS_TO_TICKS(250) : portMAX_DELAY));
@@ -1004,19 +1120,38 @@ void HCCHome::usbClientTask(void *arg)
         HCCHome::consumeCompletedCredentialBundle(app);
         app->_usb_transport.persistPendingPairRecord();
 
-        // Once the encrypted lockdown session is up, surface the device as trusted/ready
-        // and append any lockdown-derived info captured this connection. Runs in this task,
-        // which owns _usb_info, so the transport strings are read where they are written.
-        if (!app->_usb_session_reported && app->_usb_transport.sessionEstablished()) {
+        // Once the encrypted session is up and its info queries are done, surface the device
+        // as trusted/ready and show the lockdown-derived info. Runs in this task, which owns
+        // _usb_info, so the transport strings are read where they are written.
+        if (!app->_usb_session_reported && app->_usb_transport.deviceInfoReady()) {
             app->_usb_session_reported = true;
-            const char *ios = app->_usb_transport.productVersion();
-            const char *wifi = app->_usb_transport.wifiAddress();
-            size_t len = strnlen(app->_usb_info, sizeof(app->_usb_info));
-            if (ios[0] != '\0' && len < sizeof(app->_usb_info)) {
-                len += snprintf(app->_usb_info + len, sizeof(app->_usb_info) - len, "\niOS: %s", ios);
+            // "iPhone 14 Pro Max (iPhone15,3)", or just the raw code when it is not in the table.
+            const char *product_type = app->_usb_transport.productType();
+            const char *model_name = iPhoneModelName(product_type);
+            char model[80];
+            if (model_name != nullptr) {
+                snprintf(model, sizeof(model), "%s (%s)", model_name, product_type);
+            } else {
+                snprintf(model, sizeof(model), "%s", product_type);
             }
-            if (wifi[0] != '\0' && len < sizeof(app->_usb_info)) {
-                snprintf(app->_usb_info + len, sizeof(app->_usb_info) - len, "\nWi-Fi: %s", wifi);
+            const struct {
+                const char *label;
+                const char *value;
+            } rows[] = {
+                {"Model", model},
+                {"SN", app->_usb_transport.serialNumber()},
+                {"IMEI", app->_usb_transport.imei()},
+                {"Wi-Fi", app->_usb_transport.wifiAddress()},
+                {"Bluetooth", app->_usb_transport.bluetoothAddress()},
+                {"Baseband", app->_usb_transport.basebandVersion()},
+            };
+            size_t len = 0;
+            app->_usb_info[0] = '\0';
+            for (const auto &row : rows) {
+                if (len >= sizeof(app->_usb_info)) break;
+                len += snprintf(app->_usb_info + len, sizeof(app->_usb_info) - len, "%s%s: %s",
+                                len == 0 ? "" : "\n", row.label,
+                                row.value[0] != '\0' ? row.value : "-");
             }
             snprintf(app->_usb_status, sizeof(app->_usb_status), "SESSION READY - iPhone trusted");
             lv_async_call(HCCHome::applyUSBResult, app);
@@ -1579,52 +1714,18 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
                 app->_usb_pid
             );
 
-            const char *speed = "UNKNOWN";
-            if (dev_info.speed == USB_SPEED_LOW) {
-                speed = "LOW";
-            } else if (dev_info.speed == USB_SPEED_FULL) {
-                speed = "FULL";
-            } else if (dev_info.speed == USB_SPEED_HIGH) {
-                speed = "HIGH";
-            }
-
-            char manufacturer[64];
-            char product[64];
-            char serial[64];
-
-            usbStringToAscii(
-                dev_info.str_desc_manufacturer,
-                manufacturer,
-                sizeof(manufacturer)
-            );
-
-            usbStringToAscii(
-                dev_info.str_desc_product,
-                product,
-                sizeof(product)
-            );
-
-            usbStringToAscii(
-                dev_info.str_desc_serial_num,
-                serial,
-                sizeof(serial)
-            );
-
             snprintf(
                 app->_usb_status,
                 sizeof(app->_usb_status),
                 "USB DEVICE DETECTED"
             );
 
-            // Compact identity so the encrypted-session lines (iOS, Wi-Fi) also fit the panel.
+            // Device info (Model, SN, IMEI, ...) replaces this once the encrypted session is up.
             snprintf(
                 app->_usb_info,
                 sizeof(app->_usb_info),
-                "VID:PID  %04X:%04X\nProduct: %s\nSerial: %s",
-                dev_desc->idVendor,
-                dev_desc->idProduct,
-                product,
-                serial
+                "%s",
+                app->_usb_mode == USBMode::NORMAL ? "Reading device info..." : ""
             );
         } else {
             snprintf(
@@ -1759,6 +1860,71 @@ void HCCHome::onI2CClicked(lv_event_t *event)
     }
 
     app->showI2C();
+}
+
+void HCCHome::onEepromClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) {
+        return;
+    }
+    app->showEeprom();
+}
+
+// Shared setup for both EEPROM operations: mark busy, show status, disable both buttons.
+void HCCHome::beginEepromOp(const char *status)
+{
+    _eeprom_busy = true;
+    snprintf(_eeprom_status, sizeof(_eeprom_status), "%s", status);
+    if (_eeprom_status_label != nullptr) {
+        lv_label_set_text(_eeprom_status_label, _eeprom_status);
+    }
+    if (_eeprom_result_label != nullptr) {
+        lv_label_set_text(_eeprom_result_label, "Vui lòng chờ...");
+    }
+    if (_eeprom_button != nullptr) {
+        lv_obj_add_state(_eeprom_button, LV_STATE_DISABLED);
+    }
+    if (_eeprom_program_button != nullptr) {
+        lv_obj_add_state(_eeprom_program_button, LV_STATE_DISABLED);
+    }
+}
+
+void HCCHome::onEepromDumpClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_busy) {
+        return;
+    }
+    // Reading cancels any pending write confirmation.
+    app->_eeprom_program_confirm_pending = false;
+    app->beginEepromOp("Đang đọc EEPROM...");
+    xTaskCreate(eepromTask, "hcc_eeprom", 6144, app, 5, nullptr);
+}
+
+void HCCHome::onEepromProgramClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_busy) {
+        return;
+    }
+
+    // First tap arms a 5s confirmation window; a second tap within it starts the write.
+    if (!app->_eeprom_program_confirm_pending ||
+        lv_tick_elaps(app->_eeprom_program_confirm_tick) > 5000) {
+        app->_eeprom_program_confirm_pending = true;
+        app->_eeprom_program_confirm_tick = lv_tick_get();
+        snprintf(app->_eeprom_status, sizeof(app->_eeprom_status),
+                 "Bấm lần nữa để xác nhận GHI");
+        if (app->_eeprom_status_label != nullptr) {
+            lv_label_set_text(app->_eeprom_status_label, app->_eeprom_status);
+        }
+        return;
+    }
+
+    app->_eeprom_program_confirm_pending = false;
+    app->beginEepromOp("Đang ghi EEPROM...");
+    xTaskCreate(eepromProgramTask, "hcc_eeprom_wr", 6144, app, 5, nullptr);
 }
 
 void HCCHome::onBackClicked(lv_event_t *event)
@@ -1919,6 +2085,50 @@ bool HCCHome::close(void)
     _scan_status_label = nullptr;
     _scan_result_label = nullptr;
     _scan_button = nullptr;
+    _hw_sensors_status = nullptr;
+    _hw_faceid_status = nullptr;
+    _hw_baseband_status = nullptr;
+    _hw_battery_status = nullptr;
+    _hw_dialog = nullptr;
+    _panic_file_dropdown = nullptr;
+    _panic_status_label = nullptr;
+    _panic_url_label = nullptr;
+    _panic_analyze_button = nullptr;
+    _panic_error_label = nullptr;
+    _panic_cause_label = nullptr;
+    _panic_repair_label = nullptr;
+    _panic_conf_label = nullptr;
+    _panic_tier_label = nullptr;
+    _panic_apikey_dialog = nullptr;
+    _panic_apikey_input = nullptr;
+    _panic_keyboard = nullptr;
+    _panic_view_dialog = nullptr;
+    _repair_dialog = nullptr;
+    _repair_kb = nullptr;
+    _repair_model = nullptr;
+    _repair_sig = nullptr;
+    _repair_code = nullptr;
+    _repair_source = nullptr;
+    _repair_hw = nullptr;
+    _repair_action = nullptr;
+    _repair_note = nullptr;
+    _pi_list = nullptr;
+    _pi_list_count = nullptr;
+    _pi_model = nullptr;
+    _pi_ios = nullptr;
+    _pi_soc = nullptr;
+    _pi_file = nullptr;
+    _pi_sev = nullptr;
+    _pi_sevsub = nullptr;
+    _pi_keystr = nullptr;
+    _pi_cause = nullptr;
+    _pi_check = nullptr;
+    _pi_kb = nullptr;
+    _pi_conclusion = nullptr;
+    _pi_detail = nullptr;
+
+    // Dừng HTTP server nhận panic khi đóng app.
+    HCCPanicServer::stop();
 
     if (_usb_device == nullptr) {
         // No device attached: stopping the client now is safe.
@@ -2074,6 +2284,17 @@ void HCCHome::showUSB()
         }
     }
     _recovery_confirm_pending = false;
+
+    /* HARDWARE CHECK (kiểm tra phần cứng iPhone qua phiên Lockdown) */
+    lv_obj_t *hw_button = lv_btn_create(_screen);
+    lv_obj_set_size(hw_button, 260, 52);
+    lv_obj_align(hw_button, LV_ALIGN_BOTTOM_LEFT, 28, -22);
+    lv_obj_set_style_bg_color(hw_button, lv_color_hex(0x2478D0), 0);
+    lv_obj_add_event_cb(hw_button, onHardwareCheckClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *hw_label = lv_label_create(hw_button);
+    lv_label_set_text(hw_label, "HARDWARE CHECK");
+    lv_obj_center(hw_label);
+    lv_obj_set_style_text_font(hw_label, &lv_font_be_vietnam_18, 0);
 
     /* Back */
     lv_obj_t *back_button = lv_btn_create(_screen);
@@ -2512,4 +2733,1911 @@ void HCCHome::performScan()
             "I2C probe error"
         );
     }
+}
+
+// Lazily bring up the shared external I2C bus (same pins as the scanner).
+i2c_master_bus_handle_t HCCHome::ensureI2CBus()
+{
+    if (_external_i2c_bus != nullptr) {
+        return _external_i2c_bus;
+    }
+
+    i2c_master_bus_config_t bus_config = {};
+    bus_config.i2c_port = I2C_NUM_0;
+    bus_config.sda_io_num = GPIO_NUM_4;
+    bus_config.scl_io_num = GPIO_NUM_5;
+    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_config.glitch_ignore_cnt = 7;
+    bus_config.trans_queue_depth = 0;
+    bus_config.flags.enable_internal_pullup = true;
+
+    esp_err_t ret = i2c_new_master_bus(&bus_config, &_external_i2c_bus);
+    if (ret != ESP_OK) {
+        printf("[HCC EEPROM] I2C init failed: %s\n", esp_err_to_name(ret));
+        _external_i2c_bus = nullptr;
+    }
+    return _external_i2c_bus;
+}
+
+void HCCHome::performEepromDump()
+{
+    i2c_master_bus_handle_t bus = ensureI2CBus();
+    if (bus == nullptr) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Lỗi khởi tạo I2C");
+        _eeprom_result[0] = '\0';
+        return;
+    }
+
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%s", _eeprom_file);
+    esp_err_t ret = HCCEeprom::dumpToSd(bus, _eeprom_config, filename);
+
+    if (ret == ESP_OK) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Đã lưu thẻ SD");
+        snprintf(_eeprom_result, sizeof(_eeprom_result),
+                 "%u byte @0x%02X\n-> %s/%s",
+                 static_cast<unsigned>(_eeprom_config.total_size),
+                 _eeprom_config.device_address,
+                 BSP_SD_MOUNT_POINT, filename);
+    } else {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Thất bại");
+        snprintf(_eeprom_result, sizeof(_eeprom_result), "%s", esp_err_to_name(ret));
+    }
+}
+
+void HCCHome::performEepromProgram()
+{
+    i2c_master_bus_handle_t bus = ensureI2CBus();
+    if (bus == nullptr) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Lỗi khởi tạo I2C");
+        _eeprom_result[0] = '\0';
+        return;
+    }
+
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%s", _eeprom_file);
+    esp_err_t ret = HCCEeprom::programFromSd(bus, _eeprom_config, filename);
+    if (ret != ESP_OK) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Ghi thất bại");
+        snprintf(_eeprom_result, sizeof(_eeprom_result), "%s", esp_err_to_name(ret));
+        return;
+    }
+
+    // Verify: đọc lại EEPROM và so với file vừa ghi.
+    size_t mismatch = 0;
+    esp_err_t vret = HCCEeprom::verifyAgainstSd(bus, _eeprom_config, filename, &mismatch);
+    if (vret == ESP_OK) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Ghi & verify OK");
+        snprintf(_eeprom_result, sizeof(_eeprom_result),
+                 "Ghi từ %s/%s @0x%02X, verify khớp",
+                 BSP_SD_MOUNT_POINT, filename, _eeprom_config.device_address);
+    } else if (vret == ESP_ERR_INVALID_CRC) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Verify LỆCH");
+        snprintf(_eeprom_result, sizeof(_eeprom_result),
+                 "Đã ghi nhưng verify lệch tại offset 0x%04X",
+                 static_cast<unsigned>(mismatch));
+    } else {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Verify lỗi");
+        snprintf(_eeprom_result, sizeof(_eeprom_result),
+                 "Đã ghi, verify lỗi: %s", esp_err_to_name(vret));
+    }
+}
+
+void HCCHome::eepromTask(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app != nullptr) {
+        app->performEepromDump();
+        lv_async_call(applyEepromResult, app);
+    }
+    vTaskDelete(nullptr);
+}
+
+void HCCHome::eepromProgramTask(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app != nullptr) {
+        app->performEepromProgram();
+        lv_async_call(applyEepromResult, app);
+    }
+    vTaskDelete(nullptr);
+}
+
+void HCCHome::applyEepromResult(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) {
+        return;
+    }
+
+    if (app->_eeprom_status_label != nullptr) {
+        lv_label_set_text(app->_eeprom_status_label, app->_eeprom_status);
+    }
+    if (app->_eeprom_result_label != nullptr) {
+        lv_label_set_text(app->_eeprom_result_label, app->_eeprom_result);
+    }
+    if (app->_eeprom_button != nullptr) {
+        lv_obj_clear_state(app->_eeprom_button, LV_STATE_DISABLED);
+    }
+    if (app->_eeprom_program_button != nullptr) {
+        lv_obj_clear_state(app->_eeprom_program_button, LV_STATE_DISABLED);
+    }
+    app->_eeprom_busy = false;
+}
+
+void HCCHome::populateEepromFileList()
+{
+    if (_eeprom_file_dropdown == nullptr) {
+        return;
+    }
+
+    char list[512];
+    int count = HCCEeprom::listFiles(list, sizeof(list), ".bin");
+    if (count <= 0) {
+        // Chưa có file .bin (hoặc lỗi thẻ): giữ tên mặc định để ĐỌC có thể tạo file mới.
+        snprintf(list, sizeof(list), "eeprom_dump.bin");
+    }
+
+    lv_dropdown_set_options(_eeprom_file_dropdown, list);
+    // set_options đưa lựa chọn về mục đầu: đồng bộ _eeprom_file theo mục đang chọn.
+    lv_dropdown_get_selected_str(_eeprom_file_dropdown, _eeprom_file, sizeof(_eeprom_file));
+}
+
+void HCCHome::onEepromFileChanged(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_file_dropdown == nullptr) {
+        return;
+    }
+    lv_dropdown_get_selected_str(app->_eeprom_file_dropdown,
+                                 app->_eeprom_file, sizeof(app->_eeprom_file));
+    // Đổi file thì hủy xác nhận ghi đang chờ.
+    app->_eeprom_program_confirm_pending = false;
+}
+
+void HCCHome::onEepromRefreshClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_busy) {
+        return;
+    }
+    app->populateEepromFileList();
+    snprintf(app->_eeprom_status, sizeof(app->_eeprom_status), "Đã làm mới danh sách");
+    if (app->_eeprom_status_label != nullptr) {
+        lv_label_set_text(app->_eeprom_status_label, app->_eeprom_status);
+    }
+}
+
+void HCCHome::onEepromViewClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_busy || app->_eeprom_file[0] == '\0') {
+        return;
+    }
+    app->beginEepromOp("Đang đọc file...");
+    xTaskCreate(eepromViewTask, "hcc_eeprom_vw", 6144, app, 5, nullptr);
+}
+
+void HCCHome::onEepromDialogCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_eeprom_dialog == nullptr) {
+        return;
+    }
+    lv_obj_del(app->_eeprom_dialog);
+    app->_eeprom_dialog = nullptr;
+}
+
+void HCCHome::performEepromView()
+{
+    free(_eeprom_view_buf);
+    _eeprom_view_buf = nullptr;
+    _eeprom_view_len = 0;
+
+    uint8_t *buf = static_cast<uint8_t *>(malloc(_eeprom_config.total_size));
+    if (buf == nullptr) {
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Hết bộ nhớ");
+        snprintf(_eeprom_result, sizeof(_eeprom_result),
+                 "Không cấp phát được %u byte",
+                 static_cast<unsigned>(_eeprom_config.total_size));
+        return;
+    }
+
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%s", _eeprom_file);
+    size_t len = 0;
+    esp_err_t ret = HCCEeprom::loadBufferFromSd(filename, buf,
+                                                _eeprom_config.total_size, &len);
+    if (ret != ESP_OK || len == 0) {
+        free(buf);
+        snprintf(_eeprom_status, sizeof(_eeprom_status), "Đọc file lỗi");
+        snprintf(_eeprom_result, sizeof(_eeprom_result), "%s: %s", filename,
+                 (ret == ESP_OK) ? "file rỗng" : esp_err_to_name(ret));
+        return;
+    }
+
+    _eeprom_view_buf = buf;
+    _eeprom_view_len = len;
+    snprintf(_eeprom_status, sizeof(_eeprom_status), "Đã nạp %u byte",
+             static_cast<unsigned>(len));
+    snprintf(_eeprom_result, sizeof(_eeprom_result), "Xem HEX: %s (%u byte)",
+             filename, static_cast<unsigned>(len));
+}
+
+void HCCHome::eepromViewTask(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app != nullptr) {
+        app->performEepromView();
+        lv_async_call(applyEepromView, app);
+    }
+    vTaskDelete(nullptr);
+}
+
+void HCCHome::applyEepromView(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) {
+        return;
+    }
+
+    if (app->_eeprom_status_label != nullptr) {
+        lv_label_set_text(app->_eeprom_status_label, app->_eeprom_status);
+    }
+    if (app->_eeprom_result_label != nullptr) {
+        lv_label_set_text(app->_eeprom_result_label, app->_eeprom_result);
+    }
+    if (app->_eeprom_button != nullptr) {
+        lv_obj_clear_state(app->_eeprom_button, LV_STATE_DISABLED);
+    }
+    if (app->_eeprom_program_button != nullptr) {
+        lv_obj_clear_state(app->_eeprom_program_button, LV_STATE_DISABLED);
+    }
+    app->_eeprom_busy = false;
+
+    // Chỉ mở hộp thoại nếu vẫn ở màn hình EEPROM và có dữ liệu.
+    if (app->_eeprom_button != nullptr && app->_eeprom_view_buf != nullptr) {
+        app->showBinaryDialog(app->_eeprom_view_buf, app->_eeprom_view_len);
+    }
+    free(app->_eeprom_view_buf);
+    app->_eeprom_view_buf = nullptr;
+    app->_eeprom_view_len = 0;
+}
+
+void HCCHome::showBinaryDialog(const uint8_t *data, size_t len)
+{
+    if (_screen == nullptr || data == nullptr || len == 0) {
+        return;
+    }
+    if (_eeprom_dialog != nullptr) {
+        lv_obj_del(_eeprom_dialog);
+        _eeprom_dialog = nullptr;
+    }
+
+    /* Lớp phủ mờ toàn màn hình */
+    _eeprom_dialog = lv_obj_create(_screen);
+    lv_obj_set_size(_eeprom_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(_eeprom_dialog);
+    lv_obj_set_style_bg_color(_eeprom_dialog, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_eeprom_dialog, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(_eeprom_dialog, 0, 0);
+    lv_obj_set_style_radius(_eeprom_dialog, 0, 0);
+    lv_obj_clear_flag(_eeprom_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Bảng nội dung */
+    lv_obj_t *panel = lv_obj_create(_eeprom_dialog);
+    lv_obj_set_size(panel, 880, 540);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    char title_text[96];
+    snprintf(title_text, sizeof(title_text), "HEX: %s (%u byte)",
+             _eeprom_file, static_cast<unsigned>(len));
+    lv_obj_t *dlg_title = lv_label_create(panel);
+    lv_label_set_text(dlg_title, title_text);
+    lv_obj_align(dlg_title, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_set_style_text_color(dlg_title, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(dlg_title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *close_button = lv_btn_create(panel);
+    lv_obj_set_size(close_button, 110, 42);
+    lv_obj_align(close_button, LV_ALIGN_TOP_RIGHT, 0, -6);
+    lv_obj_add_event_cb(close_button, onEepromDialogCloseClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *close_label = lv_label_create(close_button);
+    lv_label_set_text(close_label, "ĐÓNG");
+    lv_obj_center(close_label);
+    lv_obj_set_style_text_font(close_label, &lv_font_be_vietnam_16, 0);
+
+    /* Vùng cuộn chứa hex dump */
+    lv_obj_t *content = lv_obj_create(panel);
+    lv_obj_set_size(content, 840, 450);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, 52);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x05090D), 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 6, 0);
+
+    lv_obj_t *hex_label = lv_label_create(content);
+    lv_obj_set_style_text_color(hex_label, lv_color_hex(0xCFE3EF), 0);
+    lv_obj_set_style_text_font(hex_label, &lv_font_be_vietnam_16, 0);
+
+    const size_t bytes_per_line = 16;
+    const size_t lines = (len + bytes_per_line - 1) / bytes_per_line;
+    const size_t cap = lines * 80 + 64;
+    char *text = static_cast<char *>(malloc(cap));
+    if (text == nullptr) {
+        lv_label_set_text(hex_label, "Hết bộ nhớ khi dựng hex");
+        return;
+    }
+
+    size_t p = 0;
+    for (size_t off = 0; off < len && p < cap - 1; off += bytes_per_line) {
+        p += snprintf(text + p, cap - p, "%04X  ", static_cast<unsigned>(off));
+        const size_t n = (len - off < bytes_per_line) ? (len - off) : bytes_per_line;
+        for (size_t i = 0; i < bytes_per_line; ++i) {
+            if (i < n) {
+                p += snprintf(text + p, cap - p, "%02X ", data[off + i]);
+            } else {
+                p += snprintf(text + p, cap - p, "   ");
+            }
+        }
+        p += snprintf(text + p, cap - p, " |");
+        for (size_t i = 0; i < n && p < cap - 1; ++i) {
+            const uint8_t c = data[off + i];
+            text[p++] = (c >= 32 && c < 127) ? static_cast<char>(c) : '.';
+        }
+        p += snprintf(text + p, cap - p, "|\n");
+    }
+    text[(p < cap) ? p : cap - 1] = '\0';
+    lv_label_set_text(hex_label, text);
+    free(text);
+}
+
+void HCCHome::showEeprom()
+{
+    if (_screen == nullptr) {
+        return;
+    }
+
+    _usb_status_label = nullptr;
+    _usb_info_label = nullptr;
+    _usb_mode_label = nullptr;
+    _recovery_button_label = nullptr;
+    _eeprom_status_label = nullptr;
+    _eeprom_result_label = nullptr;
+    _eeprom_button = nullptr;
+    _eeprom_program_button = nullptr;
+    _eeprom_file_dropdown = nullptr;
+    _eeprom_dialog = nullptr;
+
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x101820), 0);
+
+    _eeprom_busy = false;
+    _eeprom_program_confirm_pending = false;
+    snprintf(_eeprom_status, sizeof(_eeprom_status), "Sẵn sàng");
+    _eeprom_result[0] = '\0';
+
+    /* Header */
+    lv_obj_t *title = lv_label_create(_screen);
+    lv_label_set_text(title, "EEPROM");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 20);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
+
+    char cfg_text[96];
+    snprintf(cfg_text, sizeof(cfg_text),
+             "Addr 0x%02X   %u byte   addr %u byte   SDA4/SCL5",
+             _eeprom_config.device_address,
+             static_cast<unsigned>(_eeprom_config.total_size),
+             _eeprom_config.address_width);
+    lv_obj_t *cfg = lv_label_create(_screen);
+    lv_label_set_text(cfg, cfg_text);
+    lv_obj_align(cfg, LV_ALIGN_TOP_LEFT, 28, 62);
+    lv_obj_set_style_text_color(cfg, lv_color_hex(0xB8C5CF), 0);
+    lv_obj_set_style_text_font(cfg, &lv_font_be_vietnam_18, 0);
+
+    /* File selector row: nhãn + dropdown chọn file + nút làm mới danh sách */
+    lv_obj_t *file_title = lv_label_create(_screen);
+    lv_label_set_text(file_title, "File:");
+    lv_obj_align(file_title, LV_ALIGN_TOP_LEFT, 28, 118);
+    lv_obj_set_style_text_color(file_title, lv_color_hex(0xB8C5CF), 0);
+    lv_obj_set_style_text_font(file_title, &lv_font_be_vietnam_16, 0);
+
+    _eeprom_file_dropdown = lv_dropdown_create(_screen);
+    lv_obj_set_size(_eeprom_file_dropdown, 300, 40);
+    lv_obj_align(_eeprom_file_dropdown, LV_ALIGN_TOP_LEFT, 86, 110);
+    lv_obj_set_style_text_font(_eeprom_file_dropdown, &lv_font_be_vietnam_16, 0);
+    lv_obj_add_event_cb(_eeprom_file_dropdown, onEepromFileChanged, LV_EVENT_VALUE_CHANGED, this);
+    populateEepromFileList();
+
+    lv_obj_t *refresh_button = lv_btn_create(_screen);
+    lv_obj_set_size(refresh_button, 110, 40);
+    lv_obj_align(refresh_button, LV_ALIGN_TOP_LEFT, 398, 110);
+    lv_obj_add_event_cb(refresh_button, onEepromRefreshClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *refresh_label = lv_label_create(refresh_button);
+    lv_label_set_text(refresh_label, "LÀM MỚI");
+    lv_obj_center(refresh_label);
+    lv_obj_set_style_text_font(refresh_label, &lv_font_be_vietnam_16, 0);
+
+    /* Hàng nút thao tác (nhỏ gọn) */
+    const lv_coord_t btn_w = 168;
+    const lv_coord_t btn_h = 46;
+    const lv_coord_t btn_y = 164;
+
+    /* ĐỌC EEPROM -> file trên SD */
+    _eeprom_button = lv_btn_create(_screen);
+    lv_obj_set_size(_eeprom_button, btn_w, btn_h);
+    lv_obj_align(_eeprom_button, LV_ALIGN_TOP_LEFT, 28, btn_y);
+    lv_obj_add_event_cb(_eeprom_button, onEepromDumpClicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *dump_label = lv_label_create(_eeprom_button);
+    lv_label_set_text(dump_label, "ĐỌC -> SD");
+    lv_obj_center(dump_label);
+    lv_obj_set_style_text_font(dump_label, &lv_font_be_vietnam_16, 0);
+
+    /* GHI file trên SD -> EEPROM */
+    _eeprom_program_button = lv_btn_create(_screen);
+    lv_obj_set_size(_eeprom_program_button, btn_w, btn_h);
+    lv_obj_align(_eeprom_program_button, LV_ALIGN_TOP_LEFT, 208, btn_y);
+    lv_obj_add_event_cb(_eeprom_program_button, onEepromProgramClicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *program_label = lv_label_create(_eeprom_program_button);
+    lv_label_set_text(program_label, "GHI <- SD");
+    lv_obj_center(program_label);
+    lv_obj_set_style_text_font(program_label, &lv_font_be_vietnam_16, 0);
+
+    /* XEM HEX: mở hộp thoại hiển thị binary của file đang chọn */
+    lv_obj_t *view_button = lv_btn_create(_screen);
+    lv_obj_set_size(view_button, btn_w, btn_h);
+    lv_obj_align(view_button, LV_ALIGN_TOP_LEFT, 388, btn_y);
+    lv_obj_add_event_cb(view_button, onEepromViewClicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *view_label = lv_label_create(view_button);
+    lv_label_set_text(view_label, "XEM HEX");
+    lv_obj_center(view_label);
+    lv_obj_set_style_text_font(view_label, &lv_font_be_vietnam_16, 0);
+
+    _eeprom_status_label = lv_label_create(_screen);
+    lv_label_set_text(_eeprom_status_label, _eeprom_status);
+    lv_obj_align(_eeprom_status_label, LV_ALIGN_TOP_LEFT, 572, btn_y + 12);
+    lv_obj_set_style_text_color(_eeprom_status_label, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(_eeprom_status_label, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *result_title = lv_label_create(_screen);
+    lv_label_set_text(result_title, "Kết quả:");
+    lv_obj_align(result_title, LV_ALIGN_TOP_LEFT, 28, 232);
+    lv_obj_set_style_text_color(result_title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(result_title, &lv_font_be_vietnam_16, 0);
+
+    _eeprom_result_label = lv_label_create(_screen);
+    lv_label_set_text(_eeprom_result_label, "Chưa có thao tác");
+    lv_obj_align(_eeprom_result_label, LV_ALIGN_TOP_LEFT, 28, 264);
+    lv_obj_set_width(_eeprom_result_label, 900);
+    lv_obj_set_style_text_color(_eeprom_result_label, lv_color_hex(0xB8C5CF), 0);
+    lv_obj_set_style_text_font(_eeprom_result_label, &lv_font_be_vietnam_16, 0);
+
+    /* Back */
+    lv_obj_t *back_button = lv_btn_create(_screen);
+    lv_obj_set_size(back_button, 130, 46);
+    lv_obj_align(back_button, LV_ALIGN_BOTTOM_LEFT, 28, -25);
+    lv_obj_add_event_cb(back_button, onBackClicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t *back_label = lv_label_create(back_button);
+    lv_label_set_text(back_label, "BACK");
+    lv_obj_center(back_label);
+    lv_obj_set_style_text_font(back_label, &lv_font_be_vietnam_16, 0);
+}
+
+// ==================== PANIC & AI ANALYZE ====================
+
+void HCCHome::onPanicClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) {
+        return;
+    }
+    app->showPanic();
+}
+
+void HCCHome::onPanicFileChanged(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_file_dropdown == nullptr) {
+        return;
+    }
+    lv_dropdown_get_selected_str(app->_panic_file_dropdown, app->_panic_file, sizeof(app->_panic_file));
+    app->refreshPanicDetail();
+}
+
+void HCCHome::onPanicListItemClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_pi_list == nullptr) {
+        return;
+    }
+    lv_obj_t *btn = lv_event_get_target(event);
+    const char *key = static_cast<const char *>(lv_obj_get_user_data(btn));
+    if (key && key[0]) {
+        snprintf(app->_panic_file, sizeof(app->_panic_file), "%s", key);
+        app->refreshPanicDetail();
+    }
+}
+
+void HCCHome::onPanicListItemDeleted(lv_event_t *event)
+{
+    lv_obj_t *btn = lv_event_get_target(event);
+    if (btn) {
+        void *key = lv_obj_get_user_data(btn);
+        if (key) {
+            free(key);
+            lv_obj_set_user_data(btn, nullptr);
+        }
+    }
+}
+
+void HCCHome::onPanicChooseFileClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app && app->_panic_file_dropdown) {
+        lv_dropdown_open(app->_panic_file_dropdown);
+    }
+}
+
+void HCCHome::onPanicDeleteFileClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa chọn file");
+        return;
+    }
+    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0) {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Panic RAM - reboot để xoá");
+        return;
+    }
+    std::string path = HCCPanicStorage::absPath(std::string(HCCPanicServer::rawDir()) + "/" + app->_panic_file);
+    remove(path.c_str());
+    if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Đã xoá file");
+    app->populatePanicFileList();
+}
+
+void HCCHome::onPanicExportClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    const PanicResult &r = app->_panic_result;
+    if (!r.ok) {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa có kết quả để xuất");
+        return;
+    }
+    std::string body;
+    body += "PANIC: " + std::string(app->_panic_file) + "\n\n";
+    body += "LOI:\n" + r.error + "\n\n";
+    body += "NGUYEN NHAN:\n" + r.cause + "\n\n";
+    body += "KIEM TRA/SUA CHUA:\n" + r.repair + "\n\n";
+    body += "DO TIN CAY: " + r.confidence + "\nNGUON: " + r.source_tier + "\n";
+
+    std::string base = app->_panic_file;
+    if (base.rfind("[RAM] ", 0) == 0) base = base.substr(6);
+    for (auto &c : base) { if (c == '/' || c == '\\' || c == ' ') c = '_'; }
+    std::string rel = "panic/results/" + base + ".txt";
+    bool ok = HCCPanicStorage::writeFile(rel, body.c_str(), body.size());
+    // Đọc lại xác nhận.
+    std::string chk;
+    ok = ok && HCCPanicStorage::readFile(rel, chk) && !chk.empty();
+    if (app->_panic_status_label)
+        lv_label_set_text(app->_panic_status_label, ok ? "Đã xuất kết quả ra SD" : "Xuất thất bại (thẻ SD?)");
+}
+
+void HCCHome::onPanicRefreshClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_busy) {
+        return;
+    }
+    app->populatePanicFileList();
+    // Cập nhật lại địa chỉ nhận upload (phòng khi WiFi vừa có IP).
+    if (app->_panic_url_label != nullptr) {
+        char host[64];
+        HCCPanicServer::hostUrl(host, sizeof(host));
+        char ip[64];
+        char txt[160];
+        if (HCCPanicServer::deviceUrl(ip, sizeof(ip))) {
+            snprintf(txt, sizeof(txt), "Gửi panic tới: %s  (hoặc %s)", host, ip);
+        } else {
+            snprintf(txt, sizeof(txt), "Gửi panic tới: %s  (WiFi chưa kết nối)", host);
+        }
+        lv_label_set_text(app->_panic_url_label, txt);
+    }
+}
+
+void HCCHome::onPanicAnalyzeClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_busy) {
+        return;
+    }
+    if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
+        if (app->_panic_status_label != nullptr) {
+            lv_label_set_text(app->_panic_status_label, "Chưa chọn file panic");
+        }
+        return;
+    }
+
+    app->_panic_busy = true;
+    snprintf(app->_panic_status, sizeof(app->_panic_status), "Đang phân tích...");
+    if (app->_panic_status_label != nullptr) {
+        lv_label_set_text(app->_panic_status_label, app->_panic_status);
+    }
+    if (app->_panic_analyze_button != nullptr) {
+        lv_obj_add_state(app->_panic_analyze_button, LV_STATE_DISABLED);
+    }
+    // Task lớn: đọc SD + parse + (KB / TLS gọi AI) + cJSON.
+    xTaskCreate(panicAnalyzeTask, "hcc_panic", 16384, app, 4, nullptr);
+}
+
+void HCCHome::panicAnalyzeTask(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app != nullptr) {
+        app->performPanicAnalyze();
+        lv_async_call(applyPanicResult, app);
+    }
+    vTaskDelete(nullptr);
+}
+
+void HCCHome::performPanicAnalyze()
+{
+    // Nếu là ẢNH panic (RAM): gửi thẳng cho AI vision, bỏ qua parse/KB.
+    std::string img_mime;
+    bool is_img = (strncmp(_panic_file, "[RAM] ", 6) == 0) &&
+                  HCCPanicServer::receivedIsImage(&img_mime);
+    if (is_img) {
+        std::string name, bytes;
+        if (!HCCPanicServer::getReceived(name, bytes) || bytes.empty()) {
+            _panic_result = PanicResult();
+            _panic_result.ok = false;
+            _panic_result.message = "Không lấy được ảnh panic";
+            snprintf(_panic_status, sizeof(_panic_status), "Lỗi đọc ảnh");
+            return;
+        }
+        _panic_result = HCCPanicAI::analyzeImage(bytes, img_mime);
+        snprintf(_panic_status, sizeof(_panic_status),
+                 _panic_result.ok ? "Phân tích ảnh (AI) xong" : "AI ảnh lỗi");
+        return;
+    }
+
+    std::string raw;
+    if (!loadSelectedRaw(raw)) {
+        _panic_result = PanicResult();
+        _panic_result.ok = false;
+        _panic_result.message = "Không đọc được panic đang chọn";
+        snprintf(_panic_status, sizeof(_panic_status), "Lỗi đọc panic");
+        return;
+    }
+
+    ParsedPanic parsed = HCCPanicParser::parse(raw);
+
+    // 1) Tra Knowledge Base (VERIFIED > REPAIR_CONFIRMED > AI_INFERENCE).
+    HCCPanicKB::ensureLayout();
+    PanicResult kb = HCCPanicKB::lookup(parsed);
+    if (kb.ok) {
+        _panic_result = kb;
+        snprintf(_panic_status, sizeof(_panic_status), "Khớp KB: %s", kb.source_tier.c_str());
+        return;
+    }
+
+    // 2) Không có KB -> gọi AI.
+    PanicResult ai = HCCPanicAI::analyze(parsed);
+    if (ai.ok) {
+        // Lưu cache vào tầng AI_INFERENCE (không bao giờ tự thành VERIFIED).
+        HCCPanicKB::saveAiResult(parsed, ai);
+        _panic_result = ai;
+        snprintf(_panic_status, sizeof(_panic_status), "Phân tích AI xong");
+    } else {
+        _panic_result = ai;
+        snprintf(_panic_status, sizeof(_panic_status), "AI lỗi");
+    }
+}
+
+void HCCHome::applyPanicResult(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) {
+        return;
+    }
+
+    if (app->_panic_status_label != nullptr) {
+        lv_label_set_text(app->_panic_status_label, app->_panic_status);
+    }
+
+    const PanicResult &r = app->_panic_result;
+    auto setL = [](lv_obj_t *o, const std::string &s) {
+        if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
+    };
+    if (r.ok) {
+        setL(app->_pi_cause, r.cause);
+        setL(app->_pi_check, r.repair);
+        if (app->_pi_kb) {
+            std::string kb = "Nguồn: " + r.source_tier + "\nĐộ tin cậy: " +
+                             (r.confidence.empty() ? std::string("-") : r.confidence);
+            lv_label_set_text(app->_pi_kb, kb.c_str());
+            lv_color_t col = lv_color_hex(0x2E86FF);
+            if (r.source_tier == "VERIFIED") col = lv_color_hex(0x3DD66E);
+            else if (r.source_tier == "REPAIR_CONFIRMED") col = lv_color_hex(0xF2C94C);
+            lv_obj_set_style_text_color(app->_pi_kb, col, 0);
+        }
+        setL(app->_pi_conclusion, r.error);
+    } else {
+        setL(app->_pi_cause, "-");
+        setL(app->_pi_check, "-");
+        if (app->_pi_kb) {
+            lv_label_set_text(app->_pi_kb, "Chưa có KB khớp");
+            lv_obj_set_style_text_color(app->_pi_kb, lv_color_hex(0xB03030), 0);
+        }
+        setL(app->_pi_conclusion, r.message.empty() ? "Phân tích thất bại" : r.message);
+    }
+
+    if (app->_panic_analyze_button != nullptr) {
+        lv_obj_clear_state(app->_panic_analyze_button, LV_STATE_DISABLED);
+    }
+    app->_panic_busy = false;
+}
+
+static std::string dateFromName(const std::string &n);  // định nghĩa bên dưới
+
+void HCCHome::populatePanicFileList()
+{
+    if (_panic_file_dropdown == nullptr) {
+        return;
+    }
+    std::vector<std::string> items;
+    std::string rname, rraw;
+    if (HCCPanicServer::getReceived(rname, rraw)) {
+        items.push_back("[RAM] " + rname);
+    }
+    std::vector<std::string> files = HCCPanicStorage::listDir(HCCPanicServer::rawDir(), nullptr);
+    for (const auto &f : files) items.push_back(f);
+
+    // Dropdown chọn nhanh.
+    std::string opts;
+    if (items.empty()) {
+        opts = "(chưa có panic)";
+    } else {
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (i) opts += "\n";
+            opts += items[i];
+        }
+    }
+    lv_dropdown_set_options(_panic_file_dropdown, opts.c_str());
+    lv_dropdown_get_selected_str(_panic_file_dropdown, _panic_file, sizeof(_panic_file));
+
+    // Danh sách bên trái: mỗi mục 2 dòng (tên + model/ngày), key lưu ở user_data.
+    if (_pi_list) {
+        lv_obj_clean(_pi_list);
+        for (const auto &it : items) {
+            std::string model, raw;
+            if (it.rfind("[RAM] ", 0) == 0) {
+                std::string n, r;
+                if (HCCPanicServer::getReceived(n, r)) raw = r;
+            } else {
+                HCCPanicStorage::readFile(std::string(HCCPanicServer::rawDir()) + "/" + it, raw);
+            }
+            if (!raw.empty()) model = HCCPanicParser::parse(raw).model;
+            std::string date = dateFromName(it);
+            std::string sub = model;
+            if (!date.empty()) sub += (sub.empty() ? "" : "   ") + date;
+
+            lv_obj_t *b = lv_btn_create(_pi_list);
+            lv_obj_set_width(b, lv_pct(100));
+            lv_obj_set_height(b, LV_SIZE_CONTENT);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x18293A), 0);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x1E5AA8), LV_STATE_PRESSED);
+            lv_obj_set_style_radius(b, 8, 0);
+            lv_obj_set_style_pad_all(b, 8, 0);
+
+            lv_obj_t *l = lv_label_create(b);
+            lv_label_set_recolor(l, true);
+            lv_obj_set_width(l, lv_pct(100));
+            std::string txt = it;
+            if (!sub.empty()) txt += "\n#7F96A8 " + sub + "#";
+            lv_label_set_text(l, txt.c_str());
+            lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+
+            char *keycopy = strdup(it.c_str());
+            lv_obj_set_user_data(b, keycopy);
+            lv_obj_add_event_cb(b, onPanicListItemClicked, LV_EVENT_CLICKED, this);
+            lv_obj_add_event_cb(b, onPanicListItemDeleted, LV_EVENT_DELETE, this);
+        }
+    }
+    if (_pi_list_count) {
+        char c[16];
+        snprintf(c, sizeof(c), "(%u)", (unsigned)items.size());
+        lv_label_set_text(_pi_list_count, c);
+    }
+    refreshPanicDetail();
+}
+
+bool HCCHome::loadSelectedRaw(std::string &raw)
+{
+    if (_panic_file[0] == '\0' || _panic_file[0] == '(') {
+        return false;
+    }
+    const char *ram_prefix = "[RAM] ";
+    if (strncmp(_panic_file, ram_prefix, strlen(ram_prefix)) == 0) {
+        std::string name;
+        if (!HCCPanicServer::getReceived(name, raw)) return false;
+        return !raw.empty();
+    }
+    std::string rel = std::string(HCCPanicServer::rawDir()) + "/" + _panic_file;
+    return HCCPanicStorage::readFile(rel, raw) && !raw.empty();
+}
+
+// Tên thương mại từ mã model (chỉ khi có mapping chắc chắn trong DB).
+static const char *panicMarketingName(const std::string &code)
+{
+    for (const auto &e : kIPhoneModelNames) {
+        if (code == e.product_type) return e.name;
+    }
+    return nullptr;
+}
+
+// SoC suy từ họ model (A13..A19); nullptr nếu không rõ.
+static const char *panicSocForModel(const std::string &code)
+{
+    if (code.rfind("iPhone", 0) != 0) return nullptr;
+    const char *p = code.c_str() + 6;
+    int major = atoi(p);
+    const char *comma = strchr(p, ',');
+    int minor = comma ? atoi(comma + 1) : 0;
+    switch (major) {
+        case 12: return "A13";
+        case 13: return "A14";
+        case 14: return "A15";
+        case 15: return "A16";
+        case 16: return "A17 Pro";
+        case 17: return (minor <= 2) ? "A18 Pro" : "A18";
+        case 18: return (minor <= 2) ? "A19 Pro" : "A19";
+        default: return nullptr;
+    }
+}
+
+// ---- Card helpers (layout giống mockup) ----
+static lv_obj_t *mkCard(lv_obj_t *parent)
+{
+    lv_obj_t *c = lv_obj_create(parent);
+    lv_obj_set_height(c, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(c, lv_color_hex(0x142433), 0);
+    lv_obj_set_style_border_color(c, lv_color_hex(0x2A3E52), 0);
+    lv_obj_set_style_border_width(c, 1, 0);
+    lv_obj_set_style_radius(c, 12, 0);
+    lv_obj_set_style_pad_all(c, 12, 0);
+    lv_obj_set_style_pad_row(c, 5, 0);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    return c;
+}
+
+static void mkCardTitle(lv_obj_t *card, const char *sym, const char *text, lv_color_t col)
+{
+    lv_obj_t *row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 6, 0);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    if (sym && sym[0]) {
+        lv_obj_t *ic = lv_label_create(row);
+        lv_label_set_text(ic, sym);
+        lv_obj_set_style_text_color(ic, col, 0);
+    }
+    lv_obj_t *t = lv_label_create(row);
+    lv_label_set_text(t, text);
+    lv_obj_set_style_text_color(t, col, 0);
+    lv_obj_set_style_text_font(t, &lv_font_be_vietnam_16, 0);
+}
+
+static lv_obj_t *mkVal(lv_obj_t *card, const lv_font_t *f, lv_color_t col)
+{
+    lv_obj_t *v = lv_label_create(card);
+    lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(v, lv_pct(100));
+    lv_label_set_text(v, "-");
+    lv_obj_set_style_text_color(v, col, 0);
+    lv_obj_set_style_text_font(v, f, 0);
+    return v;
+}
+
+static lv_obj_t *mkRow(lv_obj_t *parent)
+{
+    lv_obj_t *r = lv_obj_create(parent);
+    lv_obj_remove_style_all(r);
+    lv_obj_set_width(r, lv_pct(100));
+    lv_obj_set_height(r, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(r, 10, 0);
+    return r;
+}
+
+// "20260926_174030.ips" -> "2026-09-26 17:40"
+static std::string dateFromName(const std::string &n)
+{
+    std::string s = n;
+    if (s.rfind("[RAM] ", 0) == 0) s = s.substr(6);
+    size_t i = 0;
+    while (i < s.size() && !isdigit((unsigned char)s[i])) i++;
+    std::string d = s.substr(i);
+    if (d.size() < 15 || d[8] != '_') return std::string();
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%.4s-%.2s-%.2s %.2s:%.2s",
+             d.c_str(), d.c_str() + 4, d.c_str() + 6, d.c_str() + 9, d.c_str() + 11);
+    return buf;
+}
+
+void HCCHome::showPanic()
+{
+    if (_screen == nullptr) {
+        return;
+    }
+
+    _panic_file_dropdown = nullptr;
+    _panic_status_label = nullptr;
+    _panic_url_label = nullptr;
+    _panic_analyze_button = nullptr;
+    _panic_error_label = nullptr;
+    _panic_cause_label = nullptr;
+    _panic_repair_label = nullptr;
+    _panic_conf_label = nullptr;
+    _panic_tier_label = nullptr;
+    _panic_apikey_dialog = nullptr;
+    _panic_apikey_input = nullptr;
+    _panic_keyboard = nullptr;
+    _panic_view_dialog = nullptr;
+    _repair_dialog = nullptr;
+    _repair_kb = nullptr;
+    _repair_model = nullptr;
+    _repair_sig = nullptr;
+    _repair_code = nullptr;
+    _repair_source = nullptr;
+    _repair_hw = nullptr;
+    _repair_action = nullptr;
+    _repair_note = nullptr;
+    _pi_list = nullptr;
+    _pi_list_count = nullptr;
+    _pi_model = nullptr;
+    _pi_ios = nullptr;
+    _pi_soc = nullptr;
+    _pi_file = nullptr;
+    _pi_sev = nullptr;
+    _pi_sevsub = nullptr;
+    _pi_keystr = nullptr;
+    _pi_cause = nullptr;
+    _pi_check = nullptr;
+    _pi_kb = nullptr;
+    _pi_conclusion = nullptr;
+    _pi_detail = nullptr;
+    _panic_busy = false;
+
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x0B1420), 0);
+    HCCPanicServer::start();
+    HCCPanicStorage::ensureMounted();
+
+    auto styleBtn = [](lv_obj_t *b, const char *txt, lv_event_cb_t cb, void *u,
+                       lv_color_t bg, const lv_font_t *f) {
+        lv_obj_set_style_bg_color(b, bg, 0);
+        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, u);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, txt);
+        lv_obj_center(l);
+        lv_obj_set_style_text_font(l, f, 0);
+    };
+
+    /* ===== Toolbar ===== */
+    lv_obj_t *ftitle = lv_label_create(_screen);
+    lv_label_set_text(ftitle, "File panic:");
+    lv_obj_align(ftitle, LV_ALIGN_TOP_LEFT, 24, 26);
+    lv_obj_set_style_text_color(ftitle, lv_color_hex(0xB8C5CF), 0);
+    lv_obj_set_style_text_font(ftitle, &lv_font_be_vietnam_16, 0);
+
+    _panic_file_dropdown = lv_dropdown_create(_screen);
+    lv_obj_set_size(_panic_file_dropdown, 300, 46);
+    lv_obj_align(_panic_file_dropdown, LV_ALIGN_TOP_LEFT, 128, 14);
+    lv_obj_set_style_text_font(_panic_file_dropdown, &lv_font_be_vietnam_16, 0);
+    lv_obj_add_event_cb(_panic_file_dropdown, onPanicFileChanged, LV_EVENT_VALUE_CHANGED, this);
+
+    lv_obj_t *choose_btn = lv_btn_create(_screen);
+    lv_obj_set_size(choose_btn, 132, 46);
+    lv_obj_align(choose_btn, LV_ALIGN_TOP_LEFT, 436, 14);
+    styleBtn(choose_btn, "CHỌN FILE", onPanicChooseFileClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+
+    lv_obj_t *refresh_btn = lv_btn_create(_screen);
+    lv_obj_set_size(refresh_btn, 132, 46);
+    lv_obj_align(refresh_btn, LV_ALIGN_TOP_LEFT, 574, 14);
+    styleBtn(refresh_btn, "LÀM MỚI", onPanicRefreshClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+
+    _panic_analyze_button = lv_btn_create(_screen);
+    lv_obj_set_size(_panic_analyze_button, 138, 46);
+    lv_obj_align(_panic_analyze_button, LV_ALIGN_TOP_LEFT, 712, 14);
+    styleBtn(_panic_analyze_button, "ANALYZE", onPanicAnalyzeClicked, this, lv_color_hex(0x2478D0), &lv_font_be_vietnam_16);
+
+    lv_obj_t *view_btn = lv_btn_create(_screen);
+    lv_obj_set_size(view_btn, 132, 46);
+    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 856, 14);
+    styleBtn(view_btn, "XEM PANIC", onPanicViewClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+
+    /* Địa chỉ + trạng thái (dòng mảnh dưới toolbar) */
+    _panic_url_label = lv_label_create(_screen);
+    {
+        char host[64], ip[64], txt[160];
+        HCCPanicServer::hostUrl(host, sizeof(host));
+        if (HCCPanicServer::deviceUrl(ip, sizeof(ip)))
+            snprintf(txt, sizeof(txt), "Gửi panic: %s  (hoặc %s)", host, ip);
+        else
+            snprintf(txt, sizeof(txt), "Gửi panic: %s  (WiFi chưa kết nối)", host);
+        lv_label_set_text(_panic_url_label, txt);
+    }
+    lv_obj_align(_panic_url_label, LV_ALIGN_TOP_LEFT, 24, 66);
+    lv_obj_set_style_text_color(_panic_url_label, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(_panic_url_label, &lv_font_be_vietnam_16, 0);
+
+    _panic_status_label = lv_label_create(_screen);
+    lv_label_set_text(_panic_status_label, "Sẵn sàng");
+    lv_obj_align(_panic_status_label, LV_ALIGN_TOP_RIGHT, -24, 66);
+    lv_obj_set_style_text_color(_panic_status_label, lv_color_hex(0x69E0C0), 0);
+    lv_obj_set_style_text_font(_panic_status_label, &lv_font_be_vietnam_16, 0);
+
+    /* ===== Danh sách panic (trái) ===== */
+    lv_obj_t *list_title = lv_label_create(_screen);
+    lv_label_set_text(list_title, "DANH SÁCH PANIC");
+    lv_obj_align(list_title, LV_ALIGN_TOP_LEFT, 24, 90);
+    lv_obj_set_style_text_color(list_title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(list_title, &lv_font_be_vietnam_18, 0);
+
+    _pi_list_count = lv_label_create(_screen);
+    lv_label_set_text(_pi_list_count, "(0)");
+    lv_obj_align(_pi_list_count, LV_ALIGN_TOP_LEFT, 300, 92);
+    lv_obj_set_style_text_color(_pi_list_count, lv_color_hex(0x7F96A8), 0);
+    lv_obj_set_style_text_font(_pi_list_count, &lv_font_be_vietnam_16, 0);
+
+    _pi_list = lv_list_create(_screen);
+    lv_obj_set_size(_pi_list, 340, 344);
+    lv_obj_align(_pi_list, LV_ALIGN_TOP_LEFT, 24, 118);
+    lv_obj_set_style_bg_color(_pi_list, lv_color_hex(0x101C28), 0);
+    lv_obj_set_style_border_color(_pi_list, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(_pi_list, 1, 0);
+    lv_obj_set_style_radius(_pi_list, 10, 0);
+
+    /* ===== Vùng chi tiết (phải): các thẻ card 2 cột, cuộn dọc ===== */
+    _pi_detail = lv_obj_create(_screen);
+    lv_obj_set_size(_pi_detail, 636, 344);
+    lv_obj_align(_pi_detail, LV_ALIGN_TOP_LEFT, 372, 118);
+    lv_obj_set_style_bg_opa(_pi_detail, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_pi_detail, 0, 0);
+    lv_obj_set_style_pad_all(_pi_detail, 2, 0);
+    lv_obj_set_style_pad_row(_pi_detail, 10, 0);
+    lv_obj_set_flex_flow(_pi_detail, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(_pi_detail, LV_DIR_VER);
+
+    const lv_color_t white = lv_color_hex(0xFFFFFF);
+    const lv_color_t cyan = lv_color_hex(0x00D9FF);
+    const lv_color_t green = lv_color_hex(0x8CE6A8);
+    const lv_font_t *f18 = &lv_font_be_vietnam_18;
+    const lv_font_t *f16 = &lv_font_be_vietnam_16;
+
+    /* Hàng 1: Thông tin thiết bị | Mức độ lỗi */
+    lv_obj_t *row1 = mkRow(_pi_detail);
+    lv_obj_t *cardDev = mkCard(row1);
+    lv_obj_set_flex_grow(cardDev, 3);
+    mkCardTitle(cardDev, LV_SYMBOL_HOME, "THÔNG TIN THIẾT BỊ", cyan);
+    _pi_model = mkVal(cardDev, f18, white);
+    _pi_ios = mkVal(cardDev, f18, white);
+    _pi_soc = mkVal(cardDev, f18, white);
+    _pi_file = mkVal(cardDev, f18, white);
+
+    lv_obj_t *cardSev = mkCard(row1);
+    lv_obj_set_flex_grow(cardSev, 2);
+    mkCardTitle(cardSev, LV_SYMBOL_WARNING, "MỨC ĐỘ LỖI", lv_color_hex(0xFF5252));
+    _pi_sev = mkVal(cardSev, &lv_font_be_vietnam_22, lv_color_hex(0xF2C94C));
+    _pi_sevsub = mkVal(cardSev, f16, lv_color_hex(0xB8C5CF));
+
+    /* Hàng 2: Key panic string (full) */
+    lv_obj_t *cardKey = mkCard(_pi_detail);
+    lv_obj_set_width(cardKey, lv_pct(100));
+    lv_obj_set_style_bg_color(cardKey, lv_color_hex(0x1A1416), 0);
+    mkCardTitle(cardKey, LV_SYMBOL_WARNING, "LỖI CHÍNH (KEY PANIC STRING)", lv_color_hex(0xFF6B6B));
+    _pi_keystr = mkVal(cardKey, f16, lv_color_hex(0xFF8A8A));
+
+    /* Hàng 3: Nguyên nhân AI | Hướng kiểm tra */
+    lv_obj_t *row3 = mkRow(_pi_detail);
+    lv_obj_t *cardCause = mkCard(row3);
+    lv_obj_set_flex_grow(cardCause, 1);
+    mkCardTitle(cardCause, LV_SYMBOL_SETTINGS, "NGUYÊN NHÂN DỰ ĐOÁN (AI)", cyan);
+    _pi_cause = mkVal(cardCause, f16, white);
+    lv_obj_t *cardCheck = mkCard(row3);
+    lv_obj_set_flex_grow(cardCheck, 1);
+    mkCardTitle(cardCheck, LV_SYMBOL_EDIT, "HƯỚNG KIỂM TRA / ĐỀ XUẤT", green);
+    _pi_check = mkVal(cardCheck, f16, green);
+
+    /* Hàng 4: Tham khảo KB | Kết luận */
+    lv_obj_t *row4 = mkRow(_pi_detail);
+    lv_obj_t *cardKb = mkCard(row4);
+    lv_obj_set_flex_grow(cardKb, 1);
+    mkCardTitle(cardKb, LV_SYMBOL_LIST, "THAM KHẢO KB", cyan);
+    _pi_kb = mkVal(cardKb, f16, cyan);
+    lv_obj_t *cardConc = mkCard(row4);
+    lv_obj_set_flex_grow(cardConc, 1);
+    mkCardTitle(cardConc, LV_SYMBOL_OK, "KẾT LUẬN", green);
+    _pi_conclusion = mkVal(cardConc, f16, green);
+
+    /* ===== Danh sách + chi tiết ban đầu ===== */
+    populatePanicFileList();
+
+    /* ===== Thanh nút dưới cùng ===== */
+    const lv_coord_t by = 474;
+    lv_obj_t *back_btn = lv_btn_create(_screen);
+    lv_obj_set_size(back_btn, 150, 52);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 24, by);
+    styleBtn(back_btn, "QUAY LẠI", onBackClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+
+    lv_obj_t *del_btn = lv_btn_create(_screen);
+    lv_obj_set_size(del_btn, 150, 52);
+    lv_obj_align(del_btn, LV_ALIGN_TOP_LEFT, 300, by);
+    styleBtn(del_btn, "XÓA FILE", onPanicDeleteFileClicked, this, lv_color_hex(0x5A2530), &lv_font_be_vietnam_16);
+
+    lv_obj_t *exp_btn = lv_btn_create(_screen);
+    lv_obj_set_size(exp_btn, 180, 52);
+    lv_obj_align(exp_btn, LV_ALIGN_TOP_LEFT, 460, by);
+    styleBtn(exp_btn, "XUẤT KẾT QUẢ", onPanicExportClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+
+    lv_obj_t *case_btn = lv_btn_create(_screen);
+    lv_obj_set_size(case_btn, 150, 52);
+    lv_obj_align(case_btn, LV_ALIGN_TOP_LEFT, 650, by);
+    styleBtn(case_btn, "LƯU CASE", onConfirmRepairClicked, this, lv_color_hex(0x2E9E5B), &lv_font_be_vietnam_16);
+
+    lv_obj_t *verify_btn = lv_btn_create(_screen);
+    lv_obj_set_size(verify_btn, 190, 52);
+    lv_obj_align(verify_btn, LV_ALIGN_TOP_LEFT, 810, by);
+    styleBtn(verify_btn, "XÁC NHẬN ĐÃ SỬA", onConfirmRepairClicked, this, lv_color_hex(0x3DD66E), &lv_font_be_vietnam_16);
+}
+
+void HCCHome::refreshPanicDetail()
+{
+    auto setL = [](lv_obj_t *o, const std::string &s) {
+        if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
+    };
+
+    std::string fileshown = _panic_file;
+    if (fileshown.rfind("[RAM] ", 0) == 0) fileshown = fileshown.substr(6);
+    setL(_pi_file, "File: " + fileshown);
+
+    // Ảnh panic?
+    std::string mime;
+    if (strncmp(_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(&mime)) {
+        setL(_pi_model, "Model: (ảnh panic)");
+        setL(_pi_ios, "iOS: -");
+        setL(_pi_soc, "SoC: -");
+        if (_pi_sev) { lv_label_set_text(_pi_sev, "ẢNH"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0x00D9FF), 0); }
+        setL(_pi_sevsub, "Ảnh chụp panic - dùng ANALYZE để AI đọc");
+        setL(_pi_keystr, "(Ảnh panic)");
+        if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
+        return;
+    }
+
+    std::string raw;
+    if (!loadSelectedRaw(raw)) {
+        setL(_pi_model, "Model: -");
+        setL(_pi_ios, "iOS: -");
+        setL(_pi_soc, "SoC: -");
+        if (_pi_sev) { lv_label_set_text(_pi_sev, "-"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xB8C5CF), 0); }
+        setL(_pi_sevsub, "-");
+        setL(_pi_keystr, "(chọn panic để xem)");
+        if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
+        return;
+    }
+
+    _pi_parsed = HCCPanicParser::parse(raw);
+
+    std::string mk = _pi_parsed.model;
+    std::string modeltxt = "Model: " + (mk.empty() ? std::string("-") : mk);
+    const char *mn = panicMarketingName(mk);
+    if (mn) modeltxt += std::string(" (") + mn + ")";
+    setL(_pi_model, modeltxt);
+    setL(_pi_ios, "iOS: " + (_pi_parsed.os_version.empty() ? std::string("-") : _pi_parsed.os_version));
+    const char *soc = panicSocForModel(mk);
+    setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+
+    // Mức độ lỗi.
+    std::string low = _pi_parsed.panic_type + " " + _pi_parsed.panic_string;
+    for (auto &c : low) c = (char)tolower((unsigned char)c);
+    bool severe = low.find("panic-full") != std::string::npos ||
+                  low.find("kernel") != std::string::npos ||
+                  low.find("panic(") != std::string::npos ||
+                  low.find("busy timeout") != std::string::npos ||
+                  _pi_parsed.panic_type == "210";
+    if (_pi_sev) {
+        lv_label_set_text(_pi_sev, severe ? "NGHIÊM TRỌNG" : "PANIC");
+        lv_obj_set_style_text_color(_pi_sev, severe ? lv_color_hex(0xFF5252) : lv_color_hex(0xF2C94C), 0);
+    }
+    setL(_pi_sevsub, severe ? "Kernel Panic (Panic Full) - tự động khởi động lại"
+                            : "Panic - kiểm tra chi tiết");
+
+    // Key panic string (rút gọn).
+    std::string ks = _pi_parsed.panic_string.substr(0, 500);
+    setL(_pi_keystr, ks.empty() ? "-" : ks);
+    if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
+}
+
+void HCCHome::onPanicApiKeyClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr || app->_panic_apikey_dialog != nullptr) {
+        return;
+    }
+
+    // Lớp phủ mờ toàn màn hình.
+    app->_panic_apikey_dialog = lv_obj_create(app->_screen);
+    lv_obj_set_size(app->_panic_apikey_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(app->_panic_apikey_dialog);
+    lv_obj_set_style_bg_color(app->_panic_apikey_dialog, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(app->_panic_apikey_dialog, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(app->_panic_apikey_dialog, 0, 0);
+    lv_obj_clear_flag(app->_panic_apikey_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(app->_panic_apikey_dialog);
+    lv_obj_set_size(panel, 860, 260);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *t = lv_label_create(panel);
+    lv_label_set_text(t, "Nhập API key AI (OpenAI sk-... hoặc Claude sk-ant-...)");
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_set_style_text_color(t, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(t, &lv_font_be_vietnam_18, 0);
+
+    app->_panic_apikey_input = lv_textarea_create(panel);
+    lv_obj_set_size(app->_panic_apikey_input, 820, 60);
+    lv_obj_align(app->_panic_apikey_input, LV_ALIGN_TOP_LEFT, 4, 40);
+    lv_textarea_set_one_line(app->_panic_apikey_input, true);
+    lv_textarea_set_placeholder_text(app->_panic_apikey_input, "sk-... (OpenAI) hoặc sk-ant-... (Claude)");
+    lv_obj_set_style_text_font(app->_panic_apikey_input, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *save_btn = lv_btn_create(panel);
+    lv_obj_set_size(save_btn, 140, 50);
+    lv_obj_align(save_btn, LV_ALIGN_TOP_LEFT, 4, 120);
+    lv_obj_add_event_cb(save_btn, onPanicApiKeySaveClicked, LV_EVENT_CLICKED, app);
+    lv_obj_t *save_lbl = lv_label_create(save_btn);
+    lv_label_set_text(save_lbl, "LƯU");
+    lv_obj_center(save_lbl);
+    lv_obj_set_style_text_font(save_lbl, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, 140, 50);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_LEFT, 160, 120);
+    lv_obj_add_event_cb(close_btn, onPanicApiKeyCloseClicked, LV_EVENT_CLICKED, app);
+    lv_obj_t *close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "ĐÓNG");
+    lv_obj_center(close_lbl);
+    lv_obj_set_style_text_font(close_lbl, &lv_font_be_vietnam_18, 0);
+
+    // Bàn phím lớn (API key là ASCII nên KHÔNG bật Telex).
+    app->_panic_keyboard = lv_keyboard_create(app->_panic_apikey_dialog);
+    lv_obj_set_size(app->_panic_keyboard, LV_PCT(100), 320);
+    lv_obj_align(app->_panic_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(app->_panic_keyboard, &lv_font_be_vietnam_22, 0);
+    lv_keyboard_set_textarea(app->_panic_keyboard, app->_panic_apikey_input);
+}
+
+void HCCHome::onPanicApiKeySaveClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_apikey_input == nullptr) {
+        return;
+    }
+    const char *key = lv_textarea_get_text(app->_panic_apikey_input);
+    bool ok = false;
+    if (key && key[0]) {
+        ok = HCCPanicAI::saveApiKey(std::string(key));
+    }
+    if (app->_panic_status_label != nullptr) {
+        lv_label_set_text(app->_panic_status_label,
+                          ok ? "Đã lưu API key" : "Lưu API key thất bại (thẻ SD?)");
+    }
+    if (app->_panic_apikey_dialog != nullptr) {
+        lv_obj_del(app->_panic_apikey_dialog);
+        app->_panic_apikey_dialog = nullptr;
+        app->_panic_apikey_input = nullptr;
+        app->_panic_keyboard = nullptr;
+    }
+}
+
+void HCCHome::onPanicApiKeyCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_apikey_dialog == nullptr) {
+        return;
+    }
+    lv_obj_del(app->_panic_apikey_dialog);
+    app->_panic_apikey_dialog = nullptr;
+    app->_panic_apikey_input = nullptr;
+    app->_panic_keyboard = nullptr;
+}
+
+// ==================== CONFIRM REPAIR / VERIFY ====================
+
+// Tạo 1 ô nhập có nhãn trong container; gắn sự kiện focus để bật bàn phím.
+static lv_obj_t *repairField(lv_obj_t *parent, const char *label, const char *prefill,
+                             lv_event_cb_t focus_cb, void *user)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, label);
+    lv_obj_set_style_text_color(l, lv_color_hex(0x7F96A8), 0);
+    lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *ta = lv_textarea_create(parent);
+    lv_obj_set_width(ta, lv_pct(100));
+    lv_textarea_set_one_line(ta, true);
+    if (prefill && prefill[0]) lv_textarea_set_text(ta, prefill);
+    lv_obj_set_style_text_font(ta, &lv_font_be_vietnam_16, 0);
+    lv_obj_add_event_cb(ta, focus_cb, LV_EVENT_FOCUSED, user);
+    return ta;
+}
+
+void HCCHome::onConfirmRepairClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_repair_dialog != nullptr) {
+        return;
+    }
+    if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa chọn file panic");
+        return;
+    }
+    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(nullptr)) {
+        if (app->_panic_status_label)
+            lv_label_set_text(app->_panic_status_label, "CONFIRM REPAIR chưa hỗ trợ ảnh");
+        return;
+    }
+    app->openConfirmRepair();
+}
+
+void HCCHome::onRepairFieldFocused(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_repair_kb == nullptr) return;
+    lv_obj_t *ta = lv_event_get_target(event);
+    lv_keyboard_set_textarea(app->_repair_kb, ta);
+    lv_obj_clear_flag(app->_repair_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+void HCCHome::openConfirmRepair()
+{
+    // Đọc + parse panic đang chọn (RAM hoặc SD) để tự điền các trường.
+    std::string raw;
+    if (!loadSelectedRaw(raw)) {
+        if (_panic_status_label) lv_label_set_text(_panic_status_label, "Không đọc được panic đang chọn");
+        return;
+    }
+    _repair_parsed = HCCPanicParser::parse(raw);
+
+    // Overlay mờ.
+    _repair_dialog = lv_obj_create(_screen);
+    lv_obj_set_size(_repair_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(_repair_dialog);
+    lv_obj_set_style_bg_color(_repair_dialog, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(_repair_dialog, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(_repair_dialog, 0, 0);
+    lv_obj_clear_flag(_repair_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(_repair_dialog);
+    lv_obj_set_size(panel, 940, 300);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Thanh nút trên cùng: SAVE / VERIFY / ĐÓNG.
+    lv_obj_t *save_btn = lv_btn_create(panel);
+    lv_obj_set_size(save_btn, 190, 44);
+    lv_obj_align(save_btn, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(save_btn, lv_color_hex(0xF2C94C), 0);
+    lv_obj_add_event_cb(save_btn, onRepairSaveClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *sl = lv_label_create(save_btn);
+    lv_label_set_text(sl, "SAVE (REPAIR)");
+    lv_obj_center(sl);
+    lv_obj_set_style_text_color(sl, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_text_font(sl, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *verify_btn = lv_btn_create(panel);
+    lv_obj_set_size(verify_btn, 150, 44);
+    lv_obj_align(verify_btn, LV_ALIGN_TOP_LEFT, 200, 0);
+    lv_obj_set_style_bg_color(verify_btn, lv_color_hex(0x3DD66E), 0);
+    lv_obj_add_event_cb(verify_btn, onRepairVerifyClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *vl = lv_label_create(verify_btn);
+    lv_label_set_text(vl, "VERIFY");
+    lv_obj_center(vl);
+    lv_obj_set_style_text_color(vl, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_text_font(vl, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, 120, 44);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_add_event_cb(close_btn, onRepairCloseClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "ĐÓNG");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+
+    // Vùng cuộn chứa các trường.
+    lv_obj_t *form = lv_obj_create(panel);
+    lv_obj_set_size(form, 900, 230);
+    lv_obj_align(form, LV_ALIGN_TOP_LEFT, 0, 54);
+    lv_obj_set_style_bg_opa(form, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(form, 0, 0);
+    lv_obj_set_style_pad_row(form, 4, 0);
+    lv_obj_set_flex_flow(form, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(form, LV_DIR_VER);
+
+    std::string code0 = _repair_parsed.error_codes.empty() ? std::string() : _repair_parsed.error_codes[0];
+
+    _repair_model  = repairField(form, "MODEL", _repair_parsed.model.c_str(), onRepairFieldFocused, this);
+    _repair_sig    = repairField(form, "PANIC / SIGNATURE", _repair_parsed.signature.c_str(), onRepairFieldFocused, this);
+    _repair_code   = repairField(form, "CODE HEX", code0.c_str(), onRepairFieldFocused, this);
+    _repair_source = repairField(form, "SOURCE (vd S.sensor[1])", _repair_parsed.source.c_str(), onRepairFieldFocused, this);
+    _repair_hw     = repairField(form, "HARDWARE / LỖI THỰC TẾ", "", onRepairFieldFocused, this);
+    _repair_action = repairField(form, "REPAIR ACTION", "", onRepairFieldFocused, this);
+    _repair_note   = repairField(form, "NOTE (tuỳ chọn)", "", onRepairFieldFocused, this);
+
+    // Bật gõ tiếng Việt cho các ô mô tả (không bật cho MODEL/CODE/SOURCE là ASCII).
+    HCCViText::markVietnamese(_repair_hw);
+    HCCViText::markVietnamese(_repair_action);
+    HCCViText::markVietnamese(_repair_note);
+
+    // Bàn phím lớn + Telex (ẩn cho tới khi focus 1 ô).
+    _repair_kb = HCCViText::createKeyboard(_repair_dialog, nullptr);
+    lv_obj_add_flag(_repair_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool HCCHome::submitRepairCase(bool verified)
+{
+    if (_repair_model == nullptr) return false;
+
+    RepairCase c;
+    // Bỏ tiền tố "[RAM] " để tên case/liên kết dùng tên panic thật.
+    c.panic_file = _panic_file;
+    if (c.panic_file.rfind("[RAM] ", 0) == 0) c.panic_file = c.panic_file.substr(6);
+    c.panic_type = _repair_parsed.panic_type;
+    c.model = lv_textarea_get_text(_repair_model);
+    c.signature = lv_textarea_get_text(_repair_sig);
+    c.code_hex = lv_textarea_get_text(_repair_code);
+    c.source = lv_textarea_get_text(_repair_source);
+    c.hardware = lv_textarea_get_text(_repair_hw);
+    c.repair_action = lv_textarea_get_text(_repair_action);
+    c.note = lv_textarea_get_text(_repair_note);
+
+    time_t now = time(nullptr);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+    char ts[32];
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
+    c.created_at = ts;
+
+    bool ok = HCCPanicKB::saveCase(c, verified);
+    if (_panic_status_label) {
+        if (ok) {
+            lv_label_set_text(_panic_status_label,
+                              verified ? "Đã VERIFY -> Verified KB" : "Đã lưu REPAIR_CONFIRMED");
+        } else {
+            lv_label_set_text(_panic_status_label, "Lưu case thất bại (thẻ SD?)");
+        }
+    }
+    return ok;
+}
+
+void HCCHome::onRepairSaveClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if (app->submitRepairCase(false)) {
+        onRepairCloseClicked(event);
+    }
+}
+
+void HCCHome::onRepairVerifyClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if (app->submitRepairCase(true)) {
+        onRepairCloseClicked(event);
+    }
+}
+
+void HCCHome::onRepairCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_repair_dialog == nullptr) return;
+    lv_obj_del(app->_repair_dialog);
+    app->_repair_dialog = nullptr;
+    app->_repair_kb = nullptr;
+    app->_repair_model = nullptr;
+    app->_repair_sig = nullptr;
+    app->_repair_code = nullptr;
+    app->_repair_source = nullptr;
+    app->_repair_hw = nullptr;
+    app->_repair_action = nullptr;
+    app->_repair_note = nullptr;
+}
+
+// ==================== XEM PANIC (raw viewer) ====================
+
+void HCCHome::onPanicViewClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr || app->_panic_view_dialog != nullptr) {
+        return;
+    }
+    if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa chọn file panic");
+        return;
+    }
+
+    // Ảnh panic: không hiển thị raw nhị phân, chỉ báo.
+    std::string vmime;
+    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(&vmime)) {
+        std::string n, b;
+        HCCPanicServer::getReceived(n, b);
+        char note[128];
+        snprintf(note, sizeof(note), "(Ảnh panic: %s, %u byte)\nDùng ANALYZE để AI đọc ảnh.",
+                 vmime.c_str(), (unsigned)b.size());
+        std::string raw_note = note;
+        // dựng dialog với raw_note
+        std::string raw = raw_note;
+        // (rơi xuống dùng chung phần dựng dialog bên dưới qua biến raw)
+        // -- tiếp tục như text --
+        app->_panic_view_dialog = nullptr; // placeholder tránh cảnh báo (sẽ set dưới)
+        // Xây dialog ngay tại đây:
+        app->_panic_view_dialog = lv_obj_create(app->_screen);
+        lv_obj_set_size(app->_panic_view_dialog, LV_PCT(100), LV_PCT(100));
+        lv_obj_center(app->_panic_view_dialog);
+        lv_obj_set_style_bg_color(app->_panic_view_dialog, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(app->_panic_view_dialog, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(app->_panic_view_dialog, 0, 0);
+        lv_obj_clear_flag(app->_panic_view_dialog, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *p = lv_obj_create(app->_panic_view_dialog);
+        lv_obj_set_size(p, 700, 240);
+        lv_obj_center(p);
+        lv_obj_set_style_bg_color(p, lv_color_hex(0x0B141C), 0);
+        lv_obj_set_style_radius(p, 12, 0);
+        lv_obj_t *lbl = lv_label_create(p);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(lbl, lv_pct(100));
+        lv_label_set_text(lbl, raw.c_str());
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xCFE3EF), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_be_vietnam_18, 0);
+        lv_obj_t *cb = lv_btn_create(p);
+        lv_obj_set_size(cb, 120, 44);
+        lv_obj_align(cb, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_add_event_cb(cb, onPanicViewCloseClicked, LV_EVENT_CLICKED, app);
+        lv_obj_t *cbl = lv_label_create(cb);
+        lv_label_set_text(cbl, "ĐÓNG");
+        lv_obj_center(cbl);
+        lv_obj_set_style_text_font(cbl, &lv_font_be_vietnam_16, 0);
+        return;
+    }
+
+    std::string raw;
+    if (!app->loadSelectedRaw(raw)) {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Không đọc được panic đang chọn");
+        return;
+    }
+    if (raw.size() > 8000) raw = raw.substr(0, 8000) + "\n... (da cat bot)";
+
+    app->_panic_view_dialog = lv_obj_create(app->_screen);
+    lv_obj_set_size(app->_panic_view_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(app->_panic_view_dialog);
+    lv_obj_set_style_bg_color(app->_panic_view_dialog, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(app->_panic_view_dialog, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(app->_panic_view_dialog, 0, 0);
+    lv_obj_clear_flag(app->_panic_view_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(app->_panic_view_dialog);
+    lv_obj_set_size(panel, 940, 540);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dlg_title = lv_label_create(panel);
+    char tt[128];
+    snprintf(tt, sizeof(tt), "PANIC: %s", app->_panic_file);
+    lv_label_set_text(dlg_title, tt);
+    lv_obj_align(dlg_title, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_set_style_text_color(dlg_title, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(dlg_title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, 110, 42);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -6);
+    lv_obj_add_event_cb(close_btn, onPanicViewCloseClicked, LV_EVENT_CLICKED, app);
+    lv_obj_t *cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "ĐÓNG");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *content = lv_obj_create(panel);
+    lv_obj_set_size(content, 900, 470);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, 52);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x05090D), 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 6, 0);
+
+    lv_obj_t *body = lv_label_create(content);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, lv_pct(100));
+    lv_label_set_text(body, raw.c_str());
+    lv_obj_set_style_text_color(body, lv_color_hex(0xCFE3EF), 0);
+    lv_obj_set_style_text_font(body, &lv_font_be_vietnam_16, 0);
+}
+
+void HCCHome::onPanicViewCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_panic_view_dialog == nullptr) return;
+    lv_obj_del(app->_panic_view_dialog);
+    app->_panic_view_dialog = nullptr;
+}
+
+// ==================== IPHONE HARDWARE CHECK ====================
+
+static lv_color_t hwStatusColor(HCCiPhoneDiagnostics::Status s)
+{
+    switch (s) {
+        case HCCiPhoneDiagnostics::Status::Pass: return lv_color_hex(0x3DD66E);
+        case HCCiPhoneDiagnostics::Status::Fail: return lv_color_hex(0xFF5252);
+        case HCCiPhoneDiagnostics::Status::Check: return lv_color_hex(0xF2C94C);
+        case HCCiPhoneDiagnostics::Status::Unsupported: return lv_color_hex(0x8AA0B4);
+        case HCCiPhoneDiagnostics::Status::NotTested:
+        default: return lv_color_hex(0x7F96A8);
+    }
+}
+
+void HCCHome::onHardwareCheckClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showHardwareCheck();
+}
+
+void HCCHome::onHwBackClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showUSB();
+}
+
+void HCCHome::updateHwCards()
+{
+    if (!_hw_has_result) return;
+    auto set = [](lv_obj_t *l, const HCCiPhoneDiagnostics::Group &g) {
+        if (!l) return;
+        lv_label_set_text(l, HCCiPhoneDiagnostics::statusText(g.status));
+        lv_obj_set_style_text_color(l, hwStatusColor(g.status), 0);
+    };
+    set(_hw_sensors_status, _hw_result.sensors);
+    set(_hw_faceid_status, _hw_result.faceid);
+    set(_hw_baseband_status, _hw_result.baseband);
+    set(_hw_battery_status, _hw_result.battery);
+}
+
+void HCCHome::onHwRunFullClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (!app) return;
+    HCCiPhoneDiagnostics diag(&app->_usb_transport);
+    app->_hw_result = diag.runFullCheck();
+    app->_hw_has_result = true;
+    app->updateHwCards();
+}
+
+void HCCHome::onHwCardClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (!app || app->_screen == nullptr || app->_hw_dialog != nullptr) return;
+    if (!app->_hw_has_result) {
+        return;  // chưa chạy test
+    }
+    lv_obj_t *card = lv_event_get_target(event);
+    intptr_t idx = reinterpret_cast<intptr_t>(lv_obj_get_user_data(card));
+    const HCCiPhoneDiagnostics::Group *g = nullptr;
+    if (idx == 0) g = &app->_hw_result.sensors;
+    else if (idx == 1) g = &app->_hw_result.faceid;
+    else if (idx == 2) g = &app->_hw_result.baseband;
+    else g = &app->_hw_result.battery;
+
+    // Dựng nội dung evidence.
+    std::string body;
+    for (const auto &it : g->items) {
+        body += it.name + "  [" + HCCiPhoneDiagnostics::statusText(it.status) + "]\n";
+        if (!it.source.empty())   body += "  Nguồn: " + it.source + "\n";
+        if (!it.evidence.empty()) body += "  Evidence: " + it.evidence + "\n";
+        if (!it.code.empty())     body += "  Code: " + it.code + "\n";
+        if (it.ts != 0) {
+            time_t t = (time_t)it.ts;
+            struct tm tmv;
+            localtime_r(&t, &tmv);
+            char ts[24];
+            strftime(ts, sizeof(ts), "%H:%M:%S", &tmv);
+            body += std::string("  Thời điểm: ") + ts + "\n";
+        }
+        body += "\n";
+    }
+    if (body.empty()) body = "(không có dữ liệu)";
+
+    app->_hw_dialog = lv_obj_create(app->_screen);
+    lv_obj_set_size(app->_hw_dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(app->_hw_dialog);
+    lv_obj_set_style_bg_color(app->_hw_dialog, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(app->_hw_dialog, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(app->_hw_dialog, 0, 0);
+    lv_obj_clear_flag(app->_hw_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(app->_hw_dialog);
+    lv_obj_set_size(panel, 900, 500);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dtitle = lv_label_create(panel);
+    lv_label_set_text(dtitle, g->name.c_str());
+    lv_obj_align(dtitle, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_set_style_text_color(dtitle, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(dtitle, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, 110, 42);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -6);
+    lv_obj_add_event_cb(close_btn, onHwDialogCloseClicked, LV_EVENT_CLICKED, app);
+    lv_obj_t *cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "ĐÓNG");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *content = lv_obj_create(panel);
+    lv_obj_set_size(content, 860, 420);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, 52);
+    lv_obj_set_style_bg_color(content, lv_color_hex(0x05090D), 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 8, 0);
+
+    lv_obj_t *lbl = lv_label_create(content);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl, lv_pct(100));
+    lv_label_set_text(lbl, body.c_str());
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xCFE3EF), 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_be_vietnam_16, 0);
+}
+
+void HCCHome::onHwDialogCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app && app->_hw_dialog) {
+        lv_obj_del(app->_hw_dialog);
+        app->_hw_dialog = nullptr;
+    }
+}
+
+void HCCHome::showHardwareCheck()
+{
+    if (_screen == nullptr) return;
+
+    _hw_sensors_status = nullptr;
+    _hw_faceid_status = nullptr;
+    _hw_baseband_status = nullptr;
+    _hw_battery_status = nullptr;
+    _hw_dialog = nullptr;
+
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x101820), 0);
+
+    lv_obj_t *title = lv_label_create(_screen);
+    lv_label_set_text(title, "IPHONE HARDWARE CHECK");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 18);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
+
+    // Trạng thái phiên.
+    lv_obj_t *sess = lv_label_create(_screen);
+    const bool ready = _usb_transport.sessionEstablished() && _usb_transport.deviceInfoReady();
+    lv_label_set_text(sess, ready ? "Phiên Lockdown: SẴN SÀNG" : "Phiên Lockdown: CHƯA SẴN SÀNG (cắm & mở khoá máy)");
+    lv_obj_align(sess, LV_ALIGN_TOP_LEFT, 30, 58);
+    lv_obj_set_style_text_color(sess, ready ? lv_color_hex(0x69E0C0) : lv_color_hex(0xF2C94C), 0);
+    lv_obj_set_style_text_font(sess, &lv_font_be_vietnam_18, 0);
+
+    // 4 card: SENSORS | FACE ID | BASEBAND | BATTERY
+    const char *names[] = {"SENSORS", "FACE ID", "BASEBAND", "BATTERY"};
+    lv_obj_t **statusLabels[] = {&_hw_sensors_status, &_hw_faceid_status,
+                                 &_hw_baseband_status, &_hw_battery_status};
+    const int cx[] = {28, 274, 520, 766};
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t *card = lv_obj_create(_screen);
+        lv_obj_set_size(card, 232, 200);
+        lv_obj_align(card, LV_ALIGN_TOP_LEFT, cx[i], 100);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x182630), 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(0x304553), 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_radius(card, 12, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(card, reinterpret_cast<void *>(static_cast<intptr_t>(i)));
+        lv_obj_add_event_cb(card, onHwCardClicked, LV_EVENT_CLICKED, this);
+
+        lv_obj_t *cn = lv_label_create(card);
+        lv_label_set_text(cn, names[i]);
+        lv_obj_align(cn, LV_ALIGN_TOP_LEFT, 16, 14);
+        lv_obj_set_style_text_color(cn, lv_color_hex(0xB8C5CF), 0);
+        lv_obj_set_style_text_font(cn, &lv_font_be_vietnam_18, 0);
+
+        lv_obj_t *st = lv_label_create(card);
+        lv_label_set_text(st, "NOT TESTED");
+        lv_obj_align(st, LV_ALIGN_LEFT_MID, 16, 6);
+        lv_obj_set_style_text_color(st, lv_color_hex(0x7F96A8), 0);
+        lv_obj_set_style_text_font(st, &lv_font_be_vietnam_22, 0);
+        *statusLabels[i] = st;
+
+        lv_obj_t *hint = lv_label_create(card);
+        lv_label_set_text(hint, "Chạm để xem evidence");
+        lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 16, -14);
+        lv_obj_set_style_text_color(hint, lv_color_hex(0x5B7286), 0);
+        lv_obj_set_style_text_font(hint, &lv_font_be_vietnam_16, 0);
+    }
+    if (_hw_has_result) updateHwCards();
+
+    // RUN FULL TEST
+    lv_obj_t *run_btn = lv_btn_create(_screen);
+    lv_obj_set_size(run_btn, 300, 56);
+    lv_obj_align(run_btn, LV_ALIGN_TOP_LEFT, 28, 330);
+    lv_obj_set_style_bg_color(run_btn, lv_color_hex(0x2E9E5B), 0);
+    lv_obj_add_event_cb(run_btn, onHwRunFullClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *run_lbl = lv_label_create(run_btn);
+    lv_label_set_text(run_lbl, "RUN FULL TEST");
+    lv_obj_center(run_lbl);
+    lv_obj_set_style_text_font(run_lbl, &lv_font_be_vietnam_18, 0);
+
+    // Ghi chú giới hạn.
+    lv_obj_t *note = lv_label_create(_screen);
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 940);
+    lv_label_set_text(note,
+        "SENSORS: iOS không cấp dữ liệu sensor qua Lockdown -> UNSUPPORTED. "
+        "FACE ID: chỉ dò lỗi subsystem qua os_trace (không bao giờ PASS, không đụng sinh trắc). "
+        "BASEBAND: dùng Lockdown GetValue thật + log CommCenter làm evidence.");
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 28, 400);
+    lv_obj_set_style_text_color(note, lv_color_hex(0x8AA0B4), 0);
+    lv_obj_set_style_text_font(note, &lv_font_be_vietnam_16, 0);
+
+    // Back về USB HUB.
+    lv_obj_t *back_button = lv_btn_create(_screen);
+    lv_obj_set_size(back_button, 160, 52);
+    lv_obj_align(back_button, LV_ALIGN_BOTTOM_RIGHT, -28, -22);
+    lv_obj_add_event_cb(back_button, onHwBackClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *back_label = lv_label_create(back_button);
+    lv_label_set_text(back_label, "BACK");
+    lv_obj_center(back_label);
+    lv_obj_set_style_text_font(back_label, &lv_font_be_vietnam_18, 0);
 }

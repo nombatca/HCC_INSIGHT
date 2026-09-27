@@ -56,6 +56,9 @@
 #define NVS_KEY_BLE_ENABLE              "ble_en"
 #define NVS_KEY_AUDIO_VOLUME            "volume"
 #define NVS_KEY_DISPLAY_BRIGHTNESS      "brightness"
+// Lưu thông tin đăng nhập WiFi để tự kết nối lại sau khi khởi động.
+#define NVS_KEY_WIFI_SSID               "wifi_ssid"
+#define NVS_KEY_WIFI_PASS               "wifi_pass"
 
 #define UI_MAIN_ITEM_LEFT_OFFSET        (20)
 #define UI_WIFI_LIST_UP_OFFSET          (20)
@@ -539,6 +542,65 @@ bool AppSettings::setNvsParam(std::string key, int value)
     return true;
 }
 
+bool AppSettings::saveWifiCredentials(const char *ssid, const char *password)
+{
+    if (ssid == nullptr) {
+        return false;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_STORAGE_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS for Wi-Fi credentials", esp_err_to_name(err));
+        return false;
+    }
+
+    err = nvs_set_str(nvs_handle, NVS_KEY_WIFI_SSID, ssid);
+    if (err == ESP_OK) {
+        err = nvs_set_str(nvs_handle, NVS_KEY_WIFI_PASS, (password != nullptr) ? password : "");
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs_handle);
+    }
+    nvs_close(nvs_handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) saving Wi-Fi credentials", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "Saved Wi-Fi credentials for SSID: %s", ssid);
+    return true;
+}
+
+bool AppSettings::loadWifiCredentials(char *ssid, size_t ssid_size, char *password, size_t password_size)
+{
+    if (ssid == nullptr || ssid_size == 0 || password == nullptr || password_size == 0) {
+        return false;
+    }
+    ssid[0] = '\0';
+    password[0] = '\0';
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_STORAGE_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        // Chưa có gì được lưu: không phải lỗi nghiêm trọng.
+        return false;
+    }
+
+    size_t len = ssid_size;
+    err = nvs_get_str(nvs_handle, NVS_KEY_WIFI_SSID, ssid, &len);
+    if (err == ESP_OK) {
+        len = password_size;
+        esp_err_t perr = nvs_get_str(nvs_handle, NVS_KEY_WIFI_PASS, password, &len);
+        if (perr != ESP_OK) {
+            password[0] = '\0';  // mạng mở không mật khẩu
+        }
+    }
+    nvs_close(nvs_handle);
+
+    return (err == ESP_OK && ssid[0] != '\0');
+}
+
 void AppSettings::updateUiByNvsParam(void)
 {
     if (_nvs_param_map[NVS_KEY_WIFI_ENABLE]) {
@@ -590,6 +652,37 @@ esp_err_t AppSettings::initWifi()
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Tự kết nối lại mạng đã lưu (nếu WiFi đang bật và có thông tin đăng nhập).
+    if (_nvs_param_map[NVS_KEY_WIFI_ENABLE]) {
+        char saved_ssid[WIFI_SSID_MAX_LENGTH + 1] = { 0 };
+        char saved_pass[WIFI_PASSWORD_MAX_LENGTH + 1] = { 0 };
+        if (loadWifiCredentials(saved_ssid, sizeof(saved_ssid), saved_pass, sizeof(saved_pass))) {
+            wifi_config_t wifi_config = { 0 };
+            esp_err_t cret = copy_wifi_field(wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid),
+                                             saved_ssid, WIFI_SSID_MAX_LENGTH);
+            if (cret == ESP_OK) {
+                cret = copy_wifi_field(wifi_config.sta.password, sizeof(wifi_config.sta.password),
+                                       saved_pass, WIFI_PASSWORD_MAX_LENGTH);
+            }
+            if (cret == ESP_OK) {
+                wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+                wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+                cret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+            }
+            if (cret == ESP_OK) {
+                // Ghi lại SSID để danh sách WiFi hiển thị đúng mạng đang kết nối.
+                copy_wifi_field((uint8_t *)st_wifi_ssid, sizeof(st_wifi_ssid),
+                                saved_ssid, WIFI_SSID_MAX_LENGTH);
+                esp_err_t conn_ret = esp_wifi_connect();
+                if (conn_ret != ESP_OK && conn_ret != ESP_ERR_WIFI_CONN) {
+                    ESP_LOGW(TAG, "Auto-connect request failed: %s", esp_err_to_name(conn_ret));
+                } else {
+                    ESP_LOGI(TAG, "Auto-connecting saved Wi-Fi: %s", saved_ssid);
+                }
+            }
+        }
+    }
 
     return ESP_OK;
 }
@@ -941,6 +1034,8 @@ void AppSettings::wifiConnectTask(void *arg)
         if (record_ret != ESP_OK) {
             ESP_LOGW(TAG, "Failed to record connected Wi-Fi SSID: %s", esp_err_to_name(record_ret));
         }
+        // Lưu SSID + mật khẩu để lần sau tự kết nối lại.
+        app->saveWifiCredentials(candidate_ssid, (const char *)wifi_config.sta.password);
         ESP_LOGI(TAG, "Connected successfully");
 
         if (!app->_is_ui_del && bsp_display_lock(-1)) {

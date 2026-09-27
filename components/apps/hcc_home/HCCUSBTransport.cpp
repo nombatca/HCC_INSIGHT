@@ -16,6 +16,7 @@
 #include "hal/usb_dwc_ll.h"
 #include "soc/usb_dwc_struct.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -449,6 +450,116 @@ static constexpr char kLockdownStartNotificationServiceXml[] =
 static constexpr size_t kLockdownStartNotificationServiceBodySize =
     sizeof(kLockdownStartNotificationServiceXml) - 1;
 
+// Experiment C: when true, the post-session StartService opens com.apple.os_trace_relay instead
+// of insecure_notification_proxy and streams the device log to serial (baseband-related lines
+// plus kernel entries during the kOsTraceBootWindowSeconds window). Protocol per libimobiledevice src/ostrace.c and
+// pymobiledevice3 services/os_trace.py.
+static constexpr bool kOsTraceExperiment = true;
+// For this long after StartActivity (covers a boot) kernel entries are printed unfiltered too.
+static constexpr uint32_t kOsTraceBootWindowSeconds = 90;
+
+static constexpr char kLockdownStartOsTraceServiceXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>StartService</string>\n"
+    "<key>Service</key>\n"
+    "<string>com.apple.os_trace_relay</string>\n"
+    "</dict>\n"
+    "</plist>";
+
+static constexpr size_t kLockdownStartOsTraceServiceBodySize =
+    sizeof(kLockdownStartOsTraceServiceXml) - 1;
+
+// StreamFlags 0x3C = PAYLOAD|HISTORICAL|CALLSTACK|DEBUG, the libimobiledevice/pymobiledevice3 default.
+static constexpr char kOsTraceStartActivityXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>MessageFilter</key>\n"
+    "<integer>65535</integer>\n"
+    "<key>Pid</key>\n"
+    "<integer>-1</integer>\n"
+    "<key>Request</key>\n"
+    "<string>StartActivity</string>\n"
+    "<key>StreamFlags</key>\n"
+    "<integer>60</integer>\n"
+    "</dict>\n"
+    "</plist>";
+
+static constexpr size_t kOsTraceStartActivityBodySize = sizeof(kOsTraceStartActivityXml) - 1;
+
+// ===== V2 research spike: com.apple.mobile.diagnostics_relay =====
+// Khi bật, StartService mở diagnostics_relay THAY cho os_trace (một slot service), gửi 1 request
+// {"Request":"All"} và DUMP RAW response ra serial. Chưa parser/UI. Đặt false để về os_trace.
+// Service name + request theo libimobiledevice diagnostics_relay.c / pymobiledevice3 diagnostics.
+static constexpr bool kDiagnosticsRelayCapture = true;
+
+static constexpr char kLockdownStartDiagnosticsServiceXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>StartService</string>\n"
+    "<key>Service</key>\n"
+    "<string>com.apple.mobile.diagnostics_relay</string>\n"
+    "</dict>\n"
+    "</plist>";
+static constexpr size_t kLockdownStartDiagnosticsServiceBodySize =
+    sizeof(kLockdownStartDiagnosticsServiceXml) - 1;
+
+// Request thử đầu tiên (bounded): {"Request":"All"} -> diagnostics tổng hợp (GasGauge/HDMI/WiFi/NAND...).
+static constexpr char kDiagnosticsAllRequestXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>All</string>\n"
+    "</dict>\n"
+    "</plist>";
+static constexpr size_t kDiagnosticsAllRequestBodySize = sizeof(kDiagnosticsAllRequestXml) - 1;
+
+// Chọn request diagnostics: false -> {"Request":"All"} (battery), true -> IORegistry (research nodes).
+static constexpr bool kDiagRequestIORegistry = true;
+
+// IORegistry theo plane phần cứng (IODeviceTree). Dump RAW để xem node/property thật (research).
+static constexpr char kDiagnosticsIORegistryRequestXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>IORegistry</string>\n"
+    "<key>CurrentPlane</key>\n"
+    "<string>IODeviceTree</string>\n"
+    "</dict>\n"
+    "</plist>";
+static constexpr size_t kDiagnosticsIORegistryRequestBodySize =
+    sizeof(kDiagnosticsIORegistryRequestXml) - 1;
+
+// Case-insensitive keywords that select a log entry for printing (process, subsystem,
+// category or message). Search terms only; they are not assumed Apple names.
+static constexpr const char *kOsTraceKeywords[] = {
+    "baseband", "commcenter", "telephony", "cellular", "modem", "abm", "bbpmu", "pmu",
+    "pmic", "voltage", "rail", "ldo", "buck",
+    // Face ID / TrueDepth subsystem (search terms có thật: daemon biometrickitd, module Pearl,
+    // TrueDepth, core auth). Chỉ dò log lỗi subsystem, KHÔNG đụng dữ liệu sinh trắc.
+    "biometric", "pearl", "truedepth", "coreauth",
+};
+
+// Danh sách term đặc trưng để phân loại evidence ĐÚNG subsystem (không lấy dòng generic).
+static const char *kOsTraceBasebandTerms[] = {
+    "baseband", "commcenter", "telephony", "cellular", "modem", "abm", "bbpmu",
+};
+static const char *kOsTraceBioTerms[] = {
+    "biometric", "pearl", "truedepth", "coreauth",
+};
+
 // Lockdown request sent over the established TLS session to reboot the device into recovery.
 static constexpr char kLockdownEnterRecoveryXml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -462,6 +573,34 @@ static constexpr char kLockdownEnterRecoveryXml[] =
 
 static constexpr size_t kLockdownEnterRecoveryBodySize =
     sizeof(kLockdownEnterRecoveryXml) - 1;
+
+// Lockdown keys readable only on the encrypted session, indexed by SessionInfoField. They are
+// queried one by one after the TLS handshake, before StartService. A missing key (e.g. no IMEI
+// or baseband on a Wi-Fi-only iPad) is logged and left empty; it does not fail the session.
+static constexpr const char *kSessionInfoKeys[] = {
+    "SerialNumber",
+    "ProductType",
+    "BluetoothAddress",
+    "BasebandVersion",
+    "InternationalMobileEquipmentIdentity",
+    // Bổ sung baseband/cellular (khoá GetValue thật của libimobiledevice ideviceinfo).
+    "BasebandStatus",
+    "IntegratedCircuitCardIdentity",
+    "MobileEquipmentIdentifier",
+    "PhoneNumber",
+};
+
+static constexpr char kLockdownGetValueKeyXmlFormat[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "<key>Request</key>\n"
+    "<string>GetValue</string>\n"
+    "<key>Key</key>\n"
+    "<string>%s</string>\n"
+    "</dict>\n"
+    "</plist>";
 
 static constexpr char kNotificationObservePairXml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -838,8 +977,11 @@ bool appendXmlData(uint8_t *output, size_t capacity, size_t *length,
 struct HCCUSBTransport::TlsContext {
     enum class AppState {
         Idle,
+        InfoWrite,
+        InfoRead,
         StartServiceWrite,
         StartServiceRead,
+        StartServiceRetryWait,
         StartServicePassed,
         EnterRecoveryWrite,
         EnterRecoverySent,
@@ -866,6 +1008,34 @@ struct HCCUSBTransport::TlsContext {
     size_t lockdown_rx_length;
     bool lockdown_tx_waiting_for_ciphertext;
     AppState app_state;
+};
+
+// TLS client on TCP #2 (a lockdown-started service with EnableServiceSSL=true). Uses the same
+// pair-record root certificate/key as the Lockdown session, loaded into its own objects so it
+// does not depend on the Lockdown TLS context's lifetime.
+struct HCCUSBTransport::ServiceTlsContext {
+    static constexpr size_t kRxCapacity = 64 * 1024;
+    static constexpr size_t kTxCapacity = 8192;
+
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config config;
+    mbedtls_x509_crt root_certificate;
+    mbedtls_pk_context root_private_key;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context drbg;
+    uint8_t *rx_fifo;     // ciphertext from TCP #2, kRxCapacity ring
+    size_t rx_head;
+    size_t rx_length;
+    uint8_t *tx_staging;  // ciphertext for TCP #2, kTxCapacity
+    size_t tx_length;
+    size_t tx_offset;
+    uint8_t app_tx[1024]; // plaintext request waiting for mbedtls_ssl_write
+    size_t app_tx_length;
+    size_t app_tx_offset;
+    uint8_t plain[4096];  // mbedtls_ssl_read scratch
+    bool handshake_step_requested;
+    bool established;
+    bool closed;
 };
 
 bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, uint8_t in_endpoint, uint16_t in_mps)
@@ -905,7 +1075,13 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    for (auto &value : _session_info) value[0] = '\0';
+    _session_info_index = 0;
+    _device_info_ready = false;
+    releaseOsTrace();
+    _service_retry_pending = false;
     _enter_recovery_requested = false;
+    _reuse_info_query = false;
     _lockdown_expected_response = LockdownResponse::None;
     _tx_seq = 0;
     _rx_seq = 0;
@@ -1102,6 +1278,18 @@ bool HCCUSBTransport::submitPendingTcp()
     if (_primary_trust_close_ack_requested) {
         return sendPrimaryTrustCloseAck();
     }
+    if (_service_tls_prepare_requested || _service_tls != nullptr) {
+        if (!processServiceTls()) {
+            printf("[HCC SERVICE TLS] failed - closing service TLS\n");
+            releaseServiceTls();
+            _ostrace_active = false;
+            _service_tcp.state = TcpState::Failed;
+        }
+        if (_tx_in_flight) return true;
+    }
+    if (_ostrace_start_requested) {
+        return sendOsTraceStart();
+    }
     if (_service_tcp.notification_prefix_requested) {
         return sendNotificationPrefix();
     }
@@ -1263,6 +1451,7 @@ uint16_t HCCUSBTransport::allocateServiceSourcePort()
 
 void HCCUSBTransport::resetServiceTcpContext()
 {
+    releaseServiceTls();
     _service_tcp = ServiceTcpContext{};
     _notification_tcp_after_ack = false;
     _notification_rx_stream_length = 0;
@@ -2104,7 +2293,9 @@ bool HCCUSBTransport::appendTlsRx(const uint8_t *data, size_t length)
     return true;
 }
 
-bool HCCUSBTransport::loadTlsCredentials()
+bool HCCUSBTransport::loadTlsCredentials(mbedtls_x509_crt *certificate,
+                                         mbedtls_pk_context *private_key,
+                                         mbedtls_ctr_drbg_context *drbg)
 {
     nvs_handle_t handle = 0;
     size_t blob_size = 0;
@@ -2185,7 +2376,7 @@ bool HCCUSBTransport::loadTlsCredentials()
         if (pem != nullptr) {
             memcpy(pem, blob + root_cert_offset, header.root_certificate_length);
             pem[header.root_certificate_length] = '\0';
-            ret = mbedtls_x509_crt_parse(&_tls->root_certificate, pem,
+            ret = mbedtls_x509_crt_parse(certificate, pem,
                                          header.root_certificate_length + 1);
             mbedtls_platform_zeroize(pem, header.root_certificate_length + 1);
             heap_caps_free(pem);
@@ -2199,9 +2390,9 @@ bool HCCUSBTransport::loadTlsCredentials()
         if (pem != nullptr) {
             memcpy(pem, blob + root_key_offset, header.root_private_key_length);
             pem[header.root_private_key_length] = '\0';
-            ret = mbedtls_pk_parse_key(&_tls->root_private_key, pem,
+            ret = mbedtls_pk_parse_key(private_key, pem,
                                        header.root_private_key_length + 1,
-                                       nullptr, 0, mbedtls_ctr_drbg_random, &_tls->drbg);
+                                       nullptr, 0, mbedtls_ctr_drbg_random, drbg);
             mbedtls_platform_zeroize(pem, header.root_private_key_length + 1);
             heap_caps_free(pem);
             pem = nullptr;
@@ -2252,7 +2443,9 @@ bool HCCUSBTransport::prepareTls()
                   ? mbedtls_ctr_drbg_seed(&_tls->drbg, mbedtls_entropy_func, &_tls->entropy,
                                           kPersonalization, sizeof(kPersonalization) - 1)
                   : MBEDTLS_ERR_SSL_ALLOC_FAILED;
-    if (ret == 0 && !loadTlsCredentials()) ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+    if (ret == 0 && !loadTlsCredentials(&_tls->root_certificate, &_tls->root_private_key, &_tls->drbg)) {
+        ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+    }
     if (ret == 0) {
         ret = mbedtls_ssl_config_defaults(&_tls->config, MBEDTLS_SSL_IS_CLIENT,
                                           MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -2298,6 +2491,64 @@ bool HCCUSBTransport::requestEnterRecovery()
     if (_tls == nullptr || _tls_state != TlsState::TlsEstablished) return false;
     _enter_recovery_requested = true;
     return true;
+}
+
+void HCCUSBTransport::queueNextTlsLockdownRequest()
+{
+    size_t body_length = 0;
+    if (_session_info_index < SessionInfoCount) {
+        const int written = snprintf(
+            reinterpret_cast<char *>(_tls->lockdown_tx + sizeof(uint32_t)),
+            kTlsLockdownCapacity - sizeof(uint32_t),
+            kLockdownGetValueKeyXmlFormat, kSessionInfoKeys[_session_info_index]);
+        body_length = static_cast<size_t>(written);
+        _tls->app_state = TlsContext::AppState::InfoWrite;
+    } else {
+        _device_info_ready = true;
+        const char *xml;
+        if (kDiagnosticsRelayCapture) {
+            xml = kLockdownStartDiagnosticsServiceXml;
+            body_length = kLockdownStartDiagnosticsServiceBodySize;
+        } else if (kOsTraceExperiment) {
+            xml = kLockdownStartOsTraceServiceXml;
+            body_length = kLockdownStartOsTraceServiceBodySize;
+        } else {
+            xml = kLockdownStartNotificationServiceXml;
+            body_length = kLockdownStartNotificationServiceBodySize;
+        }
+        memcpy(_tls->lockdown_tx + sizeof(uint32_t), xml, body_length);
+        _tls->app_state = TlsContext::AppState::StartServiceWrite;
+    }
+    writeBigEndianU32(_tls->lockdown_tx, static_cast<uint32_t>(body_length));
+    _tls->lockdown_tx_length = sizeof(uint32_t) + body_length;
+    _tls->lockdown_tx_offset = 0;
+}
+
+void HCCUSBTransport::markTlsLockdownRequestSent()
+{
+    if (_tls->app_state == TlsContext::AppState::InfoWrite) {
+        _tls->app_state = TlsContext::AppState::InfoRead;
+        printf("[HCC TLS] encrypted GetValue %s sent\n", kSessionInfoKeys[_session_info_index]);
+    } else {
+        _tls->app_state = TlsContext::AppState::StartServiceRead;
+        printf("[HCC TLS] encrypted StartService request sent\n");
+    }
+}
+
+void HCCUSBTransport::handleSessionInfoResponse(const uint8_t *body, size_t length)
+{
+    const char *key = kSessionInfoKeys[_session_info_index];
+    auto &value = _session_info[_session_info_index];
+    char error[64] = {};
+    if (extractXmlStringForKey(body, length, "Error", error, sizeof(error))) {
+        printf("[HCC INFO] GetValue %s Error=%s\n", key, error);
+    } else if (extractXmlStringForKey(body, length, "Value", value.data(), value.size())) {
+        printf("[HCC INFO] %s=%s\n", key, value.data());
+    } else {
+        value[0] = '\0';
+        printf("[HCC INFO] GetValue %s: no string Value\n", key);
+    }
+    ++_session_info_index;
 }
 
 bool HCCUSBTransport::processTlsApplication()
@@ -2352,12 +2603,16 @@ bool HCCUSBTransport::processTlsApplication()
 
     if (_tls->app_state == TlsContext::AppState::EnterRecoverySent) return true;
 
-    if (_tls->app_state == TlsContext::AppState::StartServiceWrite) {
+    if (_tls->app_state == TlsContext::AppState::StartServiceRetryWait) {
+        if (static_cast<int32_t>(xTaskGetTickCount() - _service_retry_due) < 0) return true;
+        _service_retry_pending = false;
+        queueNextTlsLockdownRequest();
+    }
+
+    if (_tls->app_state == TlsContext::AppState::StartServiceWrite ||
+        _tls->app_state == TlsContext::AppState::InfoWrite) {
         if (_tls->lockdown_tx_offset >= _tls->lockdown_tx_length) {
-            if (_tls->tx_length == 0) {
-                _tls->app_state = TlsContext::AppState::StartServiceRead;
-                printf("[HCC TLS] encrypted StartService request sent\n");
-            }
+            if (_tls->tx_length == 0) markTlsLockdownRequestSent();
             return true;
         }
         const int ret = mbedtls_ssl_write(
@@ -2368,10 +2623,7 @@ bool HCCUSBTransport::processTlsApplication()
             _tls->lockdown_tx_offset += static_cast<size_t>(ret);
             if (_tls->lockdown_tx_offset == _tls->lockdown_tx_length) {
                 _tls->lockdown_tx_waiting_for_ciphertext = _tls->tx_length != 0;
-                if (!_tls->lockdown_tx_waiting_for_ciphertext) {
-                    _tls->app_state = TlsContext::AppState::StartServiceRead;
-                    printf("[HCC TLS] encrypted StartService request sent\n");
-                }
+                if (!_tls->lockdown_tx_waiting_for_ciphertext) markTlsLockdownRequestSent();
             }
             if (_tls->tx_offset < _tls->tx_length) return sendTlsCiphertext();
             return true;
@@ -2380,14 +2632,15 @@ bool HCCUSBTransport::processTlsApplication()
             if (_tls->tx_offset < _tls->tx_length) return sendTlsCiphertext();
             return true;
         }
-        logTlsError("encrypted StartService write failed", ret);
+        logTlsError("encrypted Lockdown request write failed", ret);
         _tls->app_state = TlsContext::AppState::Failed;
         return false;
     }
 
     if (_tls->app_state == TlsContext::AppState::PeerClosed) return true;
     bool response_pending =
-        _tls->app_state == TlsContext::AppState::StartServiceRead;
+        _tls->app_state == TlsContext::AppState::StartServiceRead ||
+        _tls->app_state == TlsContext::AppState::InfoRead;
     if (!response_pending &&
         _tls->app_state != TlsContext::AppState::StartServicePassed) {
         return true;
@@ -2443,12 +2696,29 @@ bool HCCUSBTransport::processTlsApplication()
         const size_t frame_length = sizeof(uint32_t) + static_cast<size_t>(body_length);
         if (_tls->lockdown_rx_length < frame_length) continue;
         const uint8_t *body = _tls->lockdown_rx + sizeof(uint32_t);
+        if (_tls->app_state == TlsContext::AppState::InfoRead) {
+            handleSessionInfoResponse(body, body_length);
+            _tls->lockdown_rx_length = 0;
+            queueNextTlsLockdownRequest();
+            // Write the next request now so the USB task never idles with nothing submitted.
+            return processTlsApplication();
+        }
         size_t error_offset = 0;
         char error[128] = {};
         char request[32] = {};
         if (findXmlValueAfterKey(body, body_length, "Error", &error_offset)) {
             if (extractXmlStringForKey(body, body_length, "Error", error, sizeof(error))) {
                 printf("[HCC SERVICE] StartService failed Error=%s\n", error);
+                // Locked after a reboot: retry every second until the user unlocks, as
+                // libimobiledevice idevicesyslog does.
+                if (strcmp(error, "PasswordProtected") == 0) {
+                    printf("[HCC SERVICE] iPhone locked - unlock it; retrying StartService every 1 s\n");
+                    _tls->lockdown_rx_length = 0;
+                    _tls->app_state = TlsContext::AppState::StartServiceRetryWait;
+                    _service_retry_pending = true;
+                    _service_retry_due = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
+                    return true;
+                }
             } else {
                 printf("[HCC SERVICE] StartService failed: invalid Error\n");
             }
@@ -2492,7 +2762,8 @@ bool HCCUSBTransport::processTlsApplication()
         resetServiceTcpContext();
         _service_tcp.destination_port = port;
         _service_tcp.generation = _session_generation;
-        if (!ssl) {
+        // An SSL service is connected too when TCP #2 TLS can carry it (os_trace experiment).
+        if (!ssl || kOsTraceExperiment || kDiagnosticsRelayCapture) {
             _service_tcp.syn_requested = true;
         } else {
             _service_tcp.state = TcpState::Failed;
@@ -2546,14 +2817,9 @@ bool HCCUSBTransport::processTlsDeferred()
     }
     if (ret == 0) {
         _tls_state = TlsState::TlsEstablished;
-        writeBigEndianU32(_tls->lockdown_tx,
-                          static_cast<uint32_t>(kLockdownStartNotificationServiceBodySize));
-        memcpy(_tls->lockdown_tx + sizeof(uint32_t), kLockdownStartNotificationServiceXml,
-               kLockdownStartNotificationServiceBodySize);
-        _tls->lockdown_tx_length = sizeof(uint32_t) + kLockdownStartNotificationServiceBodySize;
-        _tls->lockdown_tx_offset = 0;
         _tls->lockdown_rx_length = 0;
-        _tls->app_state = TlsContext::AppState::StartServiceWrite;
+        _session_info_index = 0;
+        queueNextTlsLockdownRequest();
         logTlsMemory("HANDSHAKE-PASS");
         printf("[HCC TLS] HANDSHAKE PASS\n");
         if (processTlsApplication()) return true;
@@ -2959,7 +3225,13 @@ void HCCUSBTransport::stopForDeviceGone()
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    for (auto &value : _session_info) value[0] = '\0';
+    _session_info_index = 0;
+    _device_info_ready = false;
+    releaseOsTrace();
+    _service_retry_pending = false;
     _enter_recovery_requested = false;
+    _reuse_info_query = false;
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;
@@ -3012,7 +3284,13 @@ void HCCUSBTransport::stopForShutdown()
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
     _device_class[0] = '\0';
+    for (auto &value : _session_info) value[0] = '\0';
+    _session_info_index = 0;
+    _device_info_ready = false;
+    releaseOsTrace();
+    _service_retry_pending = false;
     _enter_recovery_requested = false;
+    _reuse_info_query = false;
     _wifi_address_valid = false;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
     _device_public_key_length = 0;
@@ -3412,7 +3690,11 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
     if (payload_length == 0) return true;
 
     if (seq == _service_tcp.ack_seq) {
-        if (!appendNotificationRx(payload, payload_length)) {
+        const bool appended = _service_tls != nullptr ? appendServiceTlsRx(payload, payload_length)
+                              : (_ostrace_active && _diag_capture) ? appendDiagRx(payload, payload_length)
+                              : _ostrace_active       ? appendOsTraceRx(payload, payload_length)
+                                                      : appendNotificationRx(payload, payload_length);
+        if (!appended) {
             _service_tcp.state = TcpState::Failed;
             return false;
         }
@@ -3434,6 +3716,686 @@ bool HCCUSBTransport::appendNotificationRx(const uint8_t *data, size_t length)
     memcpy(_notification_rx_stream.data() + _notification_rx_stream_length, data, length);
     _notification_rx_stream_length += length;
     return processNotificationRx();
+}
+
+int HCCUSBTransport::serviceTlsBioSend(void *context, const unsigned char *buffer, size_t length)
+{
+    HCCUSBTransport *transport = static_cast<HCCUSBTransport *>(context);
+    if (transport == nullptr || buffer == nullptr || transport->_service_tls == nullptr ||
+        transport->_stopping || transport->_service_tcp.state != TcpState::Connected) {
+        return MBEDTLS_ERR_NET_CONN_RESET;
+    }
+    ServiceTlsContext *tls = transport->_service_tls;
+    if (length == 0) return 0;
+    if (tls->tx_length != 0) return MBEDTLS_ERR_SSL_WANT_WRITE;
+    // Partial acceptance is fine: mbedTLS retries the rest once the staging buffer drains.
+    const size_t accepted = length < ServiceTlsContext::kTxCapacity ? length : ServiceTlsContext::kTxCapacity;
+    memcpy(tls->tx_staging, buffer, accepted);
+    tls->tx_length = accepted;
+    tls->tx_offset = 0;
+    return static_cast<int>(accepted);
+}
+
+int HCCUSBTransport::serviceTlsBioRecv(void *context, unsigned char *buffer, size_t length)
+{
+    HCCUSBTransport *transport = static_cast<HCCUSBTransport *>(context);
+    if (transport == nullptr || buffer == nullptr || transport->_service_tls == nullptr ||
+        transport->_stopping || transport->_service_tcp.state != TcpState::Connected) {
+        return MBEDTLS_ERR_NET_CONN_RESET;
+    }
+    ServiceTlsContext *tls = transport->_service_tls;
+    if (tls->rx_length == 0) return MBEDTLS_ERR_SSL_WANT_READ;
+    const size_t copied = length < tls->rx_length ? length : tls->rx_length;
+    const size_t first = copied < (ServiceTlsContext::kRxCapacity - tls->rx_head)
+                             ? copied : (ServiceTlsContext::kRxCapacity - tls->rx_head);
+    memcpy(buffer, tls->rx_fifo + tls->rx_head, first);
+    if (copied > first) memcpy(buffer + first, tls->rx_fifo, copied - first);
+    tls->rx_head = (tls->rx_head + copied) % ServiceTlsContext::kRxCapacity;
+    tls->rx_length -= copied;
+    return static_cast<int>(copied);
+}
+
+bool HCCUSBTransport::prepareServiceTls()
+{
+    _service_tls_prepare_requested = false;
+    if (_service_tcp.state != TcpState::Connected) return false;
+    logTlsMemory("SERVICE-PREPARE");
+    printf("[HCC SERVICE TLS] handshake starting port=%u\n",
+           static_cast<unsigned>(_service_tcp.destination_port));
+    ServiceTlsContext *tls = static_cast<ServiceTlsContext *>(heap_caps_calloc(
+        1, sizeof(ServiceTlsContext), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (tls == nullptr) return false;
+    _service_tls = tls;
+    mbedtls_ssl_init(&tls->ssl);
+    mbedtls_ssl_config_init(&tls->config);
+    mbedtls_x509_crt_init(&tls->root_certificate);
+    mbedtls_pk_init(&tls->root_private_key);
+    mbedtls_entropy_init(&tls->entropy);
+    mbedtls_ctr_drbg_init(&tls->drbg);
+    tls->rx_fifo = static_cast<uint8_t *>(heap_caps_malloc(
+        ServiceTlsContext::kRxCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    tls->tx_staging = static_cast<uint8_t *>(heap_caps_malloc(
+        ServiceTlsContext::kTxCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    static constexpr unsigned char kPersonalization[] = "HCC Service TLS";
+    int ret = (tls->rx_fifo != nullptr && tls->tx_staging != nullptr)
+                  ? mbedtls_ctr_drbg_seed(&tls->drbg, mbedtls_entropy_func, &tls->entropy,
+                                          kPersonalization, sizeof(kPersonalization) - 1)
+                  : MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    if (ret == 0 && !loadTlsCredentials(&tls->root_certificate, &tls->root_private_key, &tls->drbg)) {
+        ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+    }
+    if (ret == 0) {
+        ret = mbedtls_ssl_config_defaults(&tls->config, MBEDTLS_SSL_IS_CLIENT,
+                                          MBEDTLS_SSL_TRANSPORT_STREAM,
+                                          MBEDTLS_SSL_PRESET_DEFAULT);
+    }
+    if (ret == 0) {
+        mbedtls_ssl_conf_rng(&tls->config, mbedtls_ctr_drbg_random, &tls->drbg);
+        mbedtls_ssl_conf_verify(&tls->config, HCCUSBTransport::tlsVerifyPeer, this);
+        mbedtls_ssl_conf_ca_chain(&tls->config, &tls->root_certificate, nullptr);
+        ret = mbedtls_ssl_conf_own_cert(&tls->config, &tls->root_certificate, &tls->root_private_key);
+    }
+    if (ret == 0) ret = mbedtls_ssl_setup(&tls->ssl, &tls->config);
+    if (ret == 0) ret = mbedtls_ssl_set_hostname(&tls->ssl, nullptr);
+    if (ret != 0) {
+        logTlsError("service prepare failed", ret);
+        return false;
+    }
+    mbedtls_ssl_set_bio(&tls->ssl, this, HCCUSBTransport::serviceTlsBioSend,
+                        HCCUSBTransport::serviceTlsBioRecv, nullptr);
+    tls->handshake_step_requested = true;
+    printf("[HCC SERVICE TLS] host credentials loaded\n");
+    return true;
+}
+
+bool HCCUSBTransport::sendServiceTlsCiphertext()
+{
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr || tls->tx_offset >= tls->tx_length) return true;
+    const size_t remaining = tls->tx_length - tls->tx_offset;
+    const size_t length = remaining < kTlsTcpChunkSize ? remaining : kTlsTcpChunkSize;
+    return sendServiceTcpPacket(TxKind::ServiceTlsCiphertext, 0x10, tls->tx_staging + tls->tx_offset, length);
+}
+
+void HCCUSBTransport::onServiceTlsCiphertextSent(size_t length)
+{
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr) return;
+    tls->tx_offset += length;
+    if (tls->tx_offset >= tls->tx_length) {
+        mbedtls_platform_zeroize(tls->tx_staging, tls->tx_length);
+        tls->tx_length = 0;
+        tls->tx_offset = 0;
+        tls->handshake_step_requested = true;
+    }
+}
+
+bool HCCUSBTransport::appendServiceTlsRx(const uint8_t *data, size_t length)
+{
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr || data == nullptr || length > ServiceTlsContext::kRxCapacity - tls->rx_length) {
+        printf("[HCC SERVICE TLS] RX ciphertext overflow len=%u buffered=%u\n",
+               static_cast<unsigned>(length), static_cast<unsigned>(tls != nullptr ? tls->rx_length : 0));
+        return false;
+    }
+    const size_t tail = (tls->rx_head + tls->rx_length) % ServiceTlsContext::kRxCapacity;
+    const size_t first = length < (ServiceTlsContext::kRxCapacity - tail)
+                             ? length : (ServiceTlsContext::kRxCapacity - tail);
+    memcpy(tls->rx_fifo + tail, data, first);
+    if (length > first) memcpy(tls->rx_fifo, data + first, length - first);
+    tls->rx_length += length;
+    tls->handshake_step_requested = true;
+    // Decrypt right away once established so the ciphertext ring never fills while the task
+    // is still inside handle_events; any ciphertext mbedTLS stages is sent by processServiceTls.
+    return drainServiceTls();
+}
+
+bool HCCUSBTransport::drainServiceTls()
+{
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr || !tls->established || tls->closed) return true;
+    while (true) {
+        const int ret = mbedtls_ssl_read(&tls->ssl, tls->plain, sizeof(tls->plain));
+        if (ret > 0) {
+            if (_ostrace_active && _diag_capture) {
+                appendDiagRx(tls->plain, static_cast<size_t>(ret));
+            } else if (_ostrace_active) {
+                appendOsTraceRx(tls->plain, static_cast<size_t>(ret));
+            } else {
+                printf("[HCC SERVICE TLS] %d plaintext bytes with no consumer\n", ret);
+            }
+            continue;
+        }
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) return true;
+        if (ret == 0 || ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+            printf("[HCC SERVICE TLS] peer closed the service stream\n");
+            tls->closed = true;
+            return true;
+        }
+#ifdef MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET
+        if (ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) continue;
+#endif
+        logTlsError("service read failed", ret);
+        return false;
+    }
+}
+
+bool HCCUSBTransport::processServiceTls()
+{
+    if (_service_tls_prepare_requested && _service_tls == nullptr && !prepareServiceTls()) return false;
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr) return true;
+    if (_service_tcp.state != TcpState::Connected) return false;
+    if (_tx_in_flight) return true;
+    if (tls->tx_offset < tls->tx_length) return sendServiceTlsCiphertext();
+
+    if (!tls->established) {
+        if (!tls->handshake_step_requested) return true;
+        tls->handshake_step_requested = false;
+        const int ret = mbedtls_ssl_handshake(&tls->ssl);
+        if (tls->tx_offset < tls->tx_length && !sendServiceTlsCiphertext()) return false;
+        if (ret == 0) {
+            tls->established = true;
+            logTlsMemory("SERVICE-HANDSHAKE-PASS");
+            printf("[HCC SERVICE TLS] HANDSHAKE PASS suite=%s\n", mbedtls_ssl_get_ciphersuite(&tls->ssl));
+            if (kOsTraceExperiment || kDiagnosticsRelayCapture) _ostrace_start_requested = true;
+            return drainServiceTls();
+        }
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) return true;
+        logTlsError("service handshake failed", ret);
+        return false;
+    }
+
+    if (tls->closed) return true;
+    if (tls->app_tx_offset < tls->app_tx_length) {
+        const int ret = mbedtls_ssl_write(&tls->ssl, tls->app_tx + tls->app_tx_offset,
+                                          tls->app_tx_length - tls->app_tx_offset);
+        if (ret > 0) {
+            tls->app_tx_offset += static_cast<size_t>(ret);
+            if (tls->app_tx_offset >= tls->app_tx_length) {
+                printf("[HCC SERVICE TLS] request encrypted len=%u\n",
+                       static_cast<unsigned>(tls->app_tx_length));
+                tls->app_tx_length = 0;
+                tls->app_tx_offset = 0;
+            }
+        } else if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            logTlsError("service write failed", ret);
+            return false;
+        }
+        if (tls->tx_offset < tls->tx_length) return sendServiceTlsCiphertext();
+    }
+    return drainServiceTls();
+}
+
+void HCCUSBTransport::releaseServiceTls()
+{
+    _service_tls_prepare_requested = false;
+    ServiceTlsContext *tls = _service_tls;
+    if (tls == nullptr) return;
+    _service_tls = nullptr;
+    mbedtls_ssl_free(&tls->ssl);
+    mbedtls_ssl_config_free(&tls->config);
+    mbedtls_x509_crt_free(&tls->root_certificate);
+    mbedtls_pk_free(&tls->root_private_key);
+    mbedtls_ctr_drbg_free(&tls->drbg);
+    mbedtls_entropy_free(&tls->entropy);
+    if (tls->rx_fifo != nullptr) {
+        mbedtls_platform_zeroize(tls->rx_fifo, ServiceTlsContext::kRxCapacity);
+        heap_caps_free(tls->rx_fifo);
+    }
+    if (tls->tx_staging != nullptr) {
+        mbedtls_platform_zeroize(tls->tx_staging, ServiceTlsContext::kTxCapacity);
+        heap_caps_free(tls->tx_staging);
+    }
+    mbedtls_platform_zeroize(tls, sizeof(*tls));
+    heap_caps_free(tls);
+}
+
+static void printOsTraceHex(const char *tag, const uint8_t *data, size_t length);  // định nghĩa dưới
+static bool containsIgnoreCase(const char *haystack, const char *needle);          // định nghĩa dưới
+
+// Đọc số nguyên plist ngay sau <key>KEY</key> trong chuỗi XML (null-terminated). -1 nếu không có.
+static int32_t plistIntAfterKey(const char *xml, const char *key)
+{
+    char k[80];
+    snprintf(k, sizeof(k), "<key>%s</key>", key);
+    const char *p = strstr(xml, k);
+    if (p == nullptr) return -1;
+    const char *i = strstr(p, "<integer>");
+    if (i == nullptr) return -1;
+    return static_cast<int32_t>(atoi(i + 9));
+}
+
+// V2: nhận RAW diagnostics_relay. Frame = [len:4 big-endian][plist]. DUMP + parse GasGauge (battery).
+void HCCUSBTransport::finishDiagFrameHead()
+{
+    // Gọi khi đã thu đủ 4KB đầu (hoặc frame kết thúc): parse GasGauge nếu có.
+    if (_diag_head_len == 0) return;
+    size_t m = _diag_head_len < sizeof(_diag_head) - 1 ? _diag_head_len : sizeof(_diag_head) - 1;
+    char save = 0;
+    (void)save;
+    // null-terminate an một bản copy nhỏ để strstr an toàn.
+    static char buf[sizeof(_diag_head) + 1];
+    memcpy(buf, _diag_head, m);
+    buf[m] = '\0';
+    if (strstr(buf, "GasGauge") != nullptr) {
+        _batt_cycle = plistIntAfterKey(buf, "CycleCount");
+        _batt_design = plistIntAfterKey(buf, "DesignCapacity");
+        _batt_fcc = plistIntAfterKey(buf, "FullChargeCapacity");
+        _battery_available = (_batt_cycle >= 0 || _batt_design >= 0 || _batt_fcc >= 0);
+        printf("[HCC DIAG] battery: cycle=%d design=%d fcc=%d\n",
+               static_cast<int>(_batt_cycle), static_cast<int>(_batt_design),
+               static_cast<int>(_batt_fcc));
+    }
+}
+
+// Từ khoá phần cứng (search terms có thật) để lọc node IORegistry đáng quan tâm.
+static const char *kDiagNodeTerms[] = {
+    "accel", "gyro", "prox", "als", "ambient", "light", "compass", "magn", "baro",
+    "camera", "cam-", "isp", "pearl", "depth", "flood", "dot", "flash", "torch",
+    "baseband", "modem", "cellular", "rf", "wifi", "bluetooth", "nfc", "uwb",
+    "charg", "battery", "gasgauge", "pmu", "pmic", "haptic", "taptic", "sensor",
+};
+
+static void scanDiagLine(const char *line)
+{
+    // Chỉ để ý dòng có <string> (name/className) - nơi chứa tên node/thuộc tính.
+    if (strstr(line, "<string>") == nullptr && strstr(line, "<key>") == nullptr) return;
+    for (const char *k : kDiagNodeTerms) {
+        if (containsIgnoreCase(line, k)) {
+            // Bỏ tab đầu dòng cho gọn.
+            const char *p = line;
+            while (*p == '\t' || *p == ' ') ++p;
+            printf("[HCC DIAG NODE] %s\n", p);
+            return;
+        }
+    }
+}
+
+// Streaming: KHÔNG buffer cả frame. In ~800 ký tự đầu + scan dòng lọc node phần cứng + giữ 4KB đầu.
+bool HCCUSBTransport::appendDiagRx(const uint8_t *data, size_t length)
+{
+    while (length > 0) {
+        if (_diag_frame_remaining == 0) {
+            // Thu 4 byte length prefix (big-endian).
+            uint32_t take = 4 - _diag_hdr_have;
+            if (take > length) take = static_cast<uint32_t>(length);
+            memcpy(_diag_hdr + _diag_hdr_have, data, take);
+            _diag_hdr_have += static_cast<uint8_t>(take);
+            data += take;
+            length -= take;
+            if (_diag_hdr_have < 4) break;
+            _diag_hdr_have = 0;
+            const uint32_t body_len = readBigEndianU32(_diag_hdr);
+            if (body_len == 0 || body_len > 8u * 1024u * 1024u) {
+                printf("[HCC DIAG] bad frame len=%u - stop capture\n", static_cast<unsigned>(body_len));
+                return true;
+            }
+            _diag_frame_remaining = body_len;
+            _diag_printed = 0;
+            _diag_head_len = 0;
+            _diag_line_len = 0;
+            ++_diag_frames;
+            printf("[HCC DIAG] frame #%u len=%u\n", static_cast<unsigned>(_diag_frames),
+                   static_cast<unsigned>(body_len));
+            continue;
+        }
+        // Tiêu thụ body của frame hiện tại.
+        uint32_t take = _diag_frame_remaining < length ? _diag_frame_remaining
+                                                       : static_cast<uint32_t>(length);
+        // Giữ 4KB đầu để parse.
+        if (_diag_head_len < sizeof(_diag_head)) {
+            uint32_t c = static_cast<uint32_t>(sizeof(_diag_head)) - _diag_head_len;
+            if (c > take) c = take;
+            memcpy(_diag_head + _diag_head_len, data, c);
+            _diag_head_len += c;
+        }
+        // In ~800 ký tự đầu để thấy cấu trúc; phần còn lại scan theo dòng lọc node phần cứng.
+        if (_diag_printed < 800) {
+            uint32_t p = 800 - _diag_printed;
+            if (p > take) p = take;
+            printf("[HCC DIAG] body+: %.*s\n", static_cast<int>(p), reinterpret_cast<const char *>(data));
+            _diag_printed += p;
+        }
+        for (uint32_t i = 0; i < take; ++i) {
+            const char ch = static_cast<char>(data[i]);
+            if (ch == '\n' || ch == '\r') {
+                if (_diag_line_len > 0) {
+                    _diag_line[_diag_line_len] = '\0';
+                    scanDiagLine(_diag_line);
+                    _diag_line_len = 0;
+                }
+            } else if (_diag_line_len < sizeof(_diag_line) - 1) {
+                _diag_line[_diag_line_len++] = ch;
+            } else {
+                _diag_line_len = 0;  // dòng quá dài -> bỏ
+            }
+        }
+        _diag_frame_remaining -= take;
+        data += take;
+        length -= take;
+        if (_diag_frame_remaining == 0) {
+            finishDiagFrameHead();
+            printf("[HCC DIAG] frame end (head_kept=%u)\n", static_cast<unsigned>(_diag_head_len));
+        }
+    }
+    return true;
+}
+
+void HCCUSBTransport::releaseOsTrace()
+{
+    _diag_capture = false;
+    _diag_frames = 0;
+    _diag_hdr_have = 0;
+    _diag_frame_remaining = 0;
+    _diag_printed = 0;
+    _diag_head_len = 0;
+    _diag_line_len = 0;
+    _battery_available = false;
+    _batt_cycle = -1;
+    _batt_design = -1;
+    _batt_fcc = -1;
+    releaseServiceTls();
+    if (_ostrace_rx != nullptr) heap_caps_free(_ostrace_rx);
+    _ostrace_rx = nullptr;
+    _ostrace_rx_length = 0;
+    _ostrace_start_requested = false;
+    _ostrace_active = false;
+    _ostrace_desynced = false;
+    _ostrace_frames = 0;
+    _ostrace_bytes = 0;
+    _ostrace_matched = 0;
+    _ost_bb_matches = 0;
+    _ost_bb_errors = 0;
+    _ost_bb_last[0] = '\0';
+    _ost_bio_matches = 0;
+    _ost_bio_errors = 0;
+    _ost_bio_last[0] = '\0';
+    _ostrace_hexdumps = 0;
+    _ostrace_stats_tick = 0;
+    _ostrace_seen_count = 0;
+}
+
+bool HCCUSBTransport::sendOsTraceStart()
+{
+    if (_service_tcp.state != TcpState::Connected) {
+        _ostrace_start_requested = false;
+        return false;
+    }
+    if (_ostrace_rx == nullptr) {
+        _ostrace_rx = static_cast<uint8_t *>(
+            heap_caps_malloc(kOsTraceRxCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (_ostrace_rx == nullptr) {
+            printf("[HCC OSTRACE] RX buffer allocation failed\n");
+            _ostrace_start_requested = false;
+            return false;
+        }
+    }
+    // Chọn request: os_trace StartActivity, hoặc diagnostics_relay (All / IORegistry).
+    const char *req_xml;
+    size_t req_body;
+    if (kDiagnosticsRelayCapture) {
+        req_xml = kDiagRequestIORegistry ? kDiagnosticsIORegistryRequestXml : kDiagnosticsAllRequestXml;
+        req_body = kDiagRequestIORegistry ? kDiagnosticsIORegistryRequestBodySize
+                                          : kDiagnosticsAllRequestBodySize;
+    } else {
+        req_xml = kOsTraceStartActivityXml;
+        req_body = kOsTraceStartActivityBodySize;
+    }
+    const size_t req_len = sizeof(uint32_t) + req_body;
+    uint8_t request[sizeof(uint32_t) + 800];  // đủ cho mọi request ở trên
+    if (req_body > 800) { _ostrace_start_requested = false; return false; }
+    writeBigEndianU32(request, static_cast<uint32_t>(req_body));
+    memcpy(request + sizeof(uint32_t), req_xml, req_body);
+    const bool over_tls = _service_tls != nullptr;
+    if (over_tls) {
+        if (!_service_tls->established || _service_tls->app_tx_length != 0 ||
+            req_len > sizeof(_service_tls->app_tx)) {
+            _ostrace_start_requested = false;
+            return false;
+        }
+        memcpy(_service_tls->app_tx, request, req_len);
+        _service_tls->app_tx_length = req_len;
+        _service_tls->app_tx_offset = 0;
+    } else if (!sendServiceTcpPacket(TxKind::OsTraceStart, 0x10, request, req_len)) {
+        return false;
+    }
+    _ostrace_start_requested = false;
+    _ostrace_active = true;
+    _diag_capture = kDiagnosticsRelayCapture;
+    if (_diag_capture) {
+        printf("[HCC DIAG] diagnostics_relay request sent: %s tls=%u len=%u\n",
+               kDiagRequestIORegistry ? "IORegistry(IODeviceTree)" : "All",
+               static_cast<unsigned>(over_tls), static_cast<unsigned>(req_len));
+    }
+    _ostrace_rx_length = 0;
+    _ostrace_stats_tick = xTaskGetTickCount();
+    _ostrace_start_tick = _ostrace_stats_tick;
+    printf("[HCC OSTRACE] StartActivity submit MessageFilter=0xFFFF Pid=-1 StreamFlags=0x3C tls=%u kernel_window_s=%u\n",
+           static_cast<unsigned>(over_tls), static_cast<unsigned>(kOsTraceBootWindowSeconds));
+    // Over TLS the request is encrypted and submitted now, so the task never idles with it queued.
+    return over_tls ? processServiceTls() : true;
+}
+
+static uint16_t readLittleEndianU16(const uint8_t *data)
+{
+    return static_cast<uint16_t>(data[0] | (data[1] << 8));
+}
+
+static uint32_t readLittleEndianU32(const uint8_t *data)
+{
+    return static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+           (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
+}
+
+static bool containsIgnoreCase(const char *haystack, const char *needle)
+{
+    const size_t needle_length = strlen(needle);
+    for (const char *start = haystack; *start != '\0'; ++start) {
+        size_t index = 0;
+        while (index < needle_length && start[index] != '\0' &&
+               tolower(static_cast<unsigned char>(start[index])) == needle[index]) {
+            ++index;
+        }
+        if (index == needle_length) return true;
+    }
+    return false;
+}
+
+static void printOsTraceHex(const char *tag, const uint8_t *data, size_t length)
+{
+    const size_t shown = length < 160 ? length : 160;
+    printf("[HCC OSTRACE HEX] %s len=%u\n", tag, static_cast<unsigned>(length));
+    for (size_t row = 0; row < shown; row += 16) {
+        char hex[16 * 3 + 1] = {};
+        char ascii[17] = {};
+        for (size_t col = 0; col < 16 && row + col < shown; ++col) {
+            const uint8_t byte = data[row + col];
+            snprintf(hex + col * 3, 4, "%02X ", byte);
+            ascii[col] = (byte >= 0x20 && byte < 0x7F) ? static_cast<char>(byte) : '.';
+        }
+        printf("[HCC OSTRACE HEX] %04X %-48s %s\n", static_cast<unsigned>(row), hex, ascii);
+    }
+}
+
+// Copies one length-prefixed string field of a record (length includes the trailing NUL).
+static const uint8_t *takeOsTraceString(const uint8_t *cursor, const uint8_t *end, size_t length,
+                                        char *out, size_t out_capacity)
+{
+    out[0] = '\0';
+    if (cursor == nullptr || length > static_cast<size_t>(end - cursor)) return nullptr;
+    const size_t copy = length < out_capacity - 1 ? length : out_capacity - 1;
+    memcpy(out, cursor, copy);
+    out[copy] = '\0';
+    for (size_t index = 0; index < copy; ++index) {
+        if (out[index] == '\r' || out[index] == '\n') out[index] = ' ';
+    }
+    return cursor + length;
+}
+
+void HCCUSBTransport::handleOsTraceRecord(const uint8_t *record, size_t length)
+{
+    // Record layout: libimobiledevice struct ostrace_packet_header_t (packed, 0x81 bytes), then
+    // process path, image path, message, subsystem, category.
+    static constexpr size_t kHeaderMinimum = 0x81;
+    if (length < kHeaderMinimum) {
+        printf("[HCC OSTRACE] short record len=%u\n", static_cast<unsigned>(length));
+        return;
+    }
+    const uint32_t header_size = readLittleEndianU32(record + 5);
+    if (header_size < kHeaderMinimum || header_size > length) {
+        printf("[HCC OSTRACE] invalid header_size=%u len=%u\n",
+               static_cast<unsigned>(header_size), static_cast<unsigned>(length));
+        return;
+    }
+    const uint32_t pid = readLittleEndianU32(record + 9);
+    const uint8_t level = record[68];
+    const uint8_t *end = record + length;
+    static char process[128];
+    static char image[96];
+    static char message[512];
+    static char subsystem[96];
+    static char category[64];
+    const uint8_t *cursor = record + header_size;
+    cursor = takeOsTraceString(cursor, end, readLittleEndianU16(record + 37), process, sizeof(process));
+    cursor = takeOsTraceString(cursor, end, readLittleEndianU16(record + 107), image, sizeof(image));
+    cursor = takeOsTraceString(cursor, end, readLittleEndianU16(record + 109), message, sizeof(message));
+    cursor = takeOsTraceString(cursor, end, readLittleEndianU16(record + 117), subsystem, sizeof(subsystem));
+    takeOsTraceString(cursor, end, readLittleEndianU16(record + 121), category, sizeof(category));
+
+    const char *process_short = strrchr(process, '/');
+    process_short = process_short != nullptr ? process_short + 1 : process;
+
+    // Print each distinct process name once so real names can be read off the device.
+    uint32_t hash = 2166136261u;
+    for (const char *c = process_short; *c != '\0'; ++c) {
+        hash = (hash ^ static_cast<uint8_t>(*c)) * 16777619u;
+    }
+    bool seen = false;
+    for (size_t index = 0; index < _ostrace_seen_count; ++index) {
+        if (_ostrace_seen_procs[index] == hash) {
+            seen = true;
+            break;
+        }
+    }
+    if (!seen && _ostrace_seen_count < _ostrace_seen_procs.size()) {
+        _ostrace_seen_procs[_ostrace_seen_count++] = hash;
+        printf("[HCC OSTRACE PROC] pid=%u %s\n", static_cast<unsigned>(pid), process_short);
+    }
+
+    // Serial output tops out near 20 KB/s, far below the boot-time log rate, so only kernel
+    // entries are added unfiltered (for the baseband driver bring-up) during the boot window.
+    const bool boot_window =
+        xTaskGetTickCount() - _ostrace_start_tick < pdMS_TO_TICKS(kOsTraceBootWindowSeconds * 1000);
+    bool match = boot_window && strcmp(process_short, "kernel") == 0;
+    for (const char *keyword : kOsTraceKeywords) {
+        if (match) break;
+        match = containsIgnoreCase(process_short, keyword) || containsIgnoreCase(subsystem, keyword) ||
+                containsIgnoreCase(category, keyword) || containsIgnoreCase(message, keyword);
+    }
+    if (!match) return;
+    ++_ostrace_matched;
+
+    // Gom evidence cho Hardware Check: phân loại biometric vs baseband, error theo log level.
+    // os_log level: 0x10 = error, 0x11 = fault -> coi là lỗi.
+    {
+        const bool is_error = (level >= 0x10);
+        auto lineHas = [&](const char *k) {
+            return containsIgnoreCase(process_short, k) || containsIgnoreCase(subsystem, k) ||
+                   containsIgnoreCase(category, k) || containsIgnoreCase(message, k);
+        };
+        bool is_bio = false;
+        for (const char *k : kOsTraceBioTerms) { if (lineHas(k)) { is_bio = true; break; } }
+        bool is_bb = false;
+        if (!is_bio) { for (const char *k : kOsTraceBasebandTerms) { if (lineHas(k)) { is_bb = true; break; } } }
+
+        if (is_bio) {
+            ++_ost_bio_matches;
+            if (is_error) ++_ost_bio_errors;
+            snprintf(_ost_bio_last, sizeof(_ost_bio_last), "%s {%s/%s} %.140s",
+                     process_short, subsystem, category, message);
+        } else if (is_bb) {
+            ++_ost_bb_matches;
+            if (is_error) ++_ost_bb_errors;
+            snprintf(_ost_bb_last, sizeof(_ost_bb_last), "%s {%s/%s} %.140s",
+                     process_short, subsystem, category, message);
+        }
+        // Dòng khớp keyword generic (pmu/voltage/rail...) KHÔNG lưu làm evidence subsystem.
+    }
+    // Device wall clock (UTC) from the record header, to line entries up against the boot.
+    const uint32_t time_sec = readLittleEndianU32(record + 55);
+    const uint32_t time_usec = readLittleEndianU32(record + 63);
+    const uint32_t day_sec = time_sec % 86400;
+    printf("[HCC OSTRACE BB] %02u:%02u:%02u.%03uZ %s[%u] L%02X {%s/%s} %.320s\n",
+           static_cast<unsigned>(day_sec / 3600), static_cast<unsigned>((day_sec / 60) % 60),
+           static_cast<unsigned>(day_sec % 60), static_cast<unsigned>((time_usec / 1000) % 1000),
+           process_short, static_cast<unsigned>(pid), static_cast<unsigned>(level), subsystem,
+           category, message);
+}
+
+bool HCCUSBTransport::appendOsTraceRx(const uint8_t *data, size_t length)
+{
+    _ostrace_bytes += static_cast<uint32_t>(length);
+    if (_ostrace_desynced || _ostrace_rx == nullptr) return true;
+    if (length > kOsTraceRxCapacity - _ostrace_rx_length) {
+        printf("[HCC OSTRACE] RX overflow length=%u used=%u - parsing stopped\n",
+               static_cast<unsigned>(length), static_cast<unsigned>(_ostrace_rx_length));
+        _ostrace_desynced = true;
+        return true;
+    }
+    memcpy(_ostrace_rx + _ostrace_rx_length, data, length);
+    _ostrace_rx_length += length;
+
+    // Frame: [type:1][length:4, big-endian for type 1 (plist), little-endian for type 2 (record)].
+    size_t offset = 0;
+    while (_ostrace_rx_length - offset >= 5) {
+        const uint8_t *frame = _ostrace_rx + offset;
+        const uint8_t type = frame[0];
+        uint32_t body_length = 0;
+        if (type == 1) {
+            body_length = readBigEndianU32(frame + 1);
+        } else if (type == 2) {
+            body_length = readLittleEndianU32(frame + 1);
+        }
+        if ((type != 1 && type != 2) || body_length > kOsTraceRxCapacity - 5) {
+            printf("[HCC OSTRACE] framing lost type=%u length=%u - parsing stopped\n",
+                   static_cast<unsigned>(type), static_cast<unsigned>(body_length));
+            printOsTraceHex("desync", frame, _ostrace_rx_length - offset);
+            _ostrace_desynced = true;
+            _ostrace_rx_length = 0;
+            return true;
+        }
+        if (_ostrace_rx_length - offset < 5 + static_cast<size_t>(body_length)) break;
+        const uint8_t *body = frame + 5;
+        ++_ostrace_frames;
+        if (_ostrace_hexdumps < 3) {
+            ++_ostrace_hexdumps;
+            printOsTraceHex(type == 1 ? "plist" : "record", frame, 5 + body_length);
+        }
+        if (type == 1) {
+            const bool ok = containsBytes(body, body_length, "RequestSuccessful");
+            printf("[HCC OSTRACE] reply plist len=%u %s status=%s\n", static_cast<unsigned>(body_length),
+                   (body_length >= 8 && memcmp(body, "bplist00", 8) == 0) ? "binary" : "xml",
+                   ok ? "RequestSuccessful" : "NOT successful");
+        } else {
+            handleOsTraceRecord(body, body_length);
+        }
+        offset += 5 + body_length;
+    }
+    if (offset > 0) {
+        memmove(_ostrace_rx, _ostrace_rx + offset, _ostrace_rx_length - offset);
+        _ostrace_rx_length -= offset;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (now - _ostrace_stats_tick >= pdMS_TO_TICKS(5000)) {
+        _ostrace_stats_tick = now;
+        printf("[HCC OSTRACE STATS] frames=%u bytes=%u matched=%u procs=%u buffered=%u\n",
+               static_cast<unsigned>(_ostrace_frames), static_cast<unsigned>(_ostrace_bytes),
+               static_cast<unsigned>(_ostrace_matched), static_cast<unsigned>(_ostrace_seen_count),
+               static_cast<unsigned>(_ostrace_rx_length));
+    }
+    return true;
 }
 
 bool HCCUSBTransport::processNotificationRx()
@@ -4113,6 +5075,11 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
     if (extractXmlStringForKey(body, length, "Error", error, sizeof(error))) {
         printf("[HCC LOCKDOWN] Lockdown XML Error=%s\n", error);
         _lockdown_expected_response = LockdownResponse::None;
+        // A failed info query on a reuse connect must still proceed to StartSession.
+        if (_reuse_info_query) {
+            _reuse_info_query = false;
+            _start_session_after_ack = true;
+        }
         return true;
     }
 
@@ -4132,8 +5099,10 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
                 _start_session_after_querytype_ack = true;
             } else {
                 if (_session_record_loaded && _session_generation != 0) {
-                    printf("[HCC PAIR] PAIR RECORD REUSE -> StartSession\n");
-                    _start_session_after_querytype_ack = true;
+                    // Reuse: fetch iOS/Wi-Fi over plaintext first, then StartSession.
+                    printf("[HCC PAIR] PAIR RECORD REUSE -> query info\n");
+                    _getvalue_product_version_after_ack = true;
+                    _reuse_info_query = true;
                 } else {
                     _getvalue_product_version_after_ack = true;
                 }
@@ -4149,9 +5118,12 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
             extractXmlStringForKey(body, length, "Value", value, sizeof(value))) {
             printf("[HCC LOCKDOWN] GETVALUE PRODUCTVERSION PASS value=%s\n", value);
             snprintf(_product_version.data(), _product_version.size(), "%s", value);
-            _getvalue_device_class_after_ack = true;
+            // Reuse fetches Wi-Fi next over plaintext; session-protected keys come after TLS.
+            if (_reuse_info_query) _getvalue_wifi_address_after_ack = true;
+            else _getvalue_device_class_after_ack = true;
         } else {
             printf("[HCC LOCKDOWN] GetValue ProductVersion XML response validation failed\n");
+            if (_reuse_info_query) _getvalue_wifi_address_after_ack = true;
         }
     } else if (_lockdown_expected_response == LockdownResponse::GetValueDeviceClass) {
         char request[32] = {};
@@ -4210,8 +5182,16 @@ bool HCCUSBTransport::handleLockdownResponse(const uint8_t *body, size_t length)
                     _pair_prefix_requested = true;
                 }
             }
+            if (_reuse_info_query) {
+                _reuse_info_query = false;
+                _start_session_after_ack = true;
+            }
         } else {
             printf("[HCC LOCKDOWN] GetValue WiFiAddress XML response validation failed\n");
+            if (_reuse_info_query) {
+                _reuse_info_query = false;
+                _start_session_after_ack = true;
+            }
         }
     } else {
         printf("[HCC LOCKDOWN] Unexpected XML response bytes=%u\n", static_cast<unsigned>(length));
@@ -4326,6 +5306,10 @@ const char *HCCUSBTransport::txKindName(TxKind tx_kind)
         return "NOTIFY_PREFIX";
     case TxKind::NotificationBody:
         return "NOTIFY_BODY";
+    case TxKind::OsTraceStart:
+        return "OSTRACE_START";
+    case TxKind::ServiceTlsCiphertext:
+        return "SERVICE_TLS_CIPHERTEXT";
     default:
         return "UNKNOWN";
     }
@@ -4631,8 +5615,7 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
                         transport->_tls->lockdown_tx_offset ==
                             transport->_tls->lockdown_tx_length) {
                         transport->_tls->lockdown_tx_waiting_for_ciphertext = false;
-                        transport->_tls->app_state = TlsContext::AppState::StartServiceRead;
-                        printf("[HCC TLS] encrypted StartService request sent\n");
+                        transport->markTlsLockdownRequestSent();
                     }
                 }
             }
@@ -4643,6 +5626,13 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
                 if (transport->_pair_trust_state == PairTrustState::NotificationServiceReady) {
                     transport->_primary_trust_fin_requested = true;
                     printf("[HCC NOTIFY] TCP #2 connected; primary close pending\n");
+                } else if (kOsTraceExperiment) {
+                    // SSL services handshake on TCP #2 first; StartActivity follows the handshake.
+                    if (transport->_notification_service_ssl) {
+                        transport->_service_tls_prepare_requested = true;
+                    } else {
+                        transport->_ostrace_start_requested = (kOsTraceExperiment || kDiagnosticsRelayCapture);
+                    }
                 } else {
                     transport->_service_tcp.notification_prefix_requested = true;
                 }
@@ -4658,6 +5648,16 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
             transport->_tcp_state = TcpState::Failed;
             transport->_primary_tcp_closed = true;
             printf("[HCC NOTIFY] primary Lockdown close ACK dispatched\n");
+        } else if (tx_kind == TxKind::OsTraceStart) {
+            const size_t payload_length = actual_num_bytes >= static_cast<int>(kTcpMuxPacketSize)
+                                              ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
+            transport->_service_tcp.tx_seq += static_cast<uint32_t>(payload_length);
+            printf("[HCC OSTRACE] StartActivity sent bytes=%u\n", static_cast<unsigned>(payload_length));
+        } else if (tx_kind == TxKind::ServiceTlsCiphertext) {
+            const size_t payload_length = actual_num_bytes >= static_cast<int>(kTcpMuxPacketSize)
+                                              ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
+            transport->_service_tcp.tx_seq += static_cast<uint32_t>(payload_length);
+            transport->onServiceTlsCiphertextSent(payload_length);
         } else if (tx_kind == TxKind::NotificationPrefix) {
             const size_t payload_length = actual_num_bytes >= static_cast<int>(kTcpMuxPacketSize)
                                               ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
