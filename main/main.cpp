@@ -69,7 +69,7 @@ extern "C" void app_main(void)
         return;
     }
     // HCC INSIGHT wallpaper (1024x600) replaces the default 480x480 home background.
-    phone_stylesheet->core.background.wallpaper_image_resource = ESP_BROOKESIA_STYLE_IMAGE(&img_hcc_home_wallpaper);
+    phone_stylesheet->core.home.background.wallpaper_image_resource = ESP_BROOKESIA_STYLE_IMAGE(&img_hcc_home_wallpaper);
     if (!phone->addStylesheet(*phone_stylesheet)) {
         ESP_LOGE(TAG, "Failed to add phone stylesheet");
         bsp_display_unlock();
