@@ -70,6 +70,8 @@ extern "C" void app_main(void)
     }
     // HCC INSIGHT wallpaper (1024x600) replaces the default 480x480 home background.
     phone_stylesheet->core.home.background.wallpaper_image_resource = ESP_BROOKESIA_STYLE_IMAGE(&img_hcc_home_wallpaper);
+    // Transparent status bar so the wallpaper shows through behind the clock/Wi-Fi/battery icons.
+    phone_stylesheet->home.status_bar.data.main.background_color.opacity = LV_OPA_TRANSP;
     if (!phone->addStylesheet(*phone_stylesheet)) {
         ESP_LOGE(TAG, "Failed to add phone stylesheet");
         bsp_display_unlock();
