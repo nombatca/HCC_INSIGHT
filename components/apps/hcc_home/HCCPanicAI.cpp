@@ -18,6 +18,14 @@ static const char *OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 static const char *DEFAULT_ANTHROPIC_MODEL = "claude-opus-5";
 static const char *DEFAULT_OPENAI_MODEL = "gpt-4o";
 static const char *ANTHROPIC_VERSION = "2023-06-01";
+// GPT: tiếng Việt có dấu tốn nhiều token -> 1024 dễ cắt mất [KIEMTRA]/[DOTINCAY].
+static constexpr int OPENAI_MAX_TOKENS = 3000;
+static constexpr int ANTHROPIC_MAX_TOKENS = 1024;
+
+static int maxTokensFor(const std::string &provider)
+{
+    return provider == "anthropic" ? ANTHROPIC_MAX_TOKENS : OPENAI_MAX_TOKENS;
+}
 
 // System prompt: chẩn đoán sửa chữa phần cứng iPhone, xuất theo khối có tag ASCII.
 static const char *SYSTEM_PROMPT =
@@ -271,8 +279,8 @@ PanicResult HCCPanicAI::analyze(const ParsedPanic &parsed)
     // Dựng body JSON theo provider.
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "model", model.c_str());
+    cJSON_AddNumberToObject(body, "max_tokens", maxTokensFor(provider));
     if (provider == "anthropic") {
-        cJSON_AddNumberToObject(body, "max_tokens", 1024);
         cJSON_AddStringToObject(body, "system", SYSTEM_PROMPT);
         cJSON *msgs = cJSON_AddArrayToObject(body, "messages");
         cJSON *um = cJSON_CreateObject();
@@ -280,7 +288,6 @@ PanicResult HCCPanicAI::analyze(const ParsedPanic &parsed)
         cJSON_AddStringToObject(um, "content", user_content.c_str());
         cJSON_AddItemToArray(msgs, um);
     } else {  // openai
-        cJSON_AddNumberToObject(body, "max_tokens", 1024);
         cJSON_AddNumberToObject(body, "temperature", 0.2);
         cJSON *msgs = cJSON_AddArrayToObject(body, "messages");
         cJSON *sm = cJSON_CreateObject();
@@ -317,7 +324,7 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
     config.url = url.c_str();
     config.event_handler = aiEventHandler;
     config.user_data = &response;
-    config.timeout_ms = 40000;
+    config.timeout_ms = 90000;  // trả lời dài (3000 token) có thể > 40 s
     config.buffer_size = 4096;
     config.buffer_size_tx = 4096;
     config.crt_bundle_attach = esp_crt_bundle_attach;
@@ -377,6 +384,7 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
         return r;
     }
     std::string text;
+    bool truncated = false;  // GPT dừng vì hết max_tokens (finish_reason == "length")
     if (provider == "anthropic") {
         const cJSON *content = cJSON_GetObjectItemCaseSensitive(root, "content");
         if (cJSON_IsArray(content)) {
@@ -396,16 +404,29 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
             const cJSON *msg = first ? cJSON_GetObjectItemCaseSensitive(first, "message") : nullptr;
             const cJSON *c = msg ? cJSON_GetObjectItemCaseSensitive(msg, "content") : nullptr;
             if (cJSON_IsString(c) && c->valuestring) text = c->valuestring;
+            const cJSON *fr = first ? cJSON_GetObjectItemCaseSensitive(first, "finish_reason") : nullptr;
+            truncated = cJSON_IsString(fr) && fr->valuestring && strcmp(fr->valuestring, "length") == 0;
         }
     }
     cJSON_Delete(root);
 
     if (text.empty()) {
         r.ok = false;
-        r.message = "Phan hoi AI rong";
+        r.message = truncated ? "Phan hoi AI bi cat (het max_tokens)" : "Phan hoi AI rong";
         return r;
     }
-    return parseAiText(text);
+    r = parseAiText(text);
+    if (truncated) {
+        ESP_LOGW(TAG, "AI response truncated (finish_reason=length)");
+        if (!r.ok) {
+            r.message = "Phan hoi AI bi cat (het max_tokens) - " + r.message;
+        } else {
+            // Vẫn hiện phần đã nhận nhưng báo rõ có thể thiếu các khối cuối.
+            const char *warn = "(Phản hồi AI bị cắt - có thể thiếu nội dung)";
+            r.confidence = (r.confidence == "-") ? warn : r.confidence + "\n" + warn;
+        }
+    }
+    return r;
 }
 
 PanicResult HCCPanicAI::analyzeImage(const std::string &img_bytes, const std::string &mime)
@@ -442,7 +463,7 @@ PanicResult HCCPanicAI::analyzeImage(const std::string &img_bytes, const std::st
 
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "model", model.c_str());
-    cJSON_AddNumberToObject(body, "max_tokens", 1024);
+    cJSON_AddNumberToObject(body, "max_tokens", maxTokensFor(provider));
 
     if (provider == "anthropic") {
         cJSON_AddStringToObject(body, "system", SYSTEM_PROMPT);
