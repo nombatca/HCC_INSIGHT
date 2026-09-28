@@ -43,6 +43,23 @@ bool isTrivialKeyword(const std::string &kw)
     return false;
 }
 
+// Tìm kw trong hay như một token nguyên: ký tự ngay trước/sau KHÔNG phải chữ/số.
+// Tránh "0x80" khớp trong "0x800000" hay "ans" khớp trong "transfer".
+bool containsToken(const std::string &hay, const std::string &kw)
+{
+    size_t p = 0;
+    while ((p = hay.find(kw, p)) != std::string::npos) {
+        const size_t e = p + kw.size();
+        const bool left_ok = (p == 0) || !isalnum((unsigned char)hay[p - 1]) ||
+                             !isalnum((unsigned char)kw[0]);
+        const bool right_ok = (e >= hay.size()) || !isalnum((unsigned char)hay[e]) ||
+                              !isalnum((unsigned char)kw[kw.size() - 1]);
+        if (left_ok && right_ok) return true;
+        p++;
+    }
+    return false;
+}
+
 // Chuẩn hoá signature thành tên file an toàn.
 std::string safeName(const std::string &sig)
 {
@@ -89,13 +106,21 @@ bool HCCPanicKB::lookupInTier(const char *rel_dir, const char *tier_name,
         std::string m_type = match ? toLower(jstr(match, "panic_type")) : std::string();
         std::string m_kw = match ? toLower(jstr(match, "keyword")) : std::string();
 
-        // BẮT BUỘC có keyword ĐẶC TRƯNG và phải xuất hiện trong panic -> tránh khớp bừa.
-        // Bỏ qua keyword tầm thường (0x0, quá ngắn) và keyword không có trong panic.
-        if (m_kw.empty() || isTrivialKeyword(m_kw) || haystack.find(m_kw) == std::string::npos) {
+        // Có keyword: phải ĐẶC TRƯNG và xuất hiện nguyên token trong panic -> tránh khớp bừa.
+        // Không có keyword (case nhập thiếu CODE HEX + SOURCE): chỉ khớp khi entry khai báo
+        // ĐỦ model + panic_type (được kiểm tra bên dưới), điểm thấp hơn entry có keyword.
+        int score = 0;
+        if (m_kw.empty()) {
+            if (m_model.empty() || m_type.empty()) {
+                cJSON_Delete(root);
+                continue;
+            }
+        } else if (isTrivialKeyword(m_kw) || !containsToken(haystack, m_kw)) {
             cJSON_Delete(root);
             continue;
+        } else {
+            score = 1;  // keyword đã khớp
         }
-        int score = 1;  // keyword đã khớp
 
         bool ok = true;
         if (!m_model.empty()) {

@@ -200,12 +200,16 @@ void HCCPanicParser::extractFromPanicString(ParsedPanic &out, const std::string 
         if (panic[i] == '0' && (panic[i + 1] == 'x' || panic[i + 1] == 'X')) {
             size_t j = i + 2;
             while (j < panic.size() && isxdigit((unsigned char)panic[j])) j++;
-            if (j > i + 2) {
+            // Bỏ địa chỉ bộ nhớ (con trỏ kernel 64-bit, vd 0xfffffff0...): không phải mã lỗi,
+            // lại hay đứng đầu danh sách -> bị điền sẵn vào CODE HEX và thành keyword KB sai.
+            if (j > i + 2 && j - (i + 2) <= 10) {
                 std::string hex = panic.substr(i, j - i);
                 unsigned long dec = strtoul(hex.c_str() + 2, nullptr, 16);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%s (dec %lu)", hex.c_str(), dec);
-                pushUnique(out.error_codes, buf, 8);
+                if (dec != 0) {  // 0x0 không mang thông tin và KB coi là keyword tầm thường
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%s (dec %lu)", hex.c_str(), dec);
+                    pushUnique(out.error_codes, buf, 8);
+                }
             }
             i = j;
         }
@@ -237,11 +241,55 @@ void HCCPanicParser::extractFromPanicString(ParsedPanic &out, const std::string 
     }
 }
 
+// Tìm tok trong low (đã hạ thường) mà ký tự ngay trước KHÔNG phải chữ/số,
+// để "atc" không khớp trong "watchdog". Trả npos nếu không thấy.
+static size_t findPrefixToken(const std::string &low, const char *tok, size_t from = 0)
+{
+    size_t p = from;
+    while ((p = low.find(tok, p)) != std::string::npos) {
+        if (p == 0 || !isalnum((unsigned char)low[p - 1])) return p;
+        p++;
+    }
+    return std::string::npos;
+}
+
 void HCCPanicParser::buildSignature(ParsedPanic &out)
 {
-    // Chữ ký: model | panic_type | từ khoá chính đầu tiên (chuẩn hoá thường).
-    std::string key_line = out.sensors.empty() ? std::string() : toLower(out.sensors[0]);
-    // Lấy ~40 ký tự đầu của dòng khoá để làm khoá tra cứu ổn định.
-    if (key_line.size() > 40) key_line = key_line.substr(0, 40);
-    out.signature = toLower(out.model) + "|" + toLower(out.panic_type) + "|" + key_line;
+    // Chữ ký: model | panic_type | tối đa 3 subsystem đặc trưng tìm thấy trong panic
+    // (vd "s.sensor[1],dpphy"). Ổn định hơn dòng đầu tiên (thường chỉ là "panic(cpu ...").
+    // Sắp từ cụ thể -> chung chung.
+    static const char *kTokens[] = {
+        "missing sensor", "dpphy", "usb-drd", "atc", "ans", "nand", "aop", "smc", "pmu",
+        "baseband", "i2c", "gpu", "dcp", "sep", "thermal", "userspace watchdog", "watchdog",
+        "busy timeout",
+    };
+    const std::string low = toLower(out.panic_string);
+    std::vector<std::string> found;
+
+    // S.sensor[n]: giữ nguyên chỉ số vì mỗi index là một đường sensor khác nhau.
+    size_t p = findPrefixToken(low, "s.sensor[");
+    if (p != std::string::npos) {
+        size_t e = low.find(']', p);
+        if (e != std::string::npos && e - p <= 14) found.push_back(low.substr(p, e - p + 1));
+    }
+    for (const char *tok : kTokens) {
+        if (found.size() >= 3) break;
+        if (strcmp(tok, "watchdog") == 0 &&
+            std::find(found.begin(), found.end(), "userspace watchdog") != found.end()) {
+            continue;
+        }
+        if (findPrefixToken(low, tok) != std::string::npos) found.push_back(tok);
+    }
+
+    std::string key;
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (i) key += ",";
+        key += found[i];
+    }
+    if (key.empty()) {
+        // Không có subsystem quen thuộc: dùng ~40 ký tự đầu của dòng khoá như trước.
+        key = out.sensors.empty() ? std::string() : toLower(out.sensors[0]);
+        if (key.size() > 40) key = key.substr(0, 40);
+    }
+    out.signature = toLower(out.model) + "|" + toLower(out.panic_type) + "|" + key;
 }
