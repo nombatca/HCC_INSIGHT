@@ -3392,10 +3392,12 @@ void HCCHome::panicAnalyzeTask(void *arg)
 
 void HCCHome::performPanicAnalyze()
 {
-    // Nếu là ẢNH panic (RAM): gửi thẳng cho AI vision, bỏ qua parse/KB.
+    // ẢNH panic (RAM): AI chỉ chép lại chữ log trong ảnh, rồi phân tích chữ đó
+    // như file .ips (parser -> KB -> AI) bên dưới.
     std::string img_mime;
     bool is_img = (strncmp(_panic_file, "[RAM] ", 6) == 0) &&
                   HCCPanicServer::receivedIsImage(&img_mime);
+    std::string raw;
     if (is_img) {
         std::string name, bytes;
         if (!HCCPanicServer::getReceived(name, bytes) || bytes.empty()) {
@@ -3405,14 +3407,15 @@ void HCCHome::performPanicAnalyze()
             snprintf(_panic_status, sizeof(_panic_status), "Lỗi đọc ảnh");
             return;
         }
-        _panic_result = HCCPanicAI::analyzeImage(bytes, img_mime);
-        snprintf(_panic_status, sizeof(_panic_status),
-                 _panic_result.ok ? "Phân tích ảnh (AI) xong" : "AI ảnh lỗi");
-        return;
-    }
-
-    std::string raw;
-    if (!loadSelectedRaw(raw)) {
+        std::string err;
+        if (!HCCPanicAI::transcribeImage(bytes, img_mime, raw, err)) {
+            _panic_result = PanicResult();
+            _panic_result.ok = false;
+            _panic_result.message = err;
+            snprintf(_panic_status, sizeof(_panic_status), "AI đọc ảnh lỗi");
+            return;
+        }
+    } else if (!loadSelectedRaw(raw)) {
         _panic_result = PanicResult();
         _panic_result.ok = false;
         _panic_result.message = "Không đọc được panic đang chọn";
@@ -3427,7 +3430,8 @@ void HCCHome::performPanicAnalyze()
     PanicResult kb = HCCPanicKB::lookup(parsed);
     if (kb.ok) {
         _panic_result = kb;
-        snprintf(_panic_status, sizeof(_panic_status), "Khớp KB: %s", kb.source_tier.c_str());
+        snprintf(_panic_status, sizeof(_panic_status), "Khớp KB: %s%s", kb.source_tier.c_str(),
+                 is_img ? " (từ ảnh)" : "");
         return;
     }
 
@@ -3437,7 +3441,7 @@ void HCCHome::performPanicAnalyze()
         // Lưu cache vào tầng AI_INFERENCE (không bao giờ tự thành VERIFIED).
         HCCPanicKB::saveAiResult(parsed, ai);
         _panic_result = ai;
-        snprintf(_panic_status, sizeof(_panic_status), "Phân tích AI xong");
+        snprintf(_panic_status, sizeof(_panic_status), is_img ? "Phân tích AI xong (từ ảnh)" : "Phân tích AI xong");
     } else {
         _panic_result = ai;
         snprintf(_panic_status, sizeof(_panic_status), "AI lỗi");
