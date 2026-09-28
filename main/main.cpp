@@ -21,6 +21,36 @@ static const char *TAG = "main";
 
 LV_IMG_DECLARE(img_hcc_home_wallpaper);
 
+// The status bar is transparent only on the home screen so the wallpaper shows behind it.
+// App screens start below the bar (y = bar height) and never repaint that strip, so the
+// bar must be opaque while an app is shown or stale pixels show through it.
+static lv_obj_t *s_status_bar_obj = nullptr;
+
+static lv_obj_t *findStatusBarObject(lv_obj_t *system_screen_obj)
+{
+    // Brookesia keeps the bar object private; it is the full-width strip at the top of the
+    // system screen (the recents screen is full height, the navigation bar is at the bottom).
+    lv_obj_update_layout(system_screen_obj);
+    const uint32_t count = lv_obj_get_child_cnt(system_screen_obj);
+    for (uint32_t i = 0; i < count; i++) {
+        lv_obj_t *child = lv_obj_get_child(system_screen_obj, i);
+        if (lv_obj_get_y(child) == 0 && lv_obj_get_width(child) == lv_obj_get_width(system_screen_obj) &&
+                lv_obj_get_height(child) < lv_obj_get_height(system_screen_obj) / 4) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+static void onHomeScreenLoadEvent(lv_event_t *event)
+{
+    if (s_status_bar_obj == nullptr) {
+        return;
+    }
+    const bool home_shown = (lv_event_get_code(event) == LV_EVENT_SCREEN_LOAD_START);
+    lv_obj_set_style_bg_opa(s_status_bar_obj, home_shown ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+}
+
 extern "C" void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -70,8 +100,6 @@ extern "C" void app_main(void)
     }
     // HCC INSIGHT wallpaper (1024x600) replaces the default 480x480 home background.
     phone_stylesheet->core.home.background.wallpaper_image_resource = ESP_BROOKESIA_STYLE_IMAGE(&img_hcc_home_wallpaper);
-    // Transparent status bar so the wallpaper shows through behind the clock/Wi-Fi/battery icons.
-    phone_stylesheet->home.status_bar.data.main.background_color.opacity = LV_OPA_TRANSP;
     if (!phone->addStylesheet(*phone_stylesheet)) {
         ESP_LOGE(TAG, "Failed to add phone stylesheet");
         bsp_display_unlock();
@@ -87,6 +115,16 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "Failed to begin phone");
         bsp_display_unlock();
         return;
+    }
+
+    s_status_bar_obj = findStatusBarObject(phone->getCoreHome().getSystemScreenObject());
+    if (s_status_bar_obj == nullptr) {
+        ESP_LOGW(TAG, "Status bar object not found; keeping it opaque");
+    } else {
+        lv_obj_t *home_screen = phone->getCoreHome().getMainScreen();
+        lv_obj_add_event_cb(home_screen, onHomeScreenLoadEvent, LV_EVENT_SCREEN_LOAD_START, nullptr);
+        lv_obj_add_event_cb(home_screen, onHomeScreenLoadEvent, LV_EVENT_SCREEN_UNLOAD_START, nullptr);
+        lv_obj_set_style_bg_opa(s_status_bar_obj, LV_OPA_TRANSP, 0);  // home is shown at boot
     }
 
     PhoneAppSquareline *smart_gadget = new PhoneAppSquareline();
