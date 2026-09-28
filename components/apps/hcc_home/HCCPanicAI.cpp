@@ -313,11 +313,13 @@ PanicResult HCCPanicAI::analyze(const ParsedPanic &parsed)
     return sendAndParse(provider, url, api_key, body_json);
 }
 
-PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::string &url,
-                                     const std::string &api_key, const std::string &body_json)
+bool HCCPanicAI::sendRequest(const std::string &provider, const std::string &url,
+                             const std::string &api_key, const std::string &body_json,
+                             std::string &text, bool &truncated, std::string &error)
 {
-    PanicResult r;
-    r.source_tier = "AI_INFERENCE";
+    text.clear();
+    truncated = false;
+    error.clear();
 
     std::string response;
     esp_http_client_config_t config = {};
@@ -331,9 +333,8 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
-        r.ok = false;
-        r.message = "Khong tao duoc HTTP client";
-        return r;
+        error = "Khong tao duoc HTTP client";
+        return false;
     }
 
     esp_http_client_set_method(client, HTTP_METHOD_POST);
@@ -359,32 +360,27 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
              (unsigned)body_json.size(), (unsigned)response.size(), body_log.c_str());
 
     if (status >= 400) {
-        r.ok = false;
-        if (status == 401) r.message = "API key sai hoac thieu (HTTP 401)";
-        else if (status == 429) r.message = "AI qua tai/het quota (HTTP 429)";
-        else r.message = "AI tra ve HTTP " + std::to_string(status);
-        if (!response.empty()) r.message += " - " + response.substr(0, 120);
-        return r;
+        if (status == 401) error = "API key sai hoac thieu (HTTP 401)";
+        else if (status == 429) error = "AI qua tai/het quota (HTTP 429)";
+        else error = "AI tra ve HTTP " + std::to_string(status);
+        if (!response.empty()) error += " - " + response.substr(0, 120);
+        return false;
     }
     if (status == 0 && err != ESP_OK) {
-        r.ok = false;
-        r.message = std::string("Loi ket noi AI: ") + esp_err_to_name(err);
-        return r;
+        error = std::string("Loi ket noi AI: ") + esp_err_to_name(err);
+        return false;
     }
     if (status < 200 || status >= 300) {
-        r.ok = false;
-        r.message = "AI tra ve HTTP " + std::to_string(status);
-        return r;
+        error = "AI tra ve HTTP " + std::to_string(status);
+        return false;
     }
 
     cJSON *root = cJSON_Parse(response.c_str());
     if (!root) {
-        r.ok = false;
-        r.message = "Loi parse phan hoi AI";
-        return r;
+        error = "Loi parse phan hoi AI";
+        return false;
     }
-    std::string text;
-    bool truncated = false;  // GPT dừng vì hết max_tokens (finish_reason == "length")
+    bool refused = false;
     if (provider == "anthropic") {
         const cJSON *content = cJSON_GetObjectItemCaseSensitive(root, "content");
         if (cJSON_IsArray(content)) {
@@ -397,6 +393,11 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
                 }
             }
         }
+        const cJSON *sr = cJSON_GetObjectItemCaseSensitive(root, "stop_reason");
+        if (cJSON_IsString(sr) && sr->valuestring) {
+            refused = strcmp(sr->valuestring, "refusal") == 0;
+            truncated = strcmp(sr->valuestring, "max_tokens") == 0;
+        }
     } else {
         const cJSON *choices = cJSON_GetObjectItemCaseSensitive(root, "choices");
         if (cJSON_IsArray(choices)) {
@@ -404,20 +405,42 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
             const cJSON *msg = first ? cJSON_GetObjectItemCaseSensitive(first, "message") : nullptr;
             const cJSON *c = msg ? cJSON_GetObjectItemCaseSensitive(msg, "content") : nullptr;
             if (cJSON_IsString(c) && c->valuestring) text = c->valuestring;
+            // GPT từ chối: message.refusal là chuỗi (content thường là câu xin lỗi).
+            const cJSON *rf = msg ? cJSON_GetObjectItemCaseSensitive(msg, "refusal") : nullptr;
+            refused = cJSON_IsString(rf) && rf->valuestring && rf->valuestring[0];
             const cJSON *fr = first ? cJSON_GetObjectItemCaseSensitive(first, "finish_reason") : nullptr;
             truncated = cJSON_IsString(fr) && fr->valuestring && strcmp(fr->valuestring, "length") == 0;
         }
     }
     cJSON_Delete(root);
 
+    if (refused) {
+        error = "AI tu choi yeu cau";
+        return false;
+    }
     if (text.empty()) {
+        error = truncated ? "Phan hoi AI bi cat (het max_tokens)" : "Phan hoi AI rong";
+        return false;
+    }
+    if (truncated) ESP_LOGW(TAG, "AI response truncated (max tokens)");
+    return true;
+}
+
+PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::string &url,
+                                     const std::string &api_key, const std::string &body_json)
+{
+    PanicResult r;
+    r.source_tier = "AI_INFERENCE";
+
+    std::string text, error;
+    bool truncated = false;
+    if (!sendRequest(provider, url, api_key, body_json, text, truncated, error)) {
         r.ok = false;
-        r.message = truncated ? "Phan hoi AI bi cat (het max_tokens)" : "Phan hoi AI rong";
+        r.message = error;
         return r;
     }
     r = parseAiText(text);
     if (truncated) {
-        ESP_LOGW(TAG, "AI response truncated (finish_reason=length)");
         if (!r.ok) {
             r.message = "Phan hoi AI bi cat (het max_tokens) - " + r.message;
         } else {
@@ -429,21 +452,32 @@ PanicResult HCCPanicAI::sendAndParse(const std::string &provider, const std::str
     return r;
 }
 
-PanicResult HCCPanicAI::analyzeImage(const std::string &img_bytes, const std::string &mime)
+// Bước 1 cho ẢNH panic: chỉ CHÉP LẠI chữ trong ảnh (OCR). Yêu cầu chẩn đoán gộp với ảnh
+// bị GPT từ chối ("I can't assist with that"); chép chữ thuần thì không. Phần chữ thu được
+// đi tiếp qua đúng luồng như file .ips (parser -> KB -> analyze).
+static const char *TRANSCRIBE_SYSTEM_PROMPT =
+    "You are an OCR tool used in a phone repair shop. The image is a photo or screenshot of a "
+    "diagnostic panic log (Settings > Privacy > Analytics Data) from a device being repaired. "
+    "Transcribe ALL visible text exactly as written, keeping line breaks, quotes, hex values and "
+    "punctuation. Do not summarize, translate, explain or add anything. If no readable log text is "
+    "visible, reply with exactly: NO_TEXT";
+static const char *TRANSCRIBE_USER_PROMPT = "Transcribe the text in this image.";
+static constexpr int TRANSCRIBE_MAX_TOKENS = 4000;
+
+bool HCCPanicAI::transcribeImage(const std::string &img_bytes, const std::string &mime,
+                                 std::string &text, std::string &error)
 {
-    PanicResult r;
-    r.source_tier = "AI_INFERENCE";
+    text.clear();
+    error.clear();
 
     std::string api_key, provider, model, url;
     if (!loadConfig(api_key, provider, model, url)) {
-        r.ok = false;
-        r.message = "Chua cau hinh AI (thieu api_key)";
-        return r;
+        error = "Chua cau hinh AI (thieu api_key)";
+        return false;
     }
     if (img_bytes.empty()) {
-        r.ok = false;
-        r.message = "Anh rong";
-        return r;
+        error = "Anh rong";
+        return false;
     }
 
     // Base64 ảnh.
@@ -453,20 +487,17 @@ PanicResult HCCPanicAI::analyzeImage(const std::string &img_bytes, const std::st
     size_t olen = 0;
     if (mbedtls_base64_encode((unsigned char *)&b64[0], need, &olen,
                               (const unsigned char *)img_bytes.data(), img_bytes.size()) != 0) {
-        r.ok = false;
-        r.message = "Loi ma hoa anh";
-        return r;
+        error = "Loi ma hoa anh";
+        return false;
     }
     b64.resize(olen);
 
-    const char *img_prompt = "Doc log panic trong anh (chup man hinh iPhone) va phan tich theo dung dinh dang.";
-
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "model", model.c_str());
-    cJSON_AddNumberToObject(body, "max_tokens", maxTokensFor(provider));
+    cJSON_AddNumberToObject(body, "max_tokens", TRANSCRIBE_MAX_TOKENS);
 
     if (provider == "anthropic") {
-        cJSON_AddStringToObject(body, "system", SYSTEM_PROMPT);
+        cJSON_AddStringToObject(body, "system", TRANSCRIBE_SYSTEM_PROMPT);
         cJSON *msgs = cJSON_AddArrayToObject(body, "messages");
         cJSON *um = cJSON_CreateObject();
         cJSON_AddStringToObject(um, "role", "user");
@@ -480,40 +511,58 @@ PanicResult HCCPanicAI::analyzeImage(const std::string &img_bytes, const std::st
         cJSON_AddItemToArray(content, img);
         cJSON *tx = cJSON_CreateObject();
         cJSON_AddStringToObject(tx, "type", "text");
-        cJSON_AddStringToObject(tx, "text", img_prompt);
+        cJSON_AddStringToObject(tx, "text", TRANSCRIBE_USER_PROMPT);
         cJSON_AddItemToArray(content, tx);
         cJSON_AddItemToArray(msgs, um);
     } else {  // openai vision
+        cJSON_AddNumberToObject(body, "temperature", 0);
         cJSON *msgs = cJSON_AddArrayToObject(body, "messages");
         cJSON *sm = cJSON_CreateObject();
         cJSON_AddStringToObject(sm, "role", "system");
-        cJSON_AddStringToObject(sm, "content", SYSTEM_PROMPT);
+        cJSON_AddStringToObject(sm, "content", TRANSCRIBE_SYSTEM_PROMPT);
         cJSON_AddItemToArray(msgs, sm);
         cJSON *um = cJSON_CreateObject();
         cJSON_AddStringToObject(um, "role", "user");
         cJSON *content = cJSON_AddArrayToObject(um, "content");
         cJSON *tx = cJSON_CreateObject();
         cJSON_AddStringToObject(tx, "type", "text");
-        cJSON_AddStringToObject(tx, "text", img_prompt);
+        cJSON_AddStringToObject(tx, "text", TRANSCRIBE_USER_PROMPT);
         cJSON_AddItemToArray(content, tx);
         cJSON *iu = cJSON_CreateObject();
         cJSON_AddStringToObject(iu, "type", "image_url");
         cJSON *urlobj = cJSON_AddObjectToObject(iu, "image_url");
         std::string data_uri = "data:" + mime + ";base64," + b64;
         cJSON_AddStringToObject(urlobj, "url", data_uri.c_str());
+        cJSON_AddStringToObject(urlobj, "detail", "high");  // chữ log nhỏ, cần độ phân giải cao
         cJSON_AddItemToArray(content, iu);
         cJSON_AddItemToArray(msgs, um);
     }
+    b64.clear();
+    b64.shrink_to_fit();
 
     char *body_str = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
     if (!body_str) {
-        r.ok = false;
-        r.message = "Loi tao request anh";
-        return r;
+        error = "Loi tao request anh";
+        return false;
     }
     std::string body_json = body_str;
     cJSON_free(body_str);
 
-    return sendAndParse(provider, url, api_key, body_json);
+    bool truncated = false;
+    if (!sendRequest(provider, url, api_key, body_json, text, truncated, error)) {
+        if (error == "AI tu choi yeu cau") error = "AI tu choi doc anh - thu anh ro hon hoac gui file .ips";
+        return false;
+    }
+    // Loại bỏ khoảng trắng đầu/cuối; "NO_TEXT" = không đọc được log trong ảnh.
+    size_t a = text.find_first_not_of(" \t\r\n");
+    size_t b = text.find_last_not_of(" \t\r\n");
+    text = (a == std::string::npos) ? std::string() : text.substr(a, b - a + 1);
+    if (text.empty() || text == "NO_TEXT") {
+        error = "Khong doc duoc chu log trong anh";
+        text.clear();
+        return false;
+    }
+    ESP_LOGI(TAG, "image transcribed: %u chars%s", (unsigned)text.size(), truncated ? " (truncated)" : "");
+    return true;
 }

@@ -13,8 +13,10 @@ class HCCPanicAI {
 public:
     static PanicResult analyze(const ParsedPanic &parsed);
 
-    // Phân tích panic từ ẢNH (AI vision đọc ảnh). mime vd "image/jpeg".
-    static PanicResult analyzeImage(const std::string &img_bytes, const std::string &mime);
+    // ẢNH panic: AI vision chỉ CHÉP LẠI chữ log trong ảnh (mime vd "image/jpeg").
+    // Chữ thu được phân tích tiếp như file .ips. Trả false + error nếu lỗi/AI từ chối.
+    static bool transcribeImage(const std::string &img_bytes, const std::string &mime,
+                                std::string &text, std::string &error);
 
     // Lưu API key vào /panic/ai_config.json (giữ nguyên model/provider nếu có).
     static bool saveApiKey(const std::string &key);
@@ -26,6 +28,10 @@ private:
                            std::string &model, std::string &url);
     static std::string buildUserContent(const ParsedPanic &parsed);
     static PanicResult parseAiText(const std::string &text);
+    // Gửi 1 request (body JSON đã dựng), lấy text trả lời. Phát hiện từ chối / bị cắt.
+    static bool sendRequest(const std::string &provider, const std::string &url,
+                            const std::string &api_key, const std::string &body_json,
+                            std::string &text, bool &truncated, std::string &error);
     // Gửi 1 request (body JSON đã dựng) tới provider, parse ra 4 mục.
     static PanicResult sendAndParse(const std::string &provider, const std::string &url,
                                     const std::string &api_key, const std::string &body_json);
