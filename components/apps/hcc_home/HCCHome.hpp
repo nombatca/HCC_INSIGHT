@@ -10,6 +10,7 @@
 #include "HCCPairCredentials.hpp"
 #include "HCCPairIdentity.hpp"
 #include "HCCUSBTransport.hpp"
+#include "HCCAdbClient.hpp"
 #include "HCCEeprom.hpp"
 #include "HCCPanicTypes.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
@@ -66,6 +67,8 @@ private:
     static USBMode detectUSBMode(uint16_t vid, uint16_t pid);
     static void describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *config_desc,
                                        const usb_device_info_t &dev_info);
+    static void startAndroidAdb(HCCHome *app);
+    static void applyAdbState(HCCHome *app);
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
@@ -203,6 +206,15 @@ private:
     HCCPairIdentity _pair_identity;
     HCCPairCredentials _pair_credentials;
     HCCUSBTransport _usb_transport;
+    // Android: ADB interface found by describeNonAppleDevice() and the client driving it.
+    HCCAdbClient _adb;
+    uint32_t _adb_state_seen = 0;
+    uint8_t _adb_interface = 0;
+    uint8_t _adb_bulk_out = 0;
+    uint8_t _adb_bulk_in = 0;
+    uint16_t _adb_in_mps = 0;
+    uint16_t _adb_out_mps = 0;
+    char _usb_desc_serial[48] = {};
     // Hardware Check UI state.
     lv_obj_t *_hw_sensors_status;
     lv_obj_t *_hw_faceid_status;

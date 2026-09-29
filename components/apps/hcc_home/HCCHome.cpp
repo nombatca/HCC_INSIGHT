@@ -266,6 +266,7 @@ bool HCCHome::closeUSBDevice(HCCHome *app)
         app->_usb_get_mode_transfer != nullptr ||
         app->_usb_string_descriptor_pending ||
         app->_usb_string_descriptor_transfer != nullptr ||
+        app->_adb.hasPendingTransfers() ||
         app->_recovery_exit_transfer != nullptr ||
         app->_usb_transport.hasPendingTransfers()) {
         return false;
@@ -344,6 +345,12 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
     bool has_adb = false;
     bool has_fastboot = false;
     bool has_mtp = false;
+    bool in_adb_interface = false;
+    app->_adb_interface = 0;
+    app->_adb_bulk_out = 0;
+    app->_adb_bulk_in = 0;
+    app->_adb_in_mps = 0;
+    app->_adb_out_mps = 0;
     if (config_desc != nullptr) {
         const uint8_t *data = config_desc->val;
         const size_t total_length = config_desc->wTotalLength;
@@ -354,15 +361,30 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
             }
             if (data[offset + 1] == USB_B_DESCRIPTOR_TYPE_INTERFACE && descriptor_length >= USB_INTF_DESC_SIZE) {
                 const usb_intf_desc_t *intf = reinterpret_cast<const usb_intf_desc_t *>(data + offset);
+                in_adb_interface = false;
                 if (intf->bInterfaceClass == 0xFF && intf->bInterfaceSubClass == 0x42) {
                     if (intf->bInterfaceProtocol == 0x01) {
                         has_adb = true;
+                        in_adb_interface = intf->bAlternateSetting == 0;
+                        app->_adb_interface = intf->bInterfaceNumber;
                     } else if (intf->bInterfaceProtocol == 0x03) {
                         has_fastboot = true;
                     }
                 } else if (intf->bInterfaceClass == 0x06 && intf->bInterfaceSubClass == 0x01 &&
                            intf->bInterfaceProtocol == 0x01) {
                     has_mtp = true;
+                }
+            } else if (in_adb_interface && data[offset + 1] == USB_B_DESCRIPTOR_TYPE_ENDPOINT &&
+                       descriptor_length >= USB_EP_DESC_SIZE) {
+                const usb_ep_desc_t *ep = reinterpret_cast<const usb_ep_desc_t *>(data + offset);
+                if (USB_EP_DESC_GET_XFERTYPE(ep) == USB_TRANSFER_TYPE_BULK) {
+                    if (USB_EP_DESC_GET_EP_DIR(ep)) {
+                        app->_adb_bulk_in = ep->bEndpointAddress;
+                        app->_adb_in_mps = ep->wMaxPacketSize & 0x7FF;
+                    } else {
+                        app->_adb_bulk_out = ep->bEndpointAddress;
+                        app->_adb_out_mps = ep->wMaxPacketSize & 0x7FF;
+                    }
                 }
             }
             offset += descriptor_length;
@@ -395,6 +417,7 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
     usbStringToAscii(dev_info.str_desc_manufacturer, manufacturer, sizeof(manufacturer));
     usbStringToAscii(dev_info.str_desc_product, product, sizeof(product));
     usbStringToAscii(dev_info.str_desc_serial_num, serial, sizeof(serial));
+    snprintf(app->_usb_desc_serial, sizeof(app->_usb_desc_serial), "%s", serial);
 
     const char *debugging = "-";
     if (app->_usb_mode == USBMode::ANDROID) {
@@ -418,6 +441,76 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
     printf("[HCC USB] Non-Apple device %04X:%04X android=%u adb=%u fastboot=%u mtp=%u\n",
            vid, pid, static_cast<unsigned>(android), static_cast<unsigned>(has_adb),
            static_cast<unsigned>(has_fastboot), static_cast<unsigned>(has_mtp));
+}
+
+void HCCHome::startAndroidAdb(HCCHome *app)
+{
+    if (app->_usb_mode != USBMode::ANDROID || app->_adb_bulk_in == 0 || app->_adb_bulk_out == 0 ||
+        app->_adb_in_mps == 0 || app->_adb_out_mps == 0) {
+        return;
+    }
+
+    // Reuse the claimed-interface bookkeeping so closeUSBDevice() releases the ADB interface.
+    app->_usb_mux_interface = app->_adb_interface;
+    app->_usb_mux_bulk_out = app->_adb_bulk_out;
+    app->_usb_mux_bulk_in = app->_adb_bulk_in;
+    app->_usb_mux_bulk_in_mps = app->_adb_in_mps;
+    if (!HCCHome::claimUSBInterface(app)) {
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "ADB INTERFACE CLAIM FAILED");
+        return;
+    }
+    if (!app->_adb.start(app->_usb_device, app->_adb_bulk_out, app->_adb_bulk_in,
+                         app->_adb_in_mps, app->_adb_out_mps)) {
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "ADB START FAILED");
+    }
+}
+
+void HCCHome::applyAdbState(HCCHome *app)
+{
+    if (app->_usb_device == nullptr || app->_usb_device_gone_pending) {
+        return;
+    }
+
+    const char *status = nullptr;
+    switch (app->_adb.state()) {
+    case HCCAdbClient::State::Idle:
+        return;
+    case HCCAdbClient::State::Connecting:
+        status = "ANDROID - ADB CONNECTING...";
+        break;
+    case HCCAdbClient::State::WaitingKey:
+        status = "ANDROID - ADB AUTH...";
+        break;
+    case HCCAdbClient::State::WaitingUserAuth:
+        status = "ADB: Bấm 'Cho phép' trên điện thoại";
+        break;
+    case HCCAdbClient::State::ReadingInfo:
+        status = "ANDROID - READING INFO...";
+        break;
+    case HCCAdbClient::State::Ready:
+        status = "SESSION READY - Android (ADB)";
+        break;
+    case HCCAdbClient::State::Failed:
+        status = "ADB FAILED - replug the phone";
+        break;
+    }
+    snprintf(app->_usb_status, sizeof(app->_usb_status), "%s", status);
+
+    if (app->_adb.state() == HCCAdbClient::State::Ready) {
+        const HCCAdbClient::Info &info = app->_adb.info();
+        auto value = [](const char *text) { return text[0] != '\0' ? text : "-"; };
+        char model[96];
+        snprintf(model, sizeof(model), "%s%s%s%s%s", info.brand, info.brand[0] != '\0' ? " " : "",
+                 value(info.model), info.device[0] != '\0' ? " / " : "", info.device);
+        snprintf(app->_usb_info, sizeof(app->_usb_info),
+                 "Model: %s\nAndroid: %s (SDK %s)\nBuild: %s\nSerial: %s\nChipset: %s\n"
+                 "Battery: %s  %s  %s  %s\nCycles: %s",
+                 model, value(info.android), value(info.sdk), value(info.build),
+                 info.serial[0] != '\0' ? info.serial : value(app->_usb_desc_serial),
+                 value(info.chipset), value(info.battery_level), value(info.battery_health),
+                 value(info.battery_temp), value(info.battery_voltage), value(info.battery_cycles));
+    }
+    lv_async_call(HCCHome::applyUSBResult, app);
 }
 
 HCCHome::USBMode HCCHome::detectUSBMode(uint16_t vid, uint16_t pid)
@@ -554,6 +647,9 @@ HCCHome::HCCHome()
 }
 bool HCCHome::init(void)
 {
+    // ADB host key: loaded (or generated once, which takes a few seconds) in the background.
+    HCCAdbClient::startKeyLoad();
+
     // Non-fatal: pair record access falls back to lazy initialization.
     if (!HCCUSBTransport::initPairRecordStorage()) {
         printf("[HCC PAIR] early pair record storage init failed; using lazy init\n");
@@ -1206,7 +1302,8 @@ void HCCHome::usbClientTask(void *arg)
         const bool pair_time_wait = !dwc_delayed_snapshot_pending && app->_usb_transport.preparePairTimeWait();
         const bool credential_work_wait = !dwc_delayed_snapshot_pending && !pair_time_wait &&
                                           (app->_pair_credentials.hasDeferredWork() ||
-                                           app->_usb_transport.serviceRetryPending());
+                                           app->_usb_transport.serviceRetryPending() ||
+                                           app->_adb.needsPoll());
         const TickType_t event_timeout = dwc_delayed_snapshot_pending ? pdMS_TO_TICKS(250) :
                                          (pair_time_wait ? pdMS_TO_TICKS(1000) :
                                           (credential_work_wait ? pdMS_TO_TICKS(250) : portMAX_DELAY));
@@ -1288,6 +1385,13 @@ void HCCHome::usbClientTask(void *arg)
             lv_async_call(HCCHome::applyUSBResult, app);
         }
 
+        // Android: sign a pending AUTH token once the host key is ready, and surface ADB progress.
+        app->_adb.poll();
+        if (app->_adb.stateSerial() != app->_adb_state_seen) {
+            app->_adb_state_seen = app->_adb.stateSerial();
+            HCCHome::applyAdbState(app);
+        }
+
         // UI-requested recovery-mode exit: start the iBoot command sequence from this task.
         if (app->_recovery_exit_requested && !app->_recovery_exit_active &&
             app->_usb_device != nullptr) {
@@ -1304,7 +1408,8 @@ void HCCHome::usbClientTask(void *arg)
             app->_usb_get_mode_transfer == nullptr &&
             !app->_usb_string_descriptor_pending &&
             app->_usb_string_descriptor_transfer == nullptr &&
-            !app->_usb_transport.hasPendingTransfers()) {
+            !app->_usb_transport.hasPendingTransfers() &&
+            !app->_adb.hasPendingTransfers()) {
             if (HCCHome::closeUSBDevice(app)) {
                 app->_usb_device_gone_pending = false;
             }
@@ -1335,7 +1440,8 @@ void HCCHome::usbClientTask(void *arg)
     }
     app->_pair_credentials.setActiveGeneration(app->_usb_generation);
     app->_usb_transport.stopForShutdown();
-    while (app->_usb_transport.hasPendingTransfers()) {
+    app->_adb.stopForShutdown();
+    while (app->_usb_transport.hasPendingTransfers() || app->_adb.hasPendingTransfers()) {
         ret = usb_host_client_handle_events(app->_usb_client, portMAX_DELAY);
         if (ret != ESP_OK) {
             printf("[HCC USB] Client event handling during shutdown failed: %s\n", esp_err_to_name(ret));
@@ -1906,6 +2012,7 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
         app->_usb_device = dev_hdl;
 
         if (non_apple) {
+            HCCHome::startAndroidAdb(app);
             lv_async_call(HCCHome::applyUSBResult, app);
         } else if (app->_usb_vid == 0x05AC) {
             if (!HCCHome::submitUSBGetMode(app)) {
@@ -1979,6 +2086,7 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         app->_usb_udid_generation = 0;
         memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
         app->_usb_transport.stopForDeviceGone();
+        app->_adb.stopForDeviceGone();
         app->_usb_device_gone_pending = true;
         app->_usb_mode = USBMode::NO_DEVICE;
         app->_usb_vid = 0;
