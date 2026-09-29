@@ -289,6 +289,137 @@ bool HCCHome::closeUSBDevice(HCCHome *app)
     return true;
 }
 
+// USB vendor IDs of common Android phone makers, shown as the brand on USB HUB.
+static const struct {
+    uint16_t vid;
+    const char *name;
+} kAndroidVendors[] = {
+    {0x18D1, "Google"},   {0x04E8, "Samsung"},  {0x2717, "Xiaomi"},   {0x22B8, "Motorola"},
+    {0x12D1, "Huawei"},   {0x22D9, "OPPO/realme"}, {0x2A70, "OnePlus"}, {0x2D95, "vivo"},
+    {0x1004, "LG"},       {0x0FCE, "Sony"},     {0x0BB4, "HTC"},      {0x19D2, "ZTE"},
+    {0x17EF, "Lenovo"},   {0x0B05, "ASUS"},     {0x2E04, "Nokia (HMD)"}, {0x1949, "Amazon"},
+    {0x05C6, "Qualcomm"}, {0x0E8D, "MediaTek"},
+};
+
+static const char *androidVendorName(uint16_t vid)
+{
+    for (const auto &entry : kAndroidVendors) {
+        if (entry.vid == vid) {
+            return entry.name;
+        }
+    }
+    return nullptr;
+}
+
+// Cached USB string descriptor (UTF-16LE) -> printable ASCII; non-ASCII becomes '?'.
+static void usbStringToAscii(const usb_str_desc_t *desc, char *out, size_t out_size)
+{
+    if (out_size == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (desc == nullptr || desc->bLength < 2) {
+        return;
+    }
+
+    const size_t chars = (desc->bLength - 2) / 2;
+    size_t len = 0;
+    for (size_t i = 0; i < chars && len + 1 < out_size; ++i) {
+        const uint16_t c = desc->wData[i];
+        if (c == 0) {
+            break;
+        }
+        out[len++] = (c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : '?';
+    }
+    out[len] = '\0';
+}
+
+void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *config_desc,
+                                     const usb_device_info_t &dev_info)
+{
+    const uint16_t vid = app->_usb_vid;
+    const uint16_t pid = app->_usb_pid;
+
+    // Android function interfaces: ADB FF/42/01, fastboot FF/42/03, MTP/PTP 06/01/01.
+    bool has_adb = false;
+    bool has_fastboot = false;
+    bool has_mtp = false;
+    if (config_desc != nullptr) {
+        const uint8_t *data = config_desc->val;
+        const size_t total_length = config_desc->wTotalLength;
+        for (size_t offset = 0; offset + 2 <= total_length;) {
+            const uint8_t descriptor_length = data[offset];
+            if (descriptor_length < 2 || offset + descriptor_length > total_length) {
+                break;
+            }
+            if (data[offset + 1] == USB_B_DESCRIPTOR_TYPE_INTERFACE && descriptor_length >= USB_INTF_DESC_SIZE) {
+                const usb_intf_desc_t *intf = reinterpret_cast<const usb_intf_desc_t *>(data + offset);
+                if (intf->bInterfaceClass == 0xFF && intf->bInterfaceSubClass == 0x42) {
+                    if (intf->bInterfaceProtocol == 0x01) {
+                        has_adb = true;
+                    } else if (intf->bInterfaceProtocol == 0x03) {
+                        has_fastboot = true;
+                    }
+                } else if (intf->bInterfaceClass == 0x06 && intf->bInterfaceSubClass == 0x01 &&
+                           intf->bInterfaceProtocol == 0x01) {
+                    has_mtp = true;
+                }
+            }
+            offset += descriptor_length;
+        }
+    }
+
+    // Low-level flashing modes are recognised by VID:PID, before any Android function check.
+    const char *vendor = androidVendorName(vid);
+    if (vid == 0x05C6 && pid == 0x9008) {
+        app->_usb_mode = USBMode::QUALCOMM_EDL;
+    } else if (vid == 0x0E8D && (pid == 0x0003 || pid == 0x2000)) {
+        app->_usb_mode = USBMode::MTK_BOOTROM;
+    } else if (vid == 0x04E8 && pid == 0x685D) {
+        app->_usb_mode = USBMode::ANDROID_DOWNLOAD;
+    } else if (has_fastboot) {
+        app->_usb_mode = USBMode::ANDROID_FASTBOOT;
+    } else if (has_adb || vendor != nullptr) {
+        app->_usb_mode = USBMode::ANDROID;
+    } else {
+        app->_usb_mode = USBMode::UNKNOWN;
+    }
+
+    const bool android = app->_usb_mode != USBMode::UNKNOWN;
+    snprintf(app->_usb_status, sizeof(app->_usb_status), "%s",
+             android ? "ANDROID DEVICE DETECTED" : "NON-APPLE USB DEVICE");
+
+    char manufacturer[48];
+    char product[64];
+    char serial[48];
+    usbStringToAscii(dev_info.str_desc_manufacturer, manufacturer, sizeof(manufacturer));
+    usbStringToAscii(dev_info.str_desc_product, product, sizeof(product));
+    usbStringToAscii(dev_info.str_desc_serial_num, serial, sizeof(serial));
+
+    const char *debugging = "-";
+    if (app->_usb_mode == USBMode::ANDROID) {
+        debugging = has_adb ? "ON" : "OFF (enable in Developer options)";
+    }
+
+    char interfaces[48] = "";
+    snprintf(interfaces, sizeof(interfaces), "%s%s%s",
+             has_mtp ? "MTP " : "", has_adb ? "ADB " : "", has_fastboot ? "FASTBOOT " : "");
+
+    snprintf(app->_usb_info, sizeof(app->_usb_info),
+             "Brand: %s\nVID:PID: %04X:%04X\nManufacturer: %s\nProduct: %s\nSerial: %s\n"
+             "Interfaces: %s\nUSB debugging: %s",
+             vendor != nullptr ? vendor : "Unknown", vid, pid,
+             manufacturer[0] != '\0' ? manufacturer : "-",
+             product[0] != '\0' ? product : "-",
+             serial[0] != '\0' ? serial : "-",
+             interfaces[0] != '\0' ? interfaces : "-",
+             debugging);
+
+    printf("[HCC USB] Non-Apple device %04X:%04X android=%u adb=%u fastboot=%u mtp=%u\n",
+           vid, pid, static_cast<unsigned>(android), static_cast<unsigned>(has_adb),
+           static_cast<unsigned>(has_fastboot), static_cast<unsigned>(has_mtp));
+}
+
 HCCHome::USBMode HCCHome::detectUSBMode(uint16_t vid, uint16_t pid)
 {
     if (vid != 0x05AC) {
@@ -1166,10 +1297,8 @@ void HCCHome::usbClientTask(void *arg)
             HCCHome::submitRecoveryExitCommand(app);
         }
 
-        if (app->_usb_new_device_pending) {
-            HCCHome::processUSBNewDevice(app);
-        }
-
+        // Close a removed device before opening a new one, so a quick unplug/replug
+        // does not overwrite the handle that is still waiting to be closed.
         if (app->_usb_device_gone_pending &&
             !app->_usb_get_mode_pending &&
             app->_usb_get_mode_transfer == nullptr &&
@@ -1179,6 +1308,10 @@ void HCCHome::usbClientTask(void *arg)
             if (HCCHome::closeUSBDevice(app)) {
                 app->_usb_device_gone_pending = false;
             }
+        }
+
+        if (app->_usb_new_device_pending) {
+            HCCHome::processUSBNewDevice(app);
         }
 
         // Deferred shutdown: the app was closed while a device was attached; now that
@@ -1322,6 +1455,21 @@ void HCCHome::applyUSBResult(void *arg)
             break;
         case USBMode::PURPLE:
             mode = "PURPLE";
+            break;
+        case USBMode::ANDROID:
+            mode = "ANDROID";
+            break;
+        case USBMode::ANDROID_FASTBOOT:
+            mode = "FASTBOOT";
+            break;
+        case USBMode::ANDROID_DOWNLOAD:
+            mode = "DOWNLOAD (ODIN)";
+            break;
+        case USBMode::QUALCOMM_EDL:
+            mode = "EDL 9008";
+            break;
+        case USBMode::MTK_BOOTROM:
+            mode = "MTK BROM";
             break;
         case USBMode::UNKNOWN:
             mode = "UNKNOWN";
@@ -1682,6 +1830,11 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
         return;
     }
 
+    // The previous device is still being closed; retry once its handle is released.
+    if (app->_usb_device != nullptr) {
+        return;
+    }
+
     const uint8_t address = app->_usb_new_device_address;
     app->_usb_new_device_pending = false;
     app->_usb_i_serial_number = 0;
@@ -1696,12 +1849,13 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
     if (ret == ESP_OK) {
         const usb_device_desc_t *dev_desc = nullptr;
         usb_device_info_t dev_info = {};
+        const usb_config_desc_t *config_desc = nullptr;
+        bool non_apple = false;
 
         ret = usb_host_get_device_descriptor(dev_hdl, &dev_desc);
         if (ret == ESP_OK && dev_desc != nullptr) {
             usb_host_device_info(dev_hdl, &dev_info);
 
-            const usb_config_desc_t *config_desc = nullptr;
             if (usb_host_get_active_config_descriptor(dev_hdl, &config_desc) == ESP_OK && config_desc != nullptr) {
                 usb_print_config_descriptor(config_desc, nullptr);
             }
@@ -1713,7 +1867,15 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
                 app->_usb_vid,
                 app->_usb_pid
             );
+            non_apple = app->_usb_vid != 0x05AC;
+            if (non_apple) {
+                HCCHome::describeNonAppleDevice(app, config_desc, dev_info);
+            }
+        }
 
+        if (non_apple) {
+            // Nothing to claim: the handle stays open only so DEV_GONE closes it.
+        } else if (ret == ESP_OK && dev_desc != nullptr) {
             snprintf(
                 app->_usb_status,
                 sizeof(app->_usb_status),
@@ -1743,7 +1905,9 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
 
         app->_usb_device = dev_hdl;
 
-        if (app->_usb_vid == 0x05AC) {
+        if (non_apple) {
+            lv_async_call(HCCHome::applyUSBResult, app);
+        } else if (app->_usb_vid == 0x05AC) {
             if (!HCCHome::submitUSBGetMode(app)) {
                 printf("[HCC USB] GET_MODE submit failed - continuing USBMUX startup\n");
                 HCCHome::continueUSBMuxStartup(app);
@@ -1780,6 +1944,14 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
             return;
         }
 
+        // One device at a time: a second device (e.g. through a hub) must not reset the
+        // active device's session state or replace its handle. It is left unopened.
+        if (app->_usb_device != nullptr && !app->_usb_device_gone_pending) {
+            printf("[HCC USB] Ignoring new device at address %u: another device is active\n",
+                   event_msg->new_dev.address);
+            return;
+        }
+
         ++app->_usb_generation;
         if (app->_usb_generation == 0) {
             ++app->_usb_generation;
@@ -1793,18 +1965,21 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         app->_recovery_exit_requested = false;
         app->_recovery_exit_active = false;
         app->_recovery_exit_step = 0;
-        } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
-        if (event_msg->dev_gone.dev_hdl == app->_usb_device) {
-            ++app->_usb_generation;
-            if (app->_usb_generation == 0) {
-                ++app->_usb_generation;
-            }
-            app->_pair_credentials.setActiveGeneration(app->_usb_generation);
-            app->_usb_udid_generation = 0;
-            memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
-            app->_usb_transport.stopForDeviceGone();
-            app->_usb_device_gone_pending = true;
+    } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
+        // Only the device this client opened; anything else must not clear its state.
+        if (event_msg->dev_gone.dev_hdl != app->_usb_device) {
+            return;
         }
+
+        ++app->_usb_generation;
+        if (app->_usb_generation == 0) {
+            ++app->_usb_generation;
+        }
+        app->_pair_credentials.setActiveGeneration(app->_usb_generation);
+        app->_usb_udid_generation = 0;
+        memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
+        app->_usb_transport.stopForDeviceGone();
+        app->_usb_device_gone_pending = true;
         app->_usb_mode = USBMode::NO_DEVICE;
         app->_usb_vid = 0;
         app->_usb_pid = 0;

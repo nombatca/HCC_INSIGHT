@@ -21,6 +21,11 @@ private:
         RECOVERY,
         DFU,
         PURPLE,
+        ANDROID,
+        ANDROID_FASTBOOT,
+        ANDROID_DOWNLOAD,
+        QUALCOMM_EDL,
+        MTK_BOOTROM,
         UNKNOWN
     };
 
@@ -59,6 +64,8 @@ private:
     static bool releaseUSBInterface(HCCHome *app);
     static bool closeUSBDevice(HCCHome *app);
     static USBMode detectUSBMode(uint16_t vid, uint16_t pid);
+    static void describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *config_desc,
+                                       const usb_device_info_t &dev_info);
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
