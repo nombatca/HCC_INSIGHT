@@ -342,6 +342,15 @@ bool HCCAdbClient::start(usb_device_handle_t device, uint8_t out_endpoint, uint8
     return true;
 }
 
+bool HCCAdbClient::runService(const char *service)
+{
+    if (_stopping || (_state != State::ReadingInfo && _state != State::Ready)) {
+        return false;
+    }
+    printf("[HCC ADB] OPEN %s\n", service);
+    return queueMessage(kCmdOpen, kServiceLocalId, 0, service, strlen(service) + 1);
+}
+
 void HCCAdbClient::poll()
 {
     if (_state != State::WaitingKey || _stopping) {
@@ -585,8 +594,9 @@ bool HCCAdbClient::handleMessage(uint32_t command, uint32_t arg0, uint32_t arg1,
             memcpy(_shell_output + _shell_output_length, payload, copy);
             _shell_output_length += copy;
             _shell_output[_shell_output_length] = '\0';
-            queueMessage(kCmdOkay, kShellLocalId, arg0, nullptr, 0);
         }
+        // Every stream waits for OKAY before its next WRTE.
+        queueMessage(kCmdOkay, arg1, arg0, nullptr, 0);
         break;
 
     case kCmdClse:

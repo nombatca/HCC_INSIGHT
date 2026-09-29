@@ -11,6 +11,7 @@
 #include "HCCPairIdentity.hpp"
 #include "HCCUSBTransport.hpp"
 #include "HCCAdbClient.hpp"
+#include "HCCFastbootClient.hpp"
 #include "HCCEeprom.hpp"
 #include "HCCPanicTypes.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
@@ -28,6 +29,13 @@ private:
         QUALCOMM_EDL,
         MTK_BOOTROM,
         UNKNOWN
+    };
+
+    enum class AndroidAction : uint8_t {
+        None,
+        Reboot,
+        Recovery,
+        Bootloader,
     };
 
     enum class USBStringDescriptorRequest {
@@ -67,8 +75,14 @@ private:
     static USBMode detectUSBMode(uint16_t vid, uint16_t pid);
     static void describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *config_desc,
                                        const usb_device_info_t &dev_info);
-    static void startAndroidAdb(HCCHome *app);
+    static void startAndroidSession(HCCHome *app);
     static void applyAdbState(HCCHome *app);
+    static void applyFastbootState(HCCHome *app);
+    static void updateActionLabels(HCCHome *app);
+    static bool requestAndroidAction(HCCHome *app, AndroidAction action);
+    static void performAndroidAction(HCCHome *app, AndroidAction action);
+    static void onBootloaderClicked(lv_event_t *event);
+    static void onRebootClicked(lv_event_t *event);
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
@@ -206,14 +220,23 @@ private:
     HCCPairIdentity _pair_identity;
     HCCPairCredentials _pair_credentials;
     HCCUSBTransport _usb_transport;
-    // Android: ADB interface found by describeNonAppleDevice() and the client driving it.
+    // Android: ADB (normal mode) and fastboot (bootloader) clients.
     HCCAdbClient _adb;
     uint32_t _adb_state_seen = 0;
-    uint8_t _adb_interface = 0;
-    uint8_t _adb_bulk_out = 0;
-    uint8_t _adb_bulk_in = 0;
-    uint16_t _adb_in_mps = 0;
-    uint16_t _adb_out_mps = 0;
+    HCCFastbootClient _fastboot;
+    uint32_t _fastboot_state_seen = 0;
+    // Set by the UI (after a confirming second tap), consumed by the USB client task.
+    volatile AndroidAction _android_action_requested = AndroidAction::None;
+    AndroidAction _android_confirm_action = AndroidAction::None;
+    lv_obj_t *_bootloader_button_label = nullptr;
+    lv_obj_t *_purple_button_label = nullptr;
+    lv_obj_t *_reboot_button_label = nullptr;
+    // ADB or fastboot interface found by describeNonAppleDevice().
+    uint8_t _android_interface = 0;
+    uint8_t _android_bulk_out = 0;
+    uint8_t _android_bulk_in = 0;
+    uint16_t _android_in_mps = 0;
+    uint16_t _android_out_mps = 0;
     char _usb_desc_serial[48] = {};
     // Hardware Check UI state.
     lv_obj_t *_hw_sensors_status;

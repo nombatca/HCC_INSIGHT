@@ -267,6 +267,7 @@ bool HCCHome::closeUSBDevice(HCCHome *app)
         app->_usb_string_descriptor_pending ||
         app->_usb_string_descriptor_transfer != nullptr ||
         app->_adb.hasPendingTransfers() ||
+        app->_fastboot.hasPendingTransfers() ||
         app->_recovery_exit_transfer != nullptr ||
         app->_usb_transport.hasPendingTransfers()) {
         return false;
@@ -345,12 +346,12 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
     bool has_adb = false;
     bool has_fastboot = false;
     bool has_mtp = false;
-    bool in_adb_interface = false;
-    app->_adb_interface = 0;
-    app->_adb_bulk_out = 0;
-    app->_adb_bulk_in = 0;
-    app->_adb_in_mps = 0;
-    app->_adb_out_mps = 0;
+    bool in_android_interface = false;
+    app->_android_interface = 0;
+    app->_android_bulk_out = 0;
+    app->_android_bulk_in = 0;
+    app->_android_in_mps = 0;
+    app->_android_out_mps = 0;
     if (config_desc != nullptr) {
         const uint8_t *data = config_desc->val;
         const size_t total_length = config_desc->wTotalLength;
@@ -361,29 +362,31 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
             }
             if (data[offset + 1] == USB_B_DESCRIPTOR_TYPE_INTERFACE && descriptor_length >= USB_INTF_DESC_SIZE) {
                 const usb_intf_desc_t *intf = reinterpret_cast<const usb_intf_desc_t *>(data + offset);
-                in_adb_interface = false;
+                in_android_interface = false;
                 if (intf->bInterfaceClass == 0xFF && intf->bInterfaceSubClass == 0x42) {
                     if (intf->bInterfaceProtocol == 0x01) {
                         has_adb = true;
-                        in_adb_interface = intf->bAlternateSetting == 0;
-                        app->_adb_interface = intf->bInterfaceNumber;
+                        in_android_interface = intf->bAlternateSetting == 0;
+                        app->_android_interface = intf->bInterfaceNumber;
                     } else if (intf->bInterfaceProtocol == 0x03) {
                         has_fastboot = true;
+                        in_android_interface = intf->bAlternateSetting == 0;
+                        app->_android_interface = intf->bInterfaceNumber;
                     }
                 } else if (intf->bInterfaceClass == 0x06 && intf->bInterfaceSubClass == 0x01 &&
                            intf->bInterfaceProtocol == 0x01) {
                     has_mtp = true;
                 }
-            } else if (in_adb_interface && data[offset + 1] == USB_B_DESCRIPTOR_TYPE_ENDPOINT &&
+            } else if (in_android_interface && data[offset + 1] == USB_B_DESCRIPTOR_TYPE_ENDPOINT &&
                        descriptor_length >= USB_EP_DESC_SIZE) {
                 const usb_ep_desc_t *ep = reinterpret_cast<const usb_ep_desc_t *>(data + offset);
                 if (USB_EP_DESC_GET_XFERTYPE(ep) == USB_TRANSFER_TYPE_BULK) {
                     if (USB_EP_DESC_GET_EP_DIR(ep)) {
-                        app->_adb_bulk_in = ep->bEndpointAddress;
-                        app->_adb_in_mps = ep->wMaxPacketSize & 0x7FF;
+                        app->_android_bulk_in = ep->bEndpointAddress;
+                        app->_android_in_mps = ep->wMaxPacketSize & 0x7FF;
                     } else {
-                        app->_adb_bulk_out = ep->bEndpointAddress;
-                        app->_adb_out_mps = ep->wMaxPacketSize & 0x7FF;
+                        app->_android_bulk_out = ep->bEndpointAddress;
+                        app->_android_out_mps = ep->wMaxPacketSize & 0x7FF;
                     }
                 }
             }
@@ -443,26 +446,88 @@ void HCCHome::describeNonAppleDevice(HCCHome *app, const usb_config_desc_t *conf
            static_cast<unsigned>(has_fastboot), static_cast<unsigned>(has_mtp));
 }
 
-void HCCHome::startAndroidAdb(HCCHome *app)
+void HCCHome::startAndroidSession(HCCHome *app)
 {
-    if (app->_usb_mode != USBMode::ANDROID || app->_adb_bulk_in == 0 || app->_adb_bulk_out == 0 ||
-        app->_adb_in_mps == 0 || app->_adb_out_mps == 0) {
+    const bool adb = app->_usb_mode == USBMode::ANDROID;
+    const bool fastboot = app->_usb_mode == USBMode::ANDROID_FASTBOOT;
+    if ((!adb && !fastboot) || app->_android_bulk_in == 0 || app->_android_bulk_out == 0 ||
+        app->_android_in_mps == 0 || app->_android_out_mps == 0) {
         return;
     }
 
-    // Reuse the claimed-interface bookkeeping so closeUSBDevice() releases the ADB interface.
-    app->_usb_mux_interface = app->_adb_interface;
-    app->_usb_mux_bulk_out = app->_adb_bulk_out;
-    app->_usb_mux_bulk_in = app->_adb_bulk_in;
-    app->_usb_mux_bulk_in_mps = app->_adb_in_mps;
+    // Reuse the claimed-interface bookkeeping so closeUSBDevice() releases the interface.
+    app->_usb_mux_interface = app->_android_interface;
+    app->_usb_mux_bulk_out = app->_android_bulk_out;
+    app->_usb_mux_bulk_in = app->_android_bulk_in;
+    app->_usb_mux_bulk_in_mps = app->_android_in_mps;
     if (!HCCHome::claimUSBInterface(app)) {
-        snprintf(app->_usb_status, sizeof(app->_usb_status), "ADB INTERFACE CLAIM FAILED");
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "%s INTERFACE CLAIM FAILED",
+                 adb ? "ADB" : "FASTBOOT");
         return;
     }
-    if (!app->_adb.start(app->_usb_device, app->_adb_bulk_out, app->_adb_bulk_in,
-                         app->_adb_in_mps, app->_adb_out_mps)) {
+    if (adb && !app->_adb.start(app->_usb_device, app->_android_bulk_out, app->_android_bulk_in,
+                                app->_android_in_mps, app->_android_out_mps)) {
         snprintf(app->_usb_status, sizeof(app->_usb_status), "ADB START FAILED");
     }
+    if (fastboot && !app->_fastboot.start(app->_usb_device, app->_android_bulk_out, app->_android_bulk_in,
+                                          app->_android_in_mps)) {
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "FASTBOOT START FAILED");
+    }
+}
+
+void HCCHome::applyFastbootState(HCCHome *app)
+{
+    if (app->_usb_device == nullptr || app->_usb_device_gone_pending) {
+        return;
+    }
+
+    const HCCFastbootClient &fb = app->_fastboot;
+    switch (fb.state()) {
+    case HCCFastbootClient::State::Idle:
+        return;
+    case HCCFastbootClient::State::Reading:
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "FASTBOOT - READING INFO...");
+        break;
+    case HCCFastbootClient::State::Busy:
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "FASTBOOT - SENDING COMMAND...");
+        break;
+    case HCCFastbootClient::State::Failed:
+        snprintf(app->_usb_status, sizeof(app->_usb_status), "FASTBOOT FAILED - replug the phone");
+        break;
+    case HCCFastbootClient::State::Ready:
+        if (fb.commandError()[0] != '\0') {
+            snprintf(app->_usb_status, sizeof(app->_usb_status), "FAIL: %s", fb.commandError());
+        } else if (fb.commandCompleted()) {
+            snprintf(app->_usb_status, sizeof(app->_usb_status), "OKAY - máy đang khởi động lại");
+        } else {
+            snprintf(app->_usb_status, sizeof(app->_usb_status), "FASTBOOT READY");
+        }
+        break;
+    }
+
+    if (fb.state() == HCCFastbootClient::State::Ready) {
+        auto value = [&fb](HCCFastbootClient::Var var) {
+            return fb.value(var)[0] != '\0' ? fb.value(var) : "-";
+        };
+        const char *unlocked = fb.value(HCCFastbootClient::VarUnlocked);
+        const char *bootloader_state = strcmp(unlocked, "yes") == 0  ? "UNLOCKED"
+                                       : strcmp(unlocked, "no") == 0 ? "LOCKED"
+                                                                     : "-";
+        snprintf(app->_usb_info, sizeof(app->_usb_info),
+                 "Product: %s\nSerial: %s\nBootloader: %s (%s)\nBaseband: %s\nSecure boot: %s\n"
+                 "Slot: %s\nBattery: %s mV\nMode: %s",
+                 value(HCCFastbootClient::VarProduct),
+                 fb.value(HCCFastbootClient::VarSerial)[0] != '\0' ? fb.value(HCCFastbootClient::VarSerial)
+                                                                   : (app->_usb_desc_serial[0] != '\0'
+                                                                          ? app->_usb_desc_serial
+                                                                          : "-"),
+                 bootloader_state, value(HCCFastbootClient::VarBootloader),
+                 value(HCCFastbootClient::VarBaseband), value(HCCFastbootClient::VarSecure),
+                 value(HCCFastbootClient::VarSlot), value(HCCFastbootClient::VarBatteryVoltage),
+                 strcmp(fb.value(HCCFastbootClient::VarUserspace), "yes") == 0 ? "fastbootd (userspace)"
+                                                                              : "bootloader");
+    }
+    lv_async_call(HCCHome::applyUSBResult, app);
 }
 
 void HCCHome::applyAdbState(HCCHome *app)
@@ -678,6 +743,9 @@ void HCCHome::showHome()
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
+    _bootloader_button_label = nullptr;
+    _purple_button_label = nullptr;
+    _reboot_button_label = nullptr;
     // Detach EEPROM labels before the old screen is cleaned so a pending
     // eepromTask result never writes to freed LVGL objects.
     _eeprom_status_label = nullptr;
@@ -1391,6 +1459,15 @@ void HCCHome::usbClientTask(void *arg)
             app->_adb_state_seen = app->_adb.stateSerial();
             HCCHome::applyAdbState(app);
         }
+        if (app->_android_action_requested != AndroidAction::None) {
+            const AndroidAction action = app->_android_action_requested;
+            app->_android_action_requested = AndroidAction::None;
+            HCCHome::performAndroidAction(app, action);
+        }
+        if (app->_fastboot.stateSerial() != app->_fastboot_state_seen) {
+            app->_fastboot_state_seen = app->_fastboot.stateSerial();
+            HCCHome::applyFastbootState(app);
+        }
 
         // UI-requested recovery-mode exit: start the iBoot command sequence from this task.
         if (app->_recovery_exit_requested && !app->_recovery_exit_active &&
@@ -1409,7 +1486,8 @@ void HCCHome::usbClientTask(void *arg)
             !app->_usb_string_descriptor_pending &&
             app->_usb_string_descriptor_transfer == nullptr &&
             !app->_usb_transport.hasPendingTransfers() &&
-            !app->_adb.hasPendingTransfers()) {
+            !app->_adb.hasPendingTransfers() &&
+            !app->_fastboot.hasPendingTransfers()) {
             if (HCCHome::closeUSBDevice(app)) {
                 app->_usb_device_gone_pending = false;
             }
@@ -1441,7 +1519,9 @@ void HCCHome::usbClientTask(void *arg)
     app->_pair_credentials.setActiveGeneration(app->_usb_generation);
     app->_usb_transport.stopForShutdown();
     app->_adb.stopForShutdown();
-    while (app->_usb_transport.hasPendingTransfers() || app->_adb.hasPendingTransfers()) {
+    app->_fastboot.stopForShutdown();
+    while (app->_usb_transport.hasPendingTransfers() || app->_adb.hasPendingTransfers() ||
+           app->_fastboot.hasPendingTransfers()) {
         ret = usb_host_client_handle_events(app->_usb_client, portMAX_DELAY);
         if (ret != ESP_OK) {
             printf("[HCC USB] Client event handling during shutdown failed: %s\n", esp_err_to_name(ret));
@@ -1591,10 +1671,25 @@ void HCCHome::applyUSBResult(void *arg)
         lv_label_set_text(app->_usb_info_label, app->_usb_info);
     }
 
+    HCCHome::updateActionLabels(app);
+}
+
+void HCCHome::updateActionLabels(HCCHome *app)
+{
     // The RECOVERY button enters recovery in normal mode and exits it in recovery mode.
     if (app->_recovery_button_label != nullptr) {
         lv_label_set_text(app->_recovery_button_label,
                           app->_usb_mode == USBMode::RECOVERY ? "EXIT REC" : "RECOVERY");
+    }
+
+    // Android repurposes the DFU slot as "reboot to bootloader"; PURPLE has no Android meaning.
+    const bool android = app->_usb_mode == USBMode::ANDROID || app->_usb_mode == USBMode::ANDROID_FASTBOOT;
+    if (app->_bootloader_button_label != nullptr) {
+        lv_label_set_text(app->_bootloader_button_label,
+                          !android ? "DFU" : (app->_usb_mode == USBMode::ANDROID ? "FASTBOOT" : "-"));
+    }
+    if (app->_purple_button_label != nullptr) {
+        lv_label_set_text(app->_purple_button_label, android ? "-" : "PURPLE");
     }
 }
 
@@ -2012,7 +2107,7 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
         app->_usb_device = dev_hdl;
 
         if (non_apple) {
-            HCCHome::startAndroidAdb(app);
+            HCCHome::startAndroidSession(app);
             lv_async_call(HCCHome::applyUSBResult, app);
         } else if (app->_usb_vid == 0x05AC) {
             if (!HCCHome::submitUSBGetMode(app)) {
@@ -2087,6 +2182,8 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
         app->_usb_transport.stopForDeviceGone();
         app->_adb.stopForDeviceGone();
+        app->_fastboot.stopForDeviceGone();
+        app->_android_action_requested = AndroidAction::None;
         app->_usb_device_gone_pending = true;
         app->_usb_mode = USBMode::NO_DEVICE;
         app->_usb_vid = 0;
@@ -2224,10 +2321,107 @@ void HCCHome::onBackClicked(lv_event_t *event)
     app->showHome();
 }
 
+// UI task. Arms a 5 s confirmation on the first tap and hands the action to the USB task on
+// the second. Returns false when the connected device is not an Android phone.
+bool HCCHome::requestAndroidAction(HCCHome *app, AndroidAction action)
+{
+    const bool adb_mode = app->_usb_mode == USBMode::ANDROID;
+    const bool fastboot_mode = app->_usb_mode == USBMode::ANDROID_FASTBOOT;
+    if (!adb_mode && !fastboot_mode) {
+        return false;
+    }
+
+    const char *name = action == AndroidAction::Reboot     ? "REBOOT"
+                       : action == AndroidAction::Recovery ? "RECOVERY"
+                                                           : "FASTBOOT";
+    char text[96];
+    auto show = [app](const char *message) {
+        if (app->_usb_status_label != nullptr) {
+            lv_label_set_text(app->_usb_status_label, message);
+        }
+    };
+
+    if (fastboot_mode && action == AndroidAction::Bootloader) {
+        show("Máy đang ở chế độ FASTBOOT");
+        return true;
+    }
+
+    const HCCAdbClient::State adb_state = app->_adb.state();
+    const HCCFastbootClient::State fastboot_state = app->_fastboot.state();
+    const bool ready = adb_mode ? (adb_state == HCCAdbClient::State::ReadingInfo ||
+                                   adb_state == HCCAdbClient::State::Ready)
+                                : (fastboot_state == HCCFastbootClient::State::Reading ||
+                                   fastboot_state == HCCFastbootClient::State::Ready);
+    if (!ready) {
+        app->_android_confirm_action = AndroidAction::None;
+        snprintf(text, sizeof(text), adb_mode ? "%s: cần bật gỡ lỗi USB và bấm Cho phép" : "%s: chưa sẵn sàng",
+                 name);
+        show(text);
+        return true;
+    }
+
+    if (app->_android_confirm_action != action || lv_tick_elaps(app->_recovery_confirm_tick) > 5000) {
+        app->_android_confirm_action = action;
+        app->_recovery_confirm_tick = lv_tick_get();
+        snprintf(text, sizeof(text), "Bấm %s lần nữa để xác nhận", name);
+        show(text);
+        return true;
+    }
+
+    app->_android_confirm_action = AndroidAction::None;
+    app->_android_action_requested = action;
+    if (app->_usb_client_registered && app->_usb_client != nullptr) {
+        usb_host_client_unblock(app->_usb_client);
+    }
+    snprintf(text, sizeof(text), "ĐANG GỬI LỆNH %s...", name);
+    show(text);
+    return true;
+}
+
+// USB client task: sends the reboot request over ADB or fastboot.
+void HCCHome::performAndroidAction(HCCHome *app, AndroidAction action)
+{
+    bool sent = false;
+    if (app->_usb_mode == USBMode::ANDROID) {
+        const char *service = action == AndroidAction::Reboot     ? "reboot:"
+                              : action == AndroidAction::Recovery ? "reboot:recovery"
+                                                                  : "reboot:bootloader";
+        sent = app->_adb.runService(service);
+    } else if (app->_usb_mode == USBMode::ANDROID_FASTBOOT) {
+        const char *command = action == AndroidAction::Reboot     ? "reboot"
+                              : action == AndroidAction::Recovery ? "reboot-recovery"
+                                                                  : "reboot-bootloader";
+        sent = app->_fastboot.sendCommand(command);
+    }
+    snprintf(app->_usb_status, sizeof(app->_usb_status), "%s",
+             sent ? "ĐÃ GỬI LỆNH - chờ máy khởi động lại" : "KHÔNG GỬI ĐƯỢC LỆNH");
+    lv_async_call(HCCHome::applyUSBResult, app);
+}
+
+void HCCHome::onBootloaderClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::requestAndroidAction(app, AndroidAction::Bootloader);
+    }
+}
+
+void HCCHome::onRebootClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::requestAndroidAction(app, AndroidAction::Reboot);
+    }
+}
+
 void HCCHome::onRecoveryClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr) {
+        return;
+    }
+
+    if (HCCHome::requestAndroidAction(app, AndroidAction::Recovery)) {
         return;
     }
 
@@ -2365,6 +2559,9 @@ bool HCCHome::close(void)
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
+    _bootloader_button_label = nullptr;
+    _purple_button_label = nullptr;
+    _reboot_button_label = nullptr;
     _scan_status_label = nullptr;
     _scan_result_label = nullptr;
     _scan_button = nullptr;
@@ -2447,6 +2644,9 @@ void HCCHome::showUSB()
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
+    _bootloader_button_label = nullptr;
+    _purple_button_label = nullptr;
+    _reboot_button_label = nullptr;
 
     lv_obj_clean(_screen);
 
@@ -2560,13 +2760,24 @@ void HCCHome::showUSB()
         lv_obj_center(label);
         lv_obj_set_style_text_font(label, &lv_font_be_vietnam_16, 0);
 
-        // Only RECOVERY is wired for now; the other actions remain inert placeholders.
+        // RECOVERY works for iPhone and Android; FASTBOOT (DFU slot) and REBOOT act on
+        // Android only. PURPLE remains an inert placeholder.
         if (i == 0) {
             _recovery_button_label = label;
             lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
+        } else if (i == 1) {
+            _bootloader_button_label = label;
+            lv_obj_add_event_cb(button, onBootloaderClicked, LV_EVENT_CLICKED, this);
+        } else if (i == 2) {
+            _purple_button_label = label;
+        } else {
+            _reboot_button_label = label;
+            lv_obj_add_event_cb(button, onRebootClicked, LV_EVENT_CLICKED, this);
         }
     }
     _recovery_confirm_pending = false;
+    _android_confirm_action = AndroidAction::None;
+    HCCHome::updateActionLabels(this);
 
     /* HARDWARE CHECK (kiểm tra phần cứng iPhone qua phiên Lockdown) */
     lv_obj_t *hw_button = lv_btn_create(_screen);
@@ -3389,6 +3600,9 @@ void HCCHome::showEeprom()
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
+    _bootloader_button_label = nullptr;
+    _purple_button_label = nullptr;
+    _reboot_button_label = nullptr;
     _eeprom_status_label = nullptr;
     _eeprom_result_label = nullptr;
     _eeprom_button = nullptr;

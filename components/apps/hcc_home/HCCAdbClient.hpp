@@ -44,6 +44,8 @@ public:
 
     bool start(usb_device_handle_t device, uint8_t out_endpoint, uint8_t in_endpoint,
                uint16_t in_mps, uint16_t out_mps);
+    // Opens a one-shot ADB service such as "reboot:recovery" once connected.
+    bool runService(const char *service);
     // Resumes work deferred on the host key; call every USB loop iteration.
     void poll();
     // True while poll() has work to do without a USB event (the loop must not block forever).
@@ -66,6 +68,7 @@ private:
     static constexpr size_t kShellOutputCapacity = 3072;
     static constexpr size_t kTokenSize = 20;
     static constexpr uint32_t kShellLocalId = 1;
+    static constexpr uint32_t kServiceLocalId = 2;
 
     struct TxMessage {
         uint8_t header[kHeaderSize];
