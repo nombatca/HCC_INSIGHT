@@ -14,7 +14,6 @@
 #include "product_audio.h"
 
 #include "esp_brookesia.hpp"
-#include "app_examples/phone/squareline/src/phone_app_squareline.hpp"
 #include "apps.h"
 
 static const char *TAG = "main";
@@ -125,14 +124,6 @@ extern "C" void app_main(void)
         lv_obj_add_event_cb(home_screen, onHomeScreenLoadEvent, LV_EVENT_SCREEN_LOAD_START, nullptr);
         lv_obj_add_event_cb(home_screen, onHomeScreenLoadEvent, LV_EVENT_SCREEN_UNLOAD_START, nullptr);
         lv_obj_set_style_bg_opa(s_status_bar_obj, LV_OPA_TRANSP, 0);  // home is shown at boot
-    }
-
-    PhoneAppSquareline *smart_gadget = new PhoneAppSquareline();
-    assert(smart_gadget != nullptr && "Failed to create phone app squareline");
-    if (phone->installApp(smart_gadget) < 0) {
-        ESP_LOGE(TAG, "Failed to install phone app squareline");
-        bsp_display_unlock();
-        return;
     }
 
     Calculator *calculator = new Calculator();
