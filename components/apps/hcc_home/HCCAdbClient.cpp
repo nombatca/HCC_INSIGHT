@@ -312,6 +312,10 @@ bool HCCAdbClient::start(usb_device_handle_t device, uint8_t out_endpoint, uint8
     _shell_remote_id = 0;
     _shell_output_length = 0;
     _info = {};
+    _job_state = JobState::Idle;
+    _job_output_length = 0;
+    _job_output[0] = '\0';
+    ++_job_serial;
 
     // Bulk IN transfers must be a whole number of max-size packets.
     const size_t rx_size = ((kMaxPayload + in_mps - 1) / in_mps) * in_mps;
@@ -351,6 +355,27 @@ bool HCCAdbClient::runService(const char *service)
     return queueMessage(kCmdOpen, kServiceLocalId, 0, service, strlen(service) + 1);
 }
 
+bool HCCAdbClient::runJob(const char *command)
+{
+    static constexpr char kPrefix[] = "shell:";
+    char service[kTxPayloadCapacity];
+    const int length = snprintf(service, sizeof(service), "%s%s", kPrefix, command);
+    if (_stopping || _job_state == JobState::Running || length <= 0 ||
+        static_cast<size_t>(length) >= sizeof(service) ||
+        (_state != State::ReadingInfo && _state != State::Ready)) {
+        return false;
+    }
+    _job_output_length = 0;
+    _job_output[0] = '\0';
+    if (!queueMessage(kCmdOpen, kJobLocalId, 0, service, static_cast<size_t>(length) + 1)) {
+        return false;
+    }
+    printf("[HCC ADB] job started (%d bytes)\n", length);
+    _job_state = JobState::Running;
+    ++_job_serial;
+    return true;
+}
+
 void HCCAdbClient::poll()
 {
     if (_state != State::WaitingKey || _stopping) {
@@ -378,6 +403,10 @@ void HCCAdbClient::stopForDeviceGone()
     }
     if (_state != State::Idle) {
         setState(State::Idle);
+    }
+    if (_job_state == JobState::Running) {
+        _job_state = JobState::Idle;
+        ++_job_serial;
     }
 }
 
@@ -594,12 +623,23 @@ bool HCCAdbClient::handleMessage(uint32_t command, uint32_t arg0, uint32_t arg1,
             memcpy(_shell_output + _shell_output_length, payload, copy);
             _shell_output_length += copy;
             _shell_output[_shell_output_length] = '\0';
+        } else if (arg1 == kJobLocalId && _job_state == JobState::Running) {
+            const size_t room = kJobOutputCapacity - 1 - _job_output_length;
+            const size_t copy = length < room ? length : room;
+            memcpy(_job_output + _job_output_length, payload, copy);
+            _job_output_length += copy;
+            _job_output[_job_output_length] = '\0';
         }
         // Every stream waits for OKAY before its next WRTE.
         queueMessage(kCmdOkay, arg1, arg0, nullptr, 0);
         break;
 
     case kCmdClse:
+        if (arg1 == kJobLocalId && _job_state == JobState::Running) {
+            printf("[HCC ADB] job done (%u bytes)\n", static_cast<unsigned>(_job_output_length));
+            _job_state = JobState::Done;
+            ++_job_serial;
+        }
         if (arg1 == kShellLocalId && _state == State::ReadingInfo) {
             parseShellOutput();
             printf("[HCC ADB] info ready: %s %s Android %s\n", _info.brand, _info.model, _info.android);

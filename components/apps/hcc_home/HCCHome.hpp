@@ -15,6 +15,7 @@
 #include "HCCEeprom.hpp"
 #include "HCCPanicTypes.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
+#include "HCCAndroidDiagnostics.hpp"
 class HCCHome : public ESP_Brookesia_PhoneApp {
 private:
     enum class USBMode {
@@ -95,6 +96,8 @@ private:
     static void onHwCardClicked(lv_event_t *event);
     static void onHwDialogCloseClicked(lv_event_t *event);
     static void onHwBackClicked(lv_event_t *event);
+    static void applyAndroidDiagnostics(void *arg);
+    void detachHwLabels();
     // Recovery-mode exit: send iBoot commands (setenv auto-boot true / saveenv / reboot).
     static bool submitRecoveryExitCommand(HCCHome *app);
     static void onRecoveryExitComplete(usb_transfer_t *transfer);
@@ -246,6 +249,12 @@ private:
     lv_obj_t *_hw_dialog;
     HCCiPhoneDiagnostics::FullResult _hw_result;
     bool _hw_has_result;
+    // Android hardware check: result platform, UI request to the USB task, job progress.
+    bool _hw_result_android = false;
+    volatile bool _hw_android_requested = false;
+    volatile bool _hw_android_start_failed = false;
+    uint32_t _adb_job_seen = 0;
+    lv_obj_t *_hw_session_label = nullptr;
     USBMode _usb_mode;
     uint16_t _usb_vid;
     uint16_t _usb_pid;

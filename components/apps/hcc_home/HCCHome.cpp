@@ -1464,6 +1464,20 @@ void HCCHome::usbClientTask(void *arg)
             app->_android_action_requested = AndroidAction::None;
             HCCHome::performAndroidAction(app, action);
         }
+        if (app->_hw_android_requested) {
+            app->_hw_android_requested = false;
+            if (!app->_adb.runJob(HCCAndroidDiagnostics::command())) {
+                printf("[HCC ADB] diagnostics job could not start\n");
+                app->_hw_android_start_failed = true;
+                lv_async_call(HCCHome::applyAndroidDiagnostics, app);
+            }
+        }
+        if (app->_adb.jobSerial() != app->_adb_job_seen) {
+            app->_adb_job_seen = app->_adb.jobSerial();
+            if (app->_adb.jobState() == HCCAdbClient::JobState::Done) {
+                lv_async_call(HCCHome::applyAndroidDiagnostics, app);
+            }
+        }
         if (app->_fastboot.stateSerial() != app->_fastboot_state_seen) {
             app->_fastboot_state_seen = app->_fastboot.stateSerial();
             HCCHome::applyFastbootState(app);
@@ -2569,6 +2583,7 @@ bool HCCHome::close(void)
     _hw_faceid_status = nullptr;
     _hw_baseband_status = nullptr;
     _hw_battery_status = nullptr;
+    _hw_session_label = nullptr;
     _hw_dialog = nullptr;
     _panic_file_dropdown = nullptr;
     _panic_status_label = nullptr;
@@ -4922,7 +4937,44 @@ void HCCHome::onHardwareCheckClicked(lv_event_t *event)
 void HCCHome::onHwBackClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app) app->showUSB();
+    if (app) {
+        // A diagnostics result may still arrive asynchronously; it must not touch freed labels.
+        app->detachHwLabels();
+        app->showUSB();
+    }
+}
+
+void HCCHome::detachHwLabels()
+{
+    _hw_sensors_status = nullptr;
+    _hw_faceid_status = nullptr;
+    _hw_baseband_status = nullptr;
+    _hw_battery_status = nullptr;
+    _hw_session_label = nullptr;
+    _hw_dialog = nullptr;
+}
+
+// LVGL task (lv_async_call from the USB task): parse the finished ADB diagnostics job, or
+// report that it could not run.
+void HCCHome::applyAndroidDiagnostics(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) {
+        return;
+    }
+    const bool done = !app->_hw_android_start_failed && app->_adb.jobState() == HCCAdbClient::JobState::Done;
+    app->_hw_android_start_failed = false;
+    if (done) {
+        app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
+        app->_hw_result_android = true;
+        app->_hw_has_result = true;
+        app->updateHwCards();
+    }
+    if (app->_hw_session_label != nullptr) {
+        lv_label_set_text(app->_hw_session_label,
+                          done ? "ADB: XONG - chạm vào từng thẻ để xem evidence"
+                               : "ADB: không chạy được lệnh chẩn đoán (kiểm tra kết nối)");
+    }
 }
 
 void HCCHome::updateHwCards()
@@ -4943,8 +4995,38 @@ void HCCHome::onHwRunFullClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (!app) return;
+    if (app->_usb_mode == USBMode::ANDROID) {
+        // Runs as an ADB shell job in the USB task; applyAndroidDiagnostics() shows the result.
+        const HCCAdbClient::State state = app->_adb.state();
+        const bool ready = state == HCCAdbClient::State::ReadingInfo || state == HCCAdbClient::State::Ready;
+        if (!ready || app->_adb.jobState() == HCCAdbClient::JobState::Running) {
+            if (app->_hw_session_label != nullptr) {
+                lv_label_set_text(app->_hw_session_label,
+                                  ready ? "ADB: đang chạy, vui lòng chờ..."
+                                        : "ADB: CHƯA SẴN SÀNG (bật gỡ lỗi USB, bấm Cho phép)");
+            }
+            return;
+        }
+        app->_hw_android_requested = true;
+        if (app->_usb_client_registered && app->_usb_client != nullptr) {
+            usb_host_client_unblock(app->_usb_client);
+        }
+        lv_obj_t *labels[] = {app->_hw_sensors_status, app->_hw_faceid_status, app->_hw_baseband_status,
+                              app->_hw_battery_status};
+        for (lv_obj_t *label : labels) {
+            if (label != nullptr) {
+                lv_label_set_text(label, "ĐANG CHẠY...");
+                lv_obj_set_style_text_color(label, lv_color_hex(0x7F96A8), 0);
+            }
+        }
+        if (app->_hw_session_label != nullptr) {
+            lv_label_set_text(app->_hw_session_label, "ADB: đang chạy chẩn đoán (5-10 giây)...");
+        }
+        return;
+    }
     HCCiPhoneDiagnostics diag(&app->_usb_transport);
     app->_hw_result = diag.runFullCheck();
+    app->_hw_result_android = false;
     app->_hw_has_result = true;
     app->updateHwCards();
 }
@@ -5043,31 +5125,43 @@ void HCCHome::showHardwareCheck()
 {
     if (_screen == nullptr) return;
 
-    _hw_sensors_status = nullptr;
-    _hw_faceid_status = nullptr;
-    _hw_baseband_status = nullptr;
-    _hw_battery_status = nullptr;
-    _hw_dialog = nullptr;
+    detachHwLabels();
+
+    const bool android = _usb_mode == USBMode::ANDROID;
+    // Never show an iPhone result for an Android phone or the other way round.
+    if (_hw_has_result && _hw_result_android != android) {
+        _hw_has_result = false;
+    }
 
     lv_obj_clean(_screen);
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x101820), 0);
 
     lv_obj_t *title = lv_label_create(_screen);
-    lv_label_set_text(title, "IPHONE HARDWARE CHECK");
+    lv_label_set_text(title, android ? "ANDROID HARDWARE CHECK" : "IPHONE HARDWARE CHECK");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 18);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
 
     // Trạng thái phiên.
     lv_obj_t *sess = lv_label_create(_screen);
-    const bool ready = _usb_transport.sessionEstablished() && _usb_transport.deviceInfoReady();
-    lv_label_set_text(sess, ready ? "Phiên Lockdown: SẴN SÀNG" : "Phiên Lockdown: CHƯA SẴN SÀNG (cắm & mở khoá máy)");
+    _hw_session_label = sess;
+    bool ready = false;
+    if (android) {
+        const HCCAdbClient::State adb_state = _adb.state();
+        ready = adb_state == HCCAdbClient::State::ReadingInfo || adb_state == HCCAdbClient::State::Ready;
+        lv_label_set_text(sess, ready ? "ADB: SẴN SÀNG" : "ADB: CHƯA SẴN SÀNG (bật gỡ lỗi USB, bấm Cho phép)");
+    } else {
+        ready = _usb_transport.sessionEstablished() && _usb_transport.deviceInfoReady();
+        lv_label_set_text(sess, ready ? "Phiên Lockdown: SẴN SÀNG" : "Phiên Lockdown: CHƯA SẴN SÀNG (cắm & mở khoá máy)");
+    }
     lv_obj_align(sess, LV_ALIGN_TOP_LEFT, 30, 58);
     lv_obj_set_style_text_color(sess, ready ? lv_color_hex(0x69E0C0) : lv_color_hex(0xF2C94C), 0);
     lv_obj_set_style_text_font(sess, &lv_font_be_vietnam_18, 0);
 
     // 4 card: SENSORS | FACE ID | BASEBAND | BATTERY
-    const char *names[] = {"SENSORS", "FACE ID", "BASEBAND", "BATTERY"};
+    const char *iphone_names[] = {"SENSORS", "FACE ID", "BASEBAND", "BATTERY"};
+    const char *android_names[] = {"SENSORS", "VÂN TAY / FACE", "BASEBAND / SIM", "BATTERY"};
+    const char *const *names = android ? android_names : iphone_names;
     lv_obj_t **statusLabels[] = {&_hw_sensors_status, &_hw_faceid_status,
                                  &_hw_baseband_status, &_hw_battery_status};
     const int cx[] = {28, 274, 520, 766};
@@ -5120,7 +5214,10 @@ void HCCHome::showHardwareCheck()
     lv_obj_t *note = lv_label_create(_screen);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(note, 940);
-    lv_label_set_text(note,
+    lv_label_set_text(note, android ?
+        "SENSORS/VÂN TAY: so sánh cảm biến máy khai báo với cảm biến HAL thực sự thấy; "
+        "khai báo mà không thấy -> FAIL/CHECK (nghi hỏng IC, cáp). PASS = linh kiện lên, chưa đo chức năng. "
+        "BASEBAND: getprop baseband/SIM/nhà mạng. BATTERY: dumpsys battery + power_supply." :
         "SENSORS: iOS không cấp dữ liệu sensor qua Lockdown -> UNSUPPORTED. "
         "FACE ID: chỉ dò lỗi subsystem qua os_trace (không bao giờ PASS, không đụng sinh trắc). "
         "BASEBAND: dùng Lockdown GetValue thật + log CommCenter làm evidence.");

@@ -23,6 +23,12 @@ public:
         Failed,
     };
 
+    enum class JobState {
+        Idle,
+        Running,
+        Done,
+    };
+
     struct Info {
         char brand[32];
         char model[48];
@@ -46,6 +52,12 @@ public:
                uint16_t in_mps, uint16_t out_mps);
     // Opens a one-shot ADB service such as "reboot:recovery" once connected.
     bool runService(const char *service);
+    // Runs one on-demand shell command (e.g. diagnostics); its output is jobOutput() once
+    // jobState() is Done. Only one job at a time.
+    bool runJob(const char *command);
+    JobState jobState() const { return _job_state; }
+    uint32_t jobSerial() const { return _job_serial; }
+    const char *jobOutput() const { return _job_output; }
     // Resumes work deferred on the host key; call every USB loop iteration.
     void poll();
     // True while poll() has work to do without a USB event (the loop must not block forever).
@@ -69,6 +81,8 @@ private:
     static constexpr size_t kTokenSize = 20;
     static constexpr uint32_t kShellLocalId = 1;
     static constexpr uint32_t kServiceLocalId = 2;
+    static constexpr uint32_t kJobLocalId = 3;
+    static constexpr size_t kJobOutputCapacity = 6144;
 
     struct TxMessage {
         uint8_t header[kHeaderSize];
@@ -119,5 +133,9 @@ private:
     uint32_t _shell_remote_id = 0;
     char _shell_output[kShellOutputCapacity] = {};
     size_t _shell_output_length = 0;
+    JobState _job_state = JobState::Idle;
+    uint32_t _job_serial = 0;
+    char _job_output[kJobOutputCapacity] = {};
+    size_t _job_output_length = 0;
     Info _info = {};
 };

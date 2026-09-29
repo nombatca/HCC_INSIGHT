@@ -41,9 +41,9 @@ public:
     FullResult runFullCheck();
 
     static const char *statusText(Status s);
+    static Status rollup(const std::vector<Item> &items);
 
 private:
     const HCCUSBTransport *_t;
     bool sessionReady() const;
-    static Status rollup(const std::vector<Item> &items);
 };
