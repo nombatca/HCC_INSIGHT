@@ -13,6 +13,7 @@
 #include "HCCEeprom.hpp"
 #include "HCCPanicTypes.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
+#include "HCCAndroidUSB.hpp"
 class HCCHome : public ESP_Brookesia_PhoneApp {
 private:
     enum class USBMode {
@@ -21,6 +22,7 @@ private:
         RECOVERY,
         DFU,
         PURPLE,
+        ANDROID,
         UNKNOWN
     };
 
@@ -28,6 +30,10 @@ private:
         None,
         LangId,
         Serial,
+        // Android (P0): chuỗi hiển thị, không bắt buộc - lỗi thì bỏ qua chuỗi đó.
+        AndroidManufacturer,
+        AndroidProduct,
+        AndroidSerial,
     };
 
 public:
@@ -51,6 +57,13 @@ private:
     static bool submitUSBStringDescriptor(HCCHome *app, USBStringDescriptorRequest request,
                                           uint8_t string_index, uint16_t lang_id);
     static void failUSBStringDescriptorStartup(HCCHome *app, const char *reason);
+    static const char *stringRequestName(USBStringDescriptorRequest request);
+    // Android / Samsung (P0: chỉ nhận diện qua descriptor, chưa ADB).
+    static bool startAndroidDetection(HCCHome *app);
+    static void handleAndroidStringDescriptor(HCCHome *app, USBStringDescriptorRequest request,
+                                              const uint8_t *descriptor, size_t length);
+    static void requestNextAndroidString(HCCHome *app, USBStringDescriptorRequest after);
+    static void publishAndroidInfo(HCCHome *app);
     static bool handoffDevicePublicKeyToCredentials(void *context, const uint8_t *data, size_t length);
     static void consumeCompletedCredentialBundle(HCCHome *app);
     static void continueUSBMuxStartup(HCCHome *app);
@@ -208,7 +221,16 @@ private:
     uint16_t _usb_vid;
     uint16_t _usb_pid;
     char _usb_status[64];
-    char _usb_info[384];
+    char _usb_info[512];
+    // Android (P0)
+    bool _usb_is_android = false;
+    HCCAndroidUSB::Profile _android{};
+    uint8_t _usb_i_manufacturer = 0;
+    uint8_t _usb_i_product = 0;
+    uint16_t _android_lang_id = 0;
+    char _android_manufacturer[48] = {};
+    char _android_product[64] = {};
+    char _android_serial[48] = {};
 
     volatile bool _scan_scanning;
 

@@ -1323,6 +1323,9 @@ void HCCHome::applyUSBResult(void *arg)
         case USBMode::PURPLE:
             mode = "PURPLE";
             break;
+        case USBMode::ANDROID:
+            mode = "ANDROID";
+            break;
         case USBMode::UNKNOWN:
             mode = "UNKNOWN";
             break;
@@ -1399,6 +1402,164 @@ void HCCHome::failUSBStringDescriptorStartup(HCCHome *app, const char *reason)
     lv_async_call(HCCHome::applyUSBResult, app);
 }
 
+// ==================== ANDROID (P0: nhận diện qua USB descriptor, chưa ADB) ====================
+
+bool HCCHome::startAndroidDetection(HCCHome *app)
+{
+    const usb_config_desc_t *config_desc = nullptr;
+    if (app == nullptr || app->_usb_device == nullptr ||
+        usb_host_get_active_config_descriptor(app->_usb_device, &config_desc) != ESP_OK ||
+        config_desc == nullptr) {
+        return false;
+    }
+
+    const HCCAndroidUSB::Profile profile = HCCAndroidUSB::analyze(
+        app->_usb_vid, app->_usb_pid, config_desc->val, config_desc->wTotalLength);
+    if (profile.kind == HCCAndroidUSB::DeviceKind::NotAndroid) {
+        return false;
+    }
+
+    app->_android = profile;
+    app->_usb_is_android = true;
+    app->_usb_mode = USBMode::ANDROID;
+    app->_android_lang_id = 0;
+    app->_android_manufacturer[0] = '\0';
+    app->_android_product[0] = '\0';
+    app->_android_serial[0] = '\0';
+
+    char functions[48];
+    HCCAndroidUSB::describeFunctions(profile, functions, sizeof(functions));
+    printf("[HCC ANDROID] detected vendor=%s vid=0x%04X pid=0x%04X kind=%d functions=%s\n",
+           profile.vendor ? profile.vendor : "?", app->_usb_vid, app->_usb_pid,
+           static_cast<int>(profile.kind), functions);
+    if (profile.has_adb) {
+        printf("[HCC ANDROID] ADB interface IF=%u IN=0x%02X OUT=0x%02X MPS=%u\n",
+               profile.adb_interface, profile.adb_bulk_in, profile.adb_bulk_out,
+               profile.adb_bulk_in_mps);
+    }
+
+    // Hiện ngay phần đã biết; Manufacturer/Product/Serial cập nhật khi đọc xong (cần LANGID trước).
+    HCCHome::publishAndroidInfo(app);
+    if ((app->_usb_i_manufacturer != 0 || app->_usb_i_product != 0 || app->_usb_i_serial_number != 0) &&
+        !HCCHome::submitUSBStringDescriptor(app, USBStringDescriptorRequest::LangId, 0, 0)) {
+        printf("[HCC ANDROID] LANGID submit failed - strings skipped\n");
+    }
+    return true;
+}
+
+void HCCHome::handleAndroidStringDescriptor(HCCHome *app, USBStringDescriptorRequest request,
+                                            const uint8_t *descriptor, size_t length)
+{
+    if (descriptor == nullptr) {
+        printf("[HCC ANDROID] %s descriptor unavailable\n", HCCHome::stringRequestName(request));
+    }
+    switch (request) {
+        case USBStringDescriptorRequest::LangId:
+            // Không có LANGID hợp lệ -> dùng en-US như đa số thiết bị.
+            app->_android_lang_id = (descriptor != nullptr && descriptor[0] >= 4)
+                                        ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8))
+                                        : 0x0409;
+            break;
+        case USBStringDescriptorRequest::AndroidManufacturer:
+            HCCAndroidUSB::decodeStringDescriptor(descriptor, length, app->_android_manufacturer,
+                                                  sizeof(app->_android_manufacturer));
+            break;
+        case USBStringDescriptorRequest::AndroidProduct:
+            HCCAndroidUSB::decodeStringDescriptor(descriptor, length, app->_android_product,
+                                                  sizeof(app->_android_product));
+            break;
+        case USBStringDescriptorRequest::AndroidSerial:
+            HCCAndroidUSB::decodeStringDescriptor(descriptor, length, app->_android_serial,
+                                                  sizeof(app->_android_serial));
+            break;
+        default:
+            break;
+    }
+    HCCHome::requestNextAndroidString(app, request);
+}
+
+void HCCHome::requestNextAndroidString(HCCHome *app, USBStringDescriptorRequest after)
+{
+    static const USBStringDescriptorRequest kOrder[] = {
+        USBStringDescriptorRequest::AndroidManufacturer,
+        USBStringDescriptorRequest::AndroidProduct,
+        USBStringDescriptorRequest::AndroidSerial,
+    };
+    const uint8_t indexes[] = {app->_usb_i_manufacturer, app->_usb_i_product, app->_usb_i_serial_number};
+
+    size_t start = 0;  // sau LANGID: bắt đầu từ Manufacturer
+    for (size_t i = 0; i < sizeof(kOrder) / sizeof(kOrder[0]); ++i) {
+        if (kOrder[i] == after) start = i + 1;
+    }
+    for (size_t i = start; i < sizeof(kOrder) / sizeof(kOrder[0]); ++i) {
+        if (app->_usb_shutdown_requested || app->_usb_device_gone_pending || app->_usb_device == nullptr) {
+            return;
+        }
+        if (indexes[i] == 0) continue;
+        if (HCCHome::submitUSBStringDescriptor(app, kOrder[i], indexes[i], app->_android_lang_id)) {
+            return;  // tiếp tục khi transfer này hoàn tất
+        }
+    }
+    HCCHome::publishAndroidInfo(app);
+}
+
+void HCCHome::publishAndroidInfo(HCCHome *app)
+{
+    const HCCAndroidUSB::Profile &p = app->_android;
+    auto orDash = [](const char *s) { return (s != nullptr && s[0] != '\0') ? s : "-"; };
+
+    const char *status = "ANDROID DEVICE DETECTED";
+    const char *hint = "";
+    switch (p.kind) {
+        case HCCAndroidUSB::DeviceKind::SamsungDownloadMode:
+            status = "SAMSUNG DOWNLOAD MODE";
+            hint = "Samsung Download mode (Odin): chỉ nhận diện, không giao tiếp.";
+            break;
+        case HCCAndroidUSB::DeviceKind::Fastboot:
+            status = "ANDROID FASTBOOT";
+            hint = "Bootloader fastboot: chỉ nhận diện, không giao tiếp.";
+            break;
+        default:
+            if (p.has_adb) {
+                status = "ANDROID - USB DEBUGGING ON";
+                hint = "USB debugging đã bật (sẵn sàng cho ADB).";
+            } else {
+                hint = p.samsung ? "USB debugging CHƯA BẬT: Tùy chọn nhà phát triển > Gỡ lỗi USB "
+                                   "(Samsung: tắt Auto Blocker)."
+                                 : "USB debugging CHƯA BẬT: Tùy chọn nhà phát triển > Gỡ lỗi USB.";
+            }
+            break;
+    }
+
+    char functions[48];
+    HCCAndroidUSB::describeFunctions(p, functions, sizeof(functions));
+    snprintf(app->_usb_status, sizeof(app->_usb_status), "%s", status);
+    snprintf(app->_usb_info, sizeof(app->_usb_info),
+             "Hãng: %s (VID %04X PID %04X)\n"
+             "Manufacturer: %s\n"
+             "Product: %s\n"
+             "Serial: %s\n"
+             "Chế độ USB: %s\n"
+             "%s",
+             p.vendor ? p.vendor : "Không rõ", p.vid, p.pid,
+             orDash(app->_android_manufacturer), orDash(app->_android_product),
+             orDash(app->_android_serial), functions, hint);
+    lv_async_call(HCCHome::applyUSBResult, app);
+}
+
+const char *HCCHome::stringRequestName(USBStringDescriptorRequest request)
+{
+    switch (request) {
+        case USBStringDescriptorRequest::LangId: return "LANGID";
+        case USBStringDescriptorRequest::Serial: return "SERIAL";
+        case USBStringDescriptorRequest::AndroidManufacturer: return "MANUFACTURER";
+        case USBStringDescriptorRequest::AndroidProduct: return "PRODUCT";
+        case USBStringDescriptorRequest::AndroidSerial: return "ANDROID SERIAL";
+        case USBStringDescriptorRequest::None: break;
+    }
+    return "NONE";
+}
+
 bool HCCHome::submitUSBStringDescriptor(HCCHome *app, USBStringDescriptorRequest request,
                                          uint8_t string_index, uint16_t lang_id)
 {
@@ -1421,7 +1582,7 @@ bool HCCHome::submitUSBStringDescriptor(HCCHome *app, USBStringDescriptorRequest
     );
     if (ret != ESP_OK || transfer == nullptr) {
         printf("[HCC USB] %s descriptor alloc failed: %s\n",
-               (request == USBStringDescriptorRequest::LangId) ? "LANGID" : "SERIAL",
+               HCCHome::stringRequestName(request),
                esp_err_to_name(ret));
         return false;
     }
@@ -1445,7 +1606,7 @@ bool HCCHome::submitUSBStringDescriptor(HCCHome *app, USBStringDescriptorRequest
 
     ret = usb_host_transfer_submit_control(app->_usb_client, transfer);
     printf("[HCC USB] %s descriptor submit: %s (wValue=0x%04X wIndex=0x%04X wLength=%u)\n",
-           (request == USBStringDescriptorRequest::LangId) ? "LANGID" : "SERIAL",
+           HCCHome::stringRequestName(request),
            esp_err_to_name(ret),
            setup->wValue,
            setup->wIndex,
@@ -1478,7 +1639,7 @@ void HCCHome::onUSBStringDescriptorComplete(usb_transfer_t *transfer)
     app->_usb_string_descriptor_transfer = nullptr;
     app->_usb_string_descriptor_request = USBStringDescriptorRequest::None;
 
-    const char *request_name = (request == USBStringDescriptorRequest::LangId) ? "LANGID" : "SERIAL";
+    const char *request_name = HCCHome::stringRequestName(request);
     const size_t setup_size = sizeof(usb_setup_packet_t);
     const bool completed = transfer->status == USB_TRANSFER_STATUS_COMPLETED;
     const bool has_descriptor_header = transfer->actual_num_bytes >= static_cast<int>(setup_size + 2);
@@ -1495,6 +1656,15 @@ void HCCHome::onUSBStringDescriptorComplete(usb_transfer_t *transfer)
            request_name,
            static_cast<int>(transfer->status),
            static_cast<unsigned>(transfer->actual_num_bytes));
+
+    if (app->_usb_is_android) {
+        // Chuỗi Android chỉ để hiển thị: lỗi thì bỏ qua chuỗi đó, không dừng nhận diện.
+        HCCHome::handleAndroidStringDescriptor(app, request,
+                                               (completed && descriptor_valid) ? descriptor : nullptr,
+                                               payload_length);
+        usb_host_transfer_free(transfer);
+        return;
+    }
 
     if (!completed) {
         usb_host_transfer_free(transfer);
@@ -1709,6 +1879,8 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
             app->_usb_vid = dev_desc->idVendor;
             app->_usb_pid = dev_desc->idProduct;
             app->_usb_i_serial_number = dev_desc->iSerialNumber;
+            app->_usb_i_manufacturer = dev_desc->iManufacturer;
+            app->_usb_i_product = dev_desc->iProduct;
             app->_usb_mode = HCCHome::detectUSBMode(
                 app->_usb_vid,
                 app->_usb_pid
@@ -1748,7 +1920,7 @@ void HCCHome::processUSBNewDevice(HCCHome *app)
                 printf("[HCC USB] GET_MODE submit failed - continuing USBMUX startup\n");
                 HCCHome::continueUSBMuxStartup(app);
             }
-        } else {
+        } else if (!HCCHome::startAndroidDetection(app)) {
             HCCHome::continueUSBMuxStartup(app);
         }
     } else {
@@ -1789,6 +1961,7 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         memset(app->_usb_udid, 0, sizeof(app->_usb_udid));
         app->_usb_new_device_address = event_msg->new_dev.address;
         app->_usb_new_device_pending = true;
+        app->_usb_is_android = false;
         app->_usb_session_reported = false;
         app->_recovery_exit_requested = false;
         app->_recovery_exit_active = false;
@@ -1808,6 +1981,8 @@ void HCCHome::onUSBClientEvent(const usb_host_client_event_msg_t *event_msg, voi
         app->_usb_mode = USBMode::NO_DEVICE;
         app->_usb_vid = 0;
         app->_usb_pid = 0;
+        // _usb_is_android giữ nguyên tới NEW_DEV: transfer string đang chờ vẫn phải về nhánh
+        // Android (bỏ qua khi thiết bị đã rút), không rơi vào nhánh Apple báo lỗi.
         app->_usb_session_reported = false;
 
         snprintf(
