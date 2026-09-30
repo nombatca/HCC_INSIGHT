@@ -1325,6 +1325,7 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
         return a_known != b_known ? a_known : a.ratio < b.ratio;
     });
     const double main_mp = backs.empty() ? 0 : megapixels(backs[main_index]);
+    int tele_count = 0;
     for (const Other &other : others) {
         CameraStep step;
         step.launch_facing = -1;
@@ -1334,10 +1335,12 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
             step.title = title_of("CAMERA GÓC SIÊU RỘNG", other.camera);
             step.instruction = std::string("Board bấm nút 0.5x / 0.6x trong app camera (không thấy nút thì tự bấm). "
                                            "Ảnh phải rộng hơn hẳn 1x.\n") + kLook;
-        } else if (other.ratio > 1.5) {
+        } else if (other.ratio > 1.3) {
+            // Sorted by ratio, so tele_rank follows the app's increasing tele buttons.
             char zoom[16];
             snprintf(zoom, sizeof(zoom), "%.0fx", other.ratio);
             step.zoom = other.ratio;
+            step.tele_rank = tele_count++;
             step.title = title_of(std::string("CAMERA TELE (~") + zoom + ")", other.camera);
             step.instruction = std::string("Board bấm nút ") + zoom + " trong app camera (không thấy nút thì tự zoom "
                                "tới " + zoom + "), chờ 2 giây cho máy chuyển ống kính.\n" + kLook;
@@ -1454,7 +1457,8 @@ HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findSwitchCameraButton(const
     return UiTap();
 }
 
-HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *probe_output, double zoom)
+HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *probe_output, double zoom,
+                                                                   int tele_rank)
 {
     const std::vector<UiNode> nodes = uiNodes(probe_output);
     const UiNode *best = nullptr;
@@ -1479,6 +1483,27 @@ HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *p
     // Close enough to be that lens (a "2" button next to a 3x tele is the main camera's crop).
     if (best != nullptr && (zoom < 1 || std::fabs(best_value - zoom) <= zoom * 0.25)) {
         return tapOn(*best);
+    }
+    // The focal-length ratio can differ from the app's label (a "2x" tele may compute as 1.6 or
+    // 2.7): take the tele_rank-th button above 1.4x, in increasing order.
+    if (tele_rank >= 0) {
+        std::vector<std::pair<double, const UiNode *>> teles;
+        for (const UiNode &node : nodes) {
+            double value = zoomValue(node.text);
+            if (value == 0) {
+                value = zoomValue(node.desc);
+            }
+            if (value > 1.4) {
+                teles.emplace_back(value, &node);
+            }
+        }
+        std::sort(teles.begin(), teles.end(),
+                  [](const std::pair<double, const UiNode *> &a, const std::pair<double, const UiNode *> &b) {
+                      return a.first < b.first;
+                  });
+        if (!teles.empty()) {
+            return tapOn(*teles[std::min(static_cast<size_t>(tele_rank), teles.size() - 1)].second);
+        }
     }
     // Lens shown as an icon with a word instead of a number (Samsung One UI 2-4: "Góc siêu rộng",
     // "Góc rộng", "Tele" / "Ultra wide", "Wide", "Telephoto"). Only for such icon-only UIs: when

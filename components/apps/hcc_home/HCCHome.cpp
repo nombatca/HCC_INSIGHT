@@ -5311,7 +5311,8 @@ void HCCHome::camWizardAfterProbe(HCCHome *app, const char *output)
 
     if (step.zoom > 0 && !app->_cam_zoom_tapped) {
         app->_cam_zoom_tapped = true;
-        const HCCAndroidDiagnostics::UiTap button = HCCAndroidDiagnostics::findZoomButton(output, step.zoom);
+        const HCCAndroidDiagnostics::UiTap button =
+            HCCAndroidDiagnostics::findZoomButton(output, step.zoom, step.tele_rank);
         if (button.found) {
             app->_cam_note += (app->_cam_note.empty() ? "" : " ") + std::string("Board đã bấm '") + button.label + "'.";
             HCCHome::camWizardTap(app, button.x, button.y);
