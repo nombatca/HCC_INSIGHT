@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <string>
+#include <algorithm>
 #include "HCCPanicStorage.hpp"
 #include "HCCPanicParser.hpp"
 #include "HCCPanicKB.hpp"
@@ -41,8 +42,10 @@ static const struct {
     {"iPhone17,1", "iPhone 16 Pro"},      {"iPhone17,2", "iPhone 16 Pro Max"},
     {"iPhone17,5", "iPhone 16e"},         {"iPhone18,3", "iPhone 17"},
     {"iPhone18,4", "iPhone Air"},         {"iPhone18,1", "iPhone 17 Pro"},
-    {"iPhone18,2", "iPhone 17 Pro Max"},
+    {"iPhone18,2", "iPhone 17 Pro Max"},  {"iPhone18,5", "iPhone 17e"},
 };
+
+static std::string panicMarketingName(const std::string &code);
 
 static const char *iPhoneModelName(const char *product_type)
 {
@@ -4036,7 +4039,11 @@ void HCCHome::populatePanicFileList()
             } else {
                 HCCPanicStorage::readFile(std::string(HCCPanicServer::rawDir()) + "/" + it, raw);
             }
-            if (!raw.empty()) model = HCCPanicParser::parse(raw).model;
+            if (!raw.empty()) {
+                model = HCCPanicParser::parse(raw).model;
+                const std::string mn = panicMarketingName(model);
+                if (!mn.empty()) model = mn;
+            }
             std::string date = dateFromName(it);
             std::string sub = model;
             if (!date.empty()) sub += (sub.empty() ? "" : "   ") + date;
@@ -4087,13 +4094,45 @@ bool HCCHome::loadSelectedRaw(std::string &raw)
     return HCCPanicStorage::readFile(rel, raw) && !raw.empty();
 }
 
-// Tên thương mại từ mã model (chỉ khi có mapping chắc chắn trong DB).
-static const char *panicMarketingName(const std::string &code)
+// Tên thương mại từ mã model:
+//  1) panic/models.txt trên thẻ SD (kỹ thuật viên tự thêm máy mới), mỗi dòng
+//     "iPhone19,7=iPhone 18 Pro Max";
+//  2) bảng có sẵn (chỉ mapping chắc chắn);
+//  3) mã mới hơn bảng: chỉ nêu dòng máy, vd iPhone19,x -> "iPhone 18 series".
+// "" nếu không biết.
+static std::string panicMarketingName(const std::string &code)
 {
+    if (code.empty()) return std::string();
+    std::string user;
+    if (HCCPanicStorage::readFile("panic/models.txt", user)) {
+        size_t start = 0;
+        while (start < user.size()) {
+            size_t nl = user.find('\n', start);
+            std::string line = user.substr(start, (nl == std::string::npos ? user.size() : nl) - start);
+            start = (nl == std::string::npos) ? user.size() : nl + 1;
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+            auto trim = [](std::string &x) {
+                while (!x.empty() && isspace((unsigned char)x.back())) x.pop_back();
+                while (!x.empty() && isspace((unsigned char)x.front())) x.erase(0, 1);
+            };
+            trim(k);
+            trim(v);
+            if (k == code && !v.empty()) return v;
+        }
+    }
+    int newest = 0;
     for (const auto &e : kIPhoneModelNames) {
         if (code == e.product_type) return e.name;
+        newest = std::max(newest, atoi(e.product_type + 6));
     }
-    return nullptr;
+    // iPhoneN,M với N lớn hơn mọi mã trong bảng: từ iPhone 12 trở đi dòng máy = N - 1.
+    if (code.rfind("iPhone", 0) == 0) {
+        int major = atoi(code.c_str() + 6);
+        if (major > newest) return "iPhone " + std::to_string(major - 1) + " series";
+    }
+    return std::string();
 }
 
 // SoC suy từ họ model (A13..A19); nullptr nếu không rõ.
@@ -4115,7 +4154,8 @@ static const char *panicSocForModel(const std::string &code)
         case 15: return "A16";
         case 16: return "A17 Pro";
         case 17: return (minor <= 2) ? "A18 Pro" : "A18";
-        case 18: return (minor == 3) ? "A19" : "A19 Pro";  // 18,4 = iPhone Air (A19 Pro)
+        case 18: return (minor == 3 || minor == 5) ? "A19" : "A19 Pro";  // 18,4 = iPhone Air (A19 Pro)
+        case 19: return "A20 Pro";  // iPhone 18 Pro / Pro Max
         default: return nullptr;
     }
 }
@@ -4404,10 +4444,10 @@ void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
     };
     // Đời máy trước, mã máy trong ngoặc: "Model: iPhone 13 Pro (iPhone14,2)".
     const std::string &mk = parsed.model;
-    const char *mn = panicMarketingName(mk);
+    const std::string mn = panicMarketingName(mk);
     std::string modeltxt = "Model: ";
-    if (mn) {
-        modeltxt += std::string(mn) + " (" + mk + ")";
+    if (!mn.empty()) {
+        modeltxt += mn + " (" + mk + ")";
     } else {
         modeltxt += mk.empty() ? std::string("-") : mk;
     }

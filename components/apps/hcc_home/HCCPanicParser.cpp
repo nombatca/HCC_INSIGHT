@@ -103,6 +103,52 @@ std::string quotedValue(const std::string &s, const char *key)
     return s.substr(p + 1, e - p - 1);
 }
 
+// Chuỗi JSON "key": "..." có escape (\n, \", \uXXXX...) -> text thật. Dùng khi payload
+// .ips không parse được bằng cJSON (bị cắt, quá lớn...). Không có key -> "".
+std::string escapedValue(const std::string &s, const char *key)
+{
+    const std::string pat = std::string("\"") + key + "\"";
+    size_t p = s.find(pat);
+    if (p == std::string::npos) return std::string();
+    p = s.find_first_not_of(" \t\r\n", p + pat.size());
+    if (p == std::string::npos || s[p] != ':') return std::string();
+    p = s.find_first_not_of(" \t\r\n", p + 1);
+    if (p == std::string::npos || s[p] != '"') return std::string();
+    std::string out;
+    for (size_t i = p + 1; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '"') break;
+        if (c != '\\' || i + 1 >= s.size()) {
+            out += c;
+            continue;
+        }
+        char e = s[++i];
+        switch (e) {
+            case 'n': out += '\n'; break;
+            case 't': out += '\t'; break;
+            case 'r': break;
+            case 'u':
+                if (i + 4 < s.size()) {
+                    unsigned v = (unsigned)strtoul(s.substr(i + 1, 4).c_str(), nullptr, 16);
+                    i += 4;
+                    if (v < 0x80) {
+                        out += (char)v;
+                    } else if (v < 0x800) {
+                        out += (char)(0xC0 | (v >> 6));
+                        out += (char)(0x80 | (v & 0x3F));
+                    } else {
+                        out += (char)(0xE0 | (v >> 12));
+                        out += (char)(0x80 | ((v >> 6) & 0x3F));
+                        out += (char)(0x80 | (v & 0x3F));
+                    }
+                }
+                break;
+            default: out += e; break;
+        }
+    }
+    return out;
+}
+
 // Bỏ ngoặc kép / dấu phẩy thừa quanh giá trị lấy theo dòng.
 std::string cleanValue(std::string v)
 {
@@ -154,10 +200,15 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
         std::string rest = raw.substr(nl + 1);
         header = cJSON_Parse(line1.c_str());
         payload = cJSON_Parse(rest.c_str());
+        if (!payload) {
+            const char *ep = cJSON_GetErrorPtr();
+            ESP_LOGW(TAG, "payload JSON parse failed (%u bytes, at offset %d)", (unsigned)rest.size(),
+                     ep ? (int)(ep - rest.c_str()) : -1);
+        }
     }
-    if (!payload) {
-        // Thử parse toàn bộ như một JSON.
-        payload = cJSON_Parse(raw.c_str());
+    if (!payload && !header) {
+        // Thử parse toàn bộ như một JSON (bắt buộc hết chuỗi: không lấy nhầm dòng header).
+        payload = cJSON_ParseWithOpts(raw.c_str(), nullptr, true);
     }
 
     if (!header && !payload) {
@@ -179,6 +230,11 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
                                     lookup("bugType")});
     out.panic_string = firstNonEmpty({lookup("panicString"), lookup("panic_string"),
                                       lookup("description")});
+    if (out.panic_string.empty()) {
+        // Payload không parse được: lấy panicString thẳng từ text.
+        out.panic_string = firstNonEmpty({escapedValue(raw, "panicString"), escapedValue(raw, "panic_string")});
+    }
+    if (out.os_version.empty()) out.os_version = escapedValue(raw, "build");
     out.source = lookup("source");
     out.index = lookup("index");
 
@@ -189,6 +245,12 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
             out.panic_string = printed;
             cJSON_free(printed);
         }
+    }
+    if (out.panic_string.empty()) {
+        // Payload hỏng và không có panicString: phần sau dòng header là ngữ cảnh tốt nhất.
+        size_t nl2 = raw.find('\n');
+        out.panic_string = (nl2 != std::string::npos) ? raw.substr(nl2 + 1) : raw;
+        if (trim(out.panic_string).empty()) out.panic_string = raw;
     }
 
     extractFromPanicString(out, out.panic_string);
@@ -226,9 +288,11 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
                                     cleanValue(grabAfter("bug_type"))});
     out.source = grabAfter("source");
     out.index = grabAfter("index");
-    out.panic_string = raw;
+    // Text có "panicString":"..." (JSON không parse được): dùng đúng đoạn panic đó.
+    out.panic_string = escapedValue(raw, "panicString");
+    if (out.panic_string.empty()) out.panic_string = raw;
 
-    extractFromPanicString(out, raw);
+    extractFromPanicString(out, out.panic_string);
     out.raw_excerpt = trim(raw).substr(0, 400);
     buildSignature(out);
     out.valid = true;
