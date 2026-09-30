@@ -3796,80 +3796,59 @@ void HCCHome::onPanicListItemDeleted(lv_event_t *event)
     }
 }
 
-void HCCHome::onPanicChooseFileClicked(lv_event_t *event)
+void HCCHome::updatePanicUrlLabel()
 {
-    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app && app->_panic_file_dropdown) {
-        lv_dropdown_open(app->_panic_file_dropdown);
+    if (_panic_url_label == nullptr) {
+        return;
     }
+    char host[64], ip[64], txt[160];
+    HCCPanicServer::hostUrl(host, sizeof(host));
+    _panic_url_has_ip = HCCPanicServer::deviceUrl(ip, sizeof(ip));
+    if (_panic_url_has_ip) {
+        snprintf(txt, sizeof(txt), "Gửi panic: %s  (hoặc %s)", host, ip);
+    } else {
+        snprintf(txt, sizeof(txt), "Gửi panic: %s  (WiFi chưa kết nối)", host);
+    }
+    lv_label_set_text(_panic_url_label, txt);
 }
 
-void HCCHome::onPanicDeleteFileClicked(lv_event_t *event)
+void HCCHome::onPanicPollTimer(lv_timer_t *timer)
 {
-    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app == nullptr) return;
-    if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
-        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa chọn file");
+    HCCHome *app = static_cast<HCCHome *>(timer->user_data);
+    if (app == nullptr || app->_pi_list == nullptr) {
         return;
     }
-    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0) {
-        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Panic RAM - reboot để xoá");
+    // Wi-Fi vừa có / mất IP: cập nhật địa chỉ gửi panic.
+    char ip[64];
+    if (HCCPanicServer::deviceUrl(ip, sizeof(ip)) != app->_panic_url_has_ip) {
+        app->updatePanicUrlLabel();
+    }
+    // Panic mới từ iPhone: làm mới danh sách và chọn nó (mục [RAM] đứng đầu).
+    // Đang ANALYZE thì chờ xong mới làm mới, để kết quả không bị gán nhầm file.
+    const uint32_t serial = HCCPanicServer::receivedSerial();
+    if (serial == app->_panic_seen_serial || app->_panic_busy) {
         return;
     }
-    std::string path = HCCPanicStorage::absPath(std::string(HCCPanicServer::rawDir()) + "/" + app->_panic_file);
-    remove(path.c_str());
-    if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Đã xoá file");
+    app->_panic_seen_serial = serial;
+    app->_panic_result = PanicResult();
     app->populatePanicFileList();
+    if (app->_panic_status_label) {
+        lv_label_set_text(app->_panic_status_label, "Đã nhận panic mới");
+    }
 }
 
-void HCCHome::onPanicExportClicked(lv_event_t *event)
+void HCCHome::onPanicListDeleted(lv_event_t *event)
 {
+    // Danh sách bị xoá = rời màn PANIC: dừng timer.
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app == nullptr) return;
-    const PanicResult &r = app->_panic_result;
-    if (!r.ok) {
-        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa có kết quả để xuất");
+    if (app == nullptr) {
         return;
     }
-    std::string body;
-    body += "PANIC: " + std::string(app->_panic_file) + "\n\n";
-    body += "LOI:\n" + r.error + "\n\n";
-    body += "NGUYEN NHAN:\n" + r.cause + "\n\n";
-    body += "KIEM TRA/SUA CHUA:\n" + r.repair + "\n\n";
-    body += "DO TIN CAY: " + r.confidence + "\nNGUON: " + r.source_tier + "\n";
-
-    std::string base = app->_panic_file;
-    if (base.rfind("[RAM] ", 0) == 0) base = base.substr(6);
-    for (auto &c : base) { if (c == '/' || c == '\\' || c == ' ') c = '_'; }
-    std::string rel = "panic/results/" + base + ".txt";
-    bool ok = HCCPanicStorage::writeFile(rel, body.c_str(), body.size());
-    // Đọc lại xác nhận.
-    std::string chk;
-    ok = ok && HCCPanicStorage::readFile(rel, chk) && !chk.empty();
-    if (app->_panic_status_label)
-        lv_label_set_text(app->_panic_status_label, ok ? "Đã xuất kết quả ra SD" : "Xuất thất bại (thẻ SD?)");
-}
-
-void HCCHome::onPanicRefreshClicked(lv_event_t *event)
-{
-    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app == nullptr || app->_panic_busy) {
-        return;
+    if (app->_panic_poll_timer) {
+        lv_timer_del(app->_panic_poll_timer);
+        app->_panic_poll_timer = nullptr;
     }
-    app->populatePanicFileList();
-    // Cập nhật lại địa chỉ nhận upload (phòng khi WiFi vừa có IP).
-    if (app->_panic_url_label != nullptr) {
-        char host[64];
-        HCCPanicServer::hostUrl(host, sizeof(host));
-        char ip[64];
-        char txt[160];
-        if (HCCPanicServer::deviceUrl(ip, sizeof(ip))) {
-            snprintf(txt, sizeof(txt), "Gửi panic tới: %s  (hoặc %s)", host, ip);
-        } else {
-            snprintf(txt, sizeof(txt), "Gửi panic tới: %s  (WiFi chưa kết nối)", host);
-        }
-        lv_label_set_text(app->_panic_url_label, txt);
-    }
+    app->_pi_list = nullptr;
 }
 
 void HCCHome::onPanicAnalyzeClicked(lv_event_t *event)
@@ -4270,20 +4249,10 @@ void HCCHome::showPanic()
     lv_obj_set_style_text_font(ftitle, &lv_font_be_vietnam_16, 0);
 
     _panic_file_dropdown = lv_dropdown_create(_screen);
-    lv_obj_set_size(_panic_file_dropdown, 300, 46);
+    lv_obj_set_size(_panic_file_dropdown, 570, 46);
     lv_obj_align(_panic_file_dropdown, LV_ALIGN_TOP_LEFT, 128, 14);
     lv_obj_set_style_text_font(_panic_file_dropdown, &lv_font_be_vietnam_16, 0);
     lv_obj_add_event_cb(_panic_file_dropdown, onPanicFileChanged, LV_EVENT_VALUE_CHANGED, this);
-
-    lv_obj_t *choose_btn = lv_btn_create(_screen);
-    lv_obj_set_size(choose_btn, 132, 46);
-    lv_obj_align(choose_btn, LV_ALIGN_TOP_LEFT, 436, 14);
-    styleBtn(choose_btn, "CHỌN FILE", onPanicChooseFileClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
-
-    lv_obj_t *refresh_btn = lv_btn_create(_screen);
-    lv_obj_set_size(refresh_btn, 132, 46);
-    lv_obj_align(refresh_btn, LV_ALIGN_TOP_LEFT, 574, 14);
-    styleBtn(refresh_btn, "LÀM MỚI", onPanicRefreshClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
 
     _panic_analyze_button = lv_btn_create(_screen);
     lv_obj_set_size(_panic_analyze_button, 138, 46);
@@ -4297,15 +4266,7 @@ void HCCHome::showPanic()
 
     /* Địa chỉ + trạng thái (dòng mảnh dưới toolbar) */
     _panic_url_label = lv_label_create(_screen);
-    {
-        char host[64], ip[64], txt[160];
-        HCCPanicServer::hostUrl(host, sizeof(host));
-        if (HCCPanicServer::deviceUrl(ip, sizeof(ip)))
-            snprintf(txt, sizeof(txt), "Gửi panic: %s  (hoặc %s)", host, ip);
-        else
-            snprintf(txt, sizeof(txt), "Gửi panic: %s  (WiFi chưa kết nối)", host);
-        lv_label_set_text(_panic_url_label, txt);
-    }
+    updatePanicUrlLabel();
     lv_obj_align(_panic_url_label, LV_ALIGN_TOP_LEFT, 24, 66);
     lv_obj_set_style_text_color(_panic_url_label, lv_color_hex(0x00D9FF), 0);
     lv_obj_set_style_text_font(_panic_url_label, &lv_font_be_vietnam_16, 0);
@@ -4400,7 +4361,15 @@ void HCCHome::showPanic()
     _pi_conclusion = mkVal(cardConc, f16, green);
 
     /* ===== Danh sách + chi tiết ban đầu ===== */
+    _panic_seen_serial = HCCPanicServer::receivedSerial();
     populatePanicFileList();
+
+    // Tự làm mới khi iPhone gửi panic mới (thay nút LÀM MỚI). Timer dừng khi rời màn này.
+    if (_panic_poll_timer) {
+        lv_timer_del(_panic_poll_timer);
+    }
+    _panic_poll_timer = lv_timer_create(onPanicPollTimer, 1000, this);
+    lv_obj_add_event_cb(_pi_list, onPanicListDeleted, LV_EVENT_DELETE, this);
 
     /* ===== Thanh nút dưới cùng ===== */
     const lv_coord_t by = 474;
@@ -4408,21 +4377,6 @@ void HCCHome::showPanic()
     lv_obj_set_size(back_btn, 150, 52);
     lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 24, by);
     styleBtn(back_btn, "QUAY LẠI", onBackClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
-
-    lv_obj_t *del_btn = lv_btn_create(_screen);
-    lv_obj_set_size(del_btn, 150, 52);
-    lv_obj_align(del_btn, LV_ALIGN_TOP_LEFT, 300, by);
-    styleBtn(del_btn, "XÓA FILE", onPanicDeleteFileClicked, this, lv_color_hex(0x5A2530), &lv_font_be_vietnam_16);
-
-    lv_obj_t *exp_btn = lv_btn_create(_screen);
-    lv_obj_set_size(exp_btn, 180, 52);
-    lv_obj_align(exp_btn, LV_ALIGN_TOP_LEFT, 460, by);
-    styleBtn(exp_btn, "XUẤT KẾT QUẢ", onPanicExportClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
-
-    lv_obj_t *case_btn = lv_btn_create(_screen);
-    lv_obj_set_size(case_btn, 150, 52);
-    lv_obj_align(case_btn, LV_ALIGN_TOP_LEFT, 650, by);
-    styleBtn(case_btn, "LƯU CASE", onConfirmRepairClicked, this, lv_color_hex(0x2E9E5B), &lv_font_be_vietnam_16);
 
     lv_obj_t *verify_btn = lv_btn_create(_screen);
     lv_obj_set_size(verify_btn, 190, 52);

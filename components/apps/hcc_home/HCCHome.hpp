@@ -154,7 +154,6 @@ private:
     // PANIC & AI ANALYZE module.
     static void onPanicClicked(lv_event_t *event);
     static void onPanicAnalyzeClicked(lv_event_t *event);
-    static void onPanicRefreshClicked(lv_event_t *event);
     static void onPanicFileChanged(lv_event_t *event);
     static void onPanicApiKeyClicked(lv_event_t *event);
     static void onPanicApiKeySaveClicked(lv_event_t *event);
@@ -178,9 +177,10 @@ private:
     void refreshPanicDetail();
     static void onPanicListItemClicked(lv_event_t *event);
     static void onPanicListItemDeleted(lv_event_t *event);
-    static void onPanicChooseFileClicked(lv_event_t *event);
-    static void onPanicDeleteFileClicked(lv_event_t *event);
-    static void onPanicExportClicked(lv_event_t *event);
+    // Màn PANIC tự làm mới: timer so số thứ tự panic nhận qua Wi-Fi + trạng thái IP.
+    static void onPanicPollTimer(lv_timer_t *timer);
+    static void onPanicListDeleted(lv_event_t *event);
+    void updatePanicUrlLabel();
     static void panicAnalyzeTask(void *arg);
     void performPanicAnalyze();
     static void applyPanicResult(void *arg);
@@ -370,6 +370,9 @@ private:
     lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;
+    lv_timer_t *_panic_poll_timer = nullptr;
+    uint32_t _panic_seen_serial = 0;
+    bool _panic_url_has_ip = false;
     char _panic_file[96];
     char _panic_status[96];
     PanicResult _panic_result;

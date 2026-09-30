@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdint.h>
 #include <string>
 
 // HTTP server nhận RAW panic log qua Wi-Fi (LAN, không auth) và LƯU ra SD.
@@ -27,4 +28,7 @@ public:
 
     // True nếu panic RAM hiện tại là ảnh; *mime nhận kiểu ảnh (vd image/jpeg).
     static bool receivedIsImage(std::string *mime = nullptr);
+
+    // Tăng 1 mỗi lần nhận panic mới (0 = chưa nhận). Màn PANIC so sánh để tự làm mới danh sách.
+    static uint32_t receivedSerial();
 };

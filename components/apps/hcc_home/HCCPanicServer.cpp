@@ -31,6 +31,7 @@ static std::string s_recv_name;
 static std::string s_recv_raw;
 static bool s_recv_is_image = false;
 static std::string s_recv_mime;
+static volatile uint32_t s_recv_serial = 0;
 
 static void setReceived(const std::string &name, const std::string &raw,
                         bool is_image, const std::string &mime)
@@ -41,7 +42,13 @@ static void setReceived(const std::string &name, const std::string &raw,
     s_recv_raw = raw;
     s_recv_is_image = is_image;
     s_recv_mime = mime;
+    s_recv_serial = s_recv_serial + 1;
     if (s_recv_mtx) xSemaphoreGive(s_recv_mtx);
+}
+
+uint32_t HCCPanicServer::receivedSerial()
+{
+    return s_recv_serial;
 }
 
 bool HCCPanicServer::getReceived(std::string &name, std::string &raw)
