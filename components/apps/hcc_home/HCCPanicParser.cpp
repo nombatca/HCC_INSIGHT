@@ -29,18 +29,22 @@ std::string toLower(std::string s)
 
 // Tìm đệ quy giá trị chuỗi đầu tiên cho một key trong cây cJSON.
 // Với item số, trả về dạng số. Trả "" nếu không thấy.
+// Key ở cấp hiện tại được ưu tiên trước key lồng bên trong (vd "product" của payload
+// chứ không phải "product" nằm trong một object con).
 std::string findKey(const cJSON *node, const char *key)
 {
     if (!node) return std::string();
     for (const cJSON *c = node->child; c; c = c->next) {
         if (c->string && strcasecmp(c->string, key) == 0) {
-            if (cJSON_IsString(c) && c->valuestring) return c->valuestring;
+            if (cJSON_IsString(c) && c->valuestring && c->valuestring[0]) return c->valuestring;
             if (cJSON_IsNumber(c)) {
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%g", c->valuedouble);
                 return buf;
             }
         }
+    }
+    for (const cJSON *c = node->child; c; c = c->next) {
         if (cJSON_IsObject(c) || cJSON_IsArray(c)) {
             std::string r = findKey(c, key);
             if (!r.empty()) return r;
@@ -55,6 +59,66 @@ std::string firstNonEmpty(std::initializer_list<std::string> vals)
         if (!v.empty()) return v;
     }
     return std::string();
+}
+
+// Mã máy Apple dạng "iPhone14,2" / "iPad13,1" đầu tiên trong chuỗi; "" nếu không có.
+// ("iPhone OS 17.5" không khớp vì sau tên phải là số,số.)
+std::string findProductType(const std::string &s)
+{
+    static const char *prefixes[] = {"iPhone", "iPad", "iPod"};
+    size_t best = std::string::npos;
+    std::string found;
+    for (const char *pre : prefixes) {
+        const size_t plen = strlen(pre);
+        for (size_t p = s.find(pre); p != std::string::npos; p = s.find(pre, p + 1)) {
+            size_t i = p + plen;
+            size_t a = i;
+            while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+            if (i == a || i >= s.size() || s[i] != ',') continue;
+            size_t b = ++i;
+            while (i < s.size() && isdigit((unsigned char)s[i])) i++;
+            if (i == b) continue;
+            if (p < best) {
+                best = p;
+                found = s.substr(p, i - p);
+            }
+            break;
+        }
+    }
+    return found;
+}
+
+// Giá trị của "key": "..." trong text (JSON bị cắt / chữ AI chép từ ảnh); "" nếu không có.
+std::string quotedValue(const std::string &s, const char *key)
+{
+    const std::string pat = std::string("\"") + key + "\"";
+    size_t p = s.find(pat);
+    if (p == std::string::npos) return std::string();
+    p = s.find_first_not_of(" \t", p + pat.size());
+    if (p == std::string::npos || s[p] != ':') return std::string();
+    p = s.find_first_not_of(" \t", p + 1);
+    if (p == std::string::npos || s[p] != '"') return std::string();
+    size_t e = s.find('"', p + 1);
+    if (e == std::string::npos) return std::string();
+    return s.substr(p + 1, e - p - 1);
+}
+
+// Bỏ ngoặc kép / dấu phẩy thừa quanh giá trị lấy theo dòng.
+std::string cleanValue(std::string v)
+{
+    v = trim(v);
+    while (!v.empty() && (v.back() == ',' || v.back() == '"' || v.back() == '}')) v.pop_back();
+    while (!v.empty() && v.front() == '"') v.erase(0, 1);
+    return trim(v);
+}
+
+// Model chuẩn: ưu tiên mã iPhoneN,M trong giá trị đọc được, rồi trong toàn bộ log.
+std::string normalizeModel(const std::string &value, const std::string &raw)
+{
+    std::string m = findProductType(value);
+    if (m.empty()) m = findProductType(raw);
+    if (m.empty()) m = cleanValue(value);
+    return m;
 }
 
 void pushUnique(std::vector<std::string> &v, const std::string &s, size_t cap)
@@ -107,8 +171,8 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
         return v;
     };
 
-    out.model = firstNonEmpty({lookup("product"), lookup("modelCode"),
-                               lookup("hardware_model"), lookup("model")});
+    out.model = normalizeModel(firstNonEmpty({lookup("product"), lookup("modelCode"),
+                                              lookup("hardware_model"), lookup("model")}), raw);
     out.os_version = firstNonEmpty({lookup("os_version"), lookup("build"),
                                     lookup("kernel"), lookup("osVersion")});
     out.panic_type = firstNonEmpty({lookup("bug_type"), lookup("panicType"),
@@ -153,10 +217,13 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
         return trim(v);
     };
 
-    out.model = firstNonEmpty({grabAfter("product"), grabAfter("model")});
-    out.os_version = firstNonEmpty({grabAfter("os version"), grabAfter("build"),
-                                    grabAfter("kernel version")});
-    out.panic_type = firstNonEmpty({grabAfter("panic type"), grabAfter("bug_type")});
+    out.model = normalizeModel(firstNonEmpty({quotedValue(raw, "product"), grabAfter("product"),
+                                              grabAfter("model")}), raw);
+    out.os_version = firstNonEmpty({quotedValue(raw, "os_version"), quotedValue(raw, "build"),
+                                    cleanValue(grabAfter("os version")), cleanValue(grabAfter("build")),
+                                    cleanValue(grabAfter("kernel version"))});
+    out.panic_type = firstNonEmpty({quotedValue(raw, "bug_type"), cleanValue(grabAfter("panic type")),
+                                    cleanValue(grabAfter("bug_type"))});
     out.source = grabAfter("source");
     out.index = grabAfter("index");
     out.panic_string = raw;

@@ -175,6 +175,8 @@ private:
     bool loadSelectedRaw(std::string &raw);
     // Layout mới: cập nhật panel chi tiết (thiết bị, mức độ lỗi, key panic string).
     void refreshPanicDetail();
+    // Ô THÔNG TIN THIẾT BỊ: đời máy (tên thương mại + mã), iOS, SoC.
+    void showPanicDeviceInfo(const ParsedPanic &parsed);
     static void onPanicListItemClicked(lv_event_t *event);
     static void onPanicListItemDeleted(lv_event_t *event);
     // Màn PANIC tự làm mới: timer so số thứ tự panic nhận qua Wi-Fi + trạng thái IP.
@@ -371,6 +373,9 @@ private:
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;
     lv_timer_t *_panic_poll_timer = nullptr;
+    // Parse của chữ AI chép từ ảnh panic (ghi ở task ANALYZE, đọc ở applyPanicResult).
+    ParsedPanic _panic_img_parsed;
+    bool _panic_img_parsed_ready = false;
     uint32_t _panic_seen_serial = 0;
     bool _panic_url_has_ip = false;
     char _panic_file[96];

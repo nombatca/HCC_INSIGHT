@@ -3920,6 +3920,11 @@ void HCCHome::performPanicAnalyze()
     }
 
     ParsedPanic parsed = HCCPanicParser::parse(raw);
+    if (is_img) {
+        // Ảnh: model/iOS chỉ biết sau khi AI chép chữ; applyPanicResult hiện lên ô thiết bị.
+        _panic_img_parsed = parsed;
+        _panic_img_parsed_ready = true;
+    }
 
     // 1) Tra Knowledge Base (VERIFIED > REPAIR_CONFIRMED > AI_INFERENCE).
     HCCPanicKB::ensureLayout();
@@ -3959,6 +3964,10 @@ void HCCHome::applyPanicResult(void *arg)
     auto setL = [](lv_obj_t *o, const std::string &s) {
         if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
     };
+    if (app->_panic_img_parsed_ready) {
+        app->_panic_img_parsed_ready = false;
+        app->showPanicDeviceInfo(app->_panic_img_parsed);
+    }
     if (r.ok) {
         setL(app->_pi_cause, r.cause);
         setL(app->_pi_check, r.repair);
@@ -4096,13 +4105,17 @@ static const char *panicSocForModel(const std::string &code)
     const char *comma = strchr(p, ',');
     int minor = comma ? atoi(comma + 1) : 0;
     switch (major) {
+        case 8: return "A9";
+        case 9: return "A10 Fusion";
+        case 10: return "A11 Bionic";
+        case 11: return "A12 Bionic";
         case 12: return "A13";
         case 13: return "A14";
         case 14: return "A15";
         case 15: return "A16";
         case 16: return "A17 Pro";
         case 17: return (minor <= 2) ? "A18 Pro" : "A18";
-        case 18: return (minor <= 2) ? "A19 Pro" : "A19";
+        case 18: return (minor == 3) ? "A19" : "A19 Pro";  // 18,4 = iPhone Air (A19 Pro)
         default: return nullptr;
     }
 }
@@ -4384,6 +4397,29 @@ void HCCHome::showPanic()
     styleBtn(verify_btn, "XÁC NHẬN ĐÃ SỬA", onConfirmRepairClicked, this, lv_color_hex(0x3DD66E), &lv_font_be_vietnam_16);
 }
 
+void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
+{
+    auto setL = [](lv_obj_t *o, const std::string &s) {
+        if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
+    };
+    // Đời máy trước, mã máy trong ngoặc: "Model: iPhone 13 Pro (iPhone14,2)".
+    const std::string &mk = parsed.model;
+    const char *mn = panicMarketingName(mk);
+    std::string modeltxt = "Model: ";
+    if (mn) {
+        modeltxt += std::string(mn) + " (" + mk + ")";
+    } else {
+        modeltxt += mk.empty() ? std::string("-") : mk;
+    }
+    setL(_pi_model, modeltxt);
+    // "iPhone OS 17.5 (21F79)" -> "17.5 (21F79)".
+    std::string os = parsed.os_version;
+    if (os.rfind("iPhone OS ", 0) == 0) os = os.substr(10);
+    setL(_pi_ios, "iOS: " + (os.empty() ? std::string("-") : os));
+    const char *soc = panicSocForModel(mk);
+    setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+}
+
 void HCCHome::refreshPanicDetail()
 {
     auto setL = [](lv_obj_t *o, const std::string &s) {
@@ -4420,15 +4456,7 @@ void HCCHome::refreshPanicDetail()
     }
 
     _pi_parsed = HCCPanicParser::parse(raw);
-
-    std::string mk = _pi_parsed.model;
-    std::string modeltxt = "Model: " + (mk.empty() ? std::string("-") : mk);
-    const char *mn = panicMarketingName(mk);
-    if (mn) modeltxt += std::string(" (") + mn + ")";
-    setL(_pi_model, modeltxt);
-    setL(_pi_ios, "iOS: " + (_pi_parsed.os_version.empty() ? std::string("-") : _pi_parsed.os_version));
-    const char *soc = panicSocForModel(mk);
-    setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+    showPanicDeviceInfo(_pi_parsed);
 
     // Mức độ lỗi.
     std::string low = _pi_parsed.panic_type + " " + _pi_parsed.panic_string;
