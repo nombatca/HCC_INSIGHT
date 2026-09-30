@@ -17,7 +17,9 @@ using Status = HCCAndroidDiagnostics::Status;
 using Item = HCCAndroidDiagnostics::Item;
 using Group = HCCAndroidDiagnostics::Group;
 
-// Sections are introduced by "##X" lines; "##E" proves the output is complete.
+// Sections are introduced by "##X" lines; a section is complete once the next marker arrives
+// ("##E" ends the last one). Output is filtered on the phone to stay well under the 12 KB
+// the ADB client keeps: some ROMs print very long dumpsys battery / telephony.registry.
 constexpr char kCommand[] =
     "echo '##S';dumpsys sensorservice|grep -o 'android\\.sensor\\.[a-z_]*'|sort -u;"
     "echo '##F';pm list features|grep -E 'sensor|fingerprint|biometrics|telephony';"
@@ -27,18 +29,20 @@ constexpr char kCommand[] =
     "persist.radio.multisim.config ro.boot.baseband;do echo \"$p=$(getprop $p)\";done;"
     "echo \"airplane=$(settings get global airplane_mode_on)\";echo \"mdata=$(settings get global mobile_data)\";"
     "echo '##T';dumpsys telephony.registry|grep -E '^ *(Phone Id=|mServiceState=|mSignalStrength=|mCellInfo=)'"
-    "|cut -c1-900;"
+    "|head -12|cut -c1-600;"
     "echo '##L';x=$(logcat -b radio -d -t 3000 2>/dev/null|grep -iE "
     "'RADIO_NOT_AVAILABLE|modem.{0,20}(crash|reset|restart)|subsystem restart');"
     "echo \"n=$(echo \"$x\"|grep -c .)\";echo \"$x\"|tail -2|cut -c1-160;"
     "echo '##I';service call iphonesubinfo 1 s16 com.android.shell 2>&1|cut -c1-80;getprop|grep -i imei|cut -c1-80;"
-    "echo '##B';dumpsys battery;d=/sys/class/power_supply/battery;"
+    "echo '##B';dumpsys battery|grep -E '^ *(present|level|health|temperature|voltage|status):';"
+    "d=/sys/class/power_supply/battery;"
     "echo \"cycle=$(cat $d/cycle_count 2>/dev/null)\";echo \"full=$(cat $d/charge_full 2>/dev/null)\";"
     "echo \"design=$(cat $d/charge_full_design 2>/dev/null)\";"
     "echo '##E'";
 
 struct Parsed {
     bool complete = false;
+    std::set<char> done; // sections followed by another marker, i.e. not cut off
     std::set<std::string> sensors;  // "accelerometer", "proximity", ...
     std::set<std::string> features; // "android.hardware.fingerprint", ...
     int fingerprint_lines = -1;
@@ -71,6 +75,9 @@ Parsed parseSections(const char *output)
         line = newline != nullptr ? newline + 1 : line + strlen(line);
 
         if (text.size() == 3 && text[0] == '#' && text[1] == '#') {
+            if (section != 0) {
+                parsed.done.insert(section);
+            }
             section = text[2];
             parsed.complete = section == 'E';
             continue;
@@ -741,16 +748,18 @@ HCCAndroidDiagnostics::FullResult HCCAndroidDiagnostics::parse(const char *outpu
     const uint32_t ts = static_cast<uint32_t>(time(nullptr));
     const Parsed parsed = parseSections(output);
     FullResult result;
-    if (!parsed.complete) {
-        result.sensors = notTested("SENSORS", ts);
-        result.faceid = notTested("VÂN TAY / FACE", ts);
-        result.baseband = notTested("BASEBAND / SIM", ts);
-        result.battery = notTested("BATTERY", ts);
-        return result;
-    }
-    result.sensors = checkSensors(parsed, ts);
-    result.faceid = checkBiometrics(parsed, ts);
-    result.baseband = checkBaseband(parsed, ts);
-    result.battery = checkBattery(parsed, ts);
+    // A group needs its own sections intact; a truncated tail only costs the groups it cut.
+    auto has = [&parsed](const char *sections) {
+        for (const char *s = sections; *s != '\0'; ++s) {
+            if (parsed.done.count(*s) == 0) {
+                return false;
+            }
+        }
+        return true;
+    };
+    result.sensors = has("SF") ? checkSensors(parsed, ts) : notTested("SENSORS", ts);
+    result.faceid = has("FPA") ? checkBiometrics(parsed, ts) : notTested("VÂN TAY / FACE", ts);
+    result.baseband = has("FR") ? checkBaseband(parsed, ts) : notTested("BASEBAND / SIM", ts);
+    result.battery = has("B") ? checkBattery(parsed, ts) : notTested("BATTERY", ts);
     return result;
 }
