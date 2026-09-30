@@ -5246,7 +5246,7 @@ void HCCHome::showHardwareCheck()
         "SENSORS/VÂN TAY: so sánh cảm biến máy khai báo với cảm biến HAL thực sự thấy; "
         "khai báo mà không thấy -> FAIL/CHECK (nghi hỏng IC, cáp). PASS = linh kiện lên, chưa đo chức năng. "
         "BASEBAND: modem, IMEI, từng SIM, đăng ký mạng, sóng (dBm), băng tần, log modem. "
-        "BATTERY: dumpsys battery + power_supply." :
+        "BATTERY: % chai (ASOC/learned/charge_full), chu kỳ, trạng thái sạc, dòng điện, nhiệt độ linh kiện." :
         "SENSORS: iOS không cấp dữ liệu sensor qua Lockdown -> UNSUPPORTED. "
         "FACE ID: chỉ dò lỗi subsystem qua os_trace (không bao giờ PASS, không đụng sinh trắc). "
         "BASEBAND: dùng Lockdown GetValue thật + log CommCenter làm evidence.");

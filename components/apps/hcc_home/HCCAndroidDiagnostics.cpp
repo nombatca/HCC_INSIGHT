@@ -34,10 +34,14 @@ constexpr char kCommand[] =
     "'RADIO_NOT_AVAILABLE|modem.{0,20}(crash|reset|restart)|subsystem restart');"
     "echo \"n=$(echo \"$x\"|grep -c .)\";echo \"$x\"|tail -2|cut -c1-160;"
     "echo '##I';service call iphonesubinfo 1 s16 com.android.shell 2>&1|cut -c1-80;getprop|grep -i imei|cut -c1-80;"
-    "echo '##B';dumpsys battery|grep -E '^ *(present|level|health|temperature|voltage|status):';"
-    "d=/sys/class/power_supply/battery;"
-    "echo \"cycle=$(cat $d/cycle_count 2>/dev/null)\";echo \"full=$(cat $d/charge_full 2>/dev/null)\";"
-    "echo \"design=$(cat $d/charge_full_design 2>/dev/null)\";"
+    "echo '##B';dumpsys battery|grep -iE '^ *((present|level|health|temperature|voltage|status|technology|"
+    "charge counter)|(ac|usb|wireless|dock) powered|max charging (current|voltage)):|asoc|bsoh|cycle|first.?use'"
+    "|cut -c1-100|head -30;d=/sys/class/power_supply/battery;"
+    "for f in cycle_count charge_full charge_full_design current_now;do echo \"$f=$(cat $d/$f 2>/dev/null)\";done;"
+    "echo '##C';dumpsys batterystats|grep -m4 -iE ' capacity: [0-9]|learned battery capacity|estimated battery "
+    "capacity'|cut -c1-120;"
+    "echo '##H';for z in /sys/class/thermal/thermal_zone*;do echo \"$(cat $z/type 2>/dev/null)=$(cat $z/temp "
+    "2>/dev/null)\";done|grep -v '=$'|head -60|cut -c1-48;"
     "echo '##E'";
 
 struct Parsed {
@@ -52,6 +56,8 @@ struct Parsed {
     int radio_errors = -1;                      // modem error lines in the radio log; -1 = not read
     std::vector<std::string> radio_log;         // last matching lines
     std::vector<std::string> imei_lines;        // service call / getprop output
+    std::vector<std::string> battery_stats;     // dumpsys batterystats capacity lines
+    std::vector<std::string> thermal;           // "zone_type=temp" lines
 };
 
 std::string trim(const std::string &text)
@@ -112,6 +118,12 @@ Parsed parseSections(const char *output)
             break;
         case 'I':
             parsed.imei_lines.push_back(text);
+            break;
+        case 'C':
+            parsed.battery_stats.push_back(text);
+            break;
+        case 'H':
+            parsed.thermal.push_back(text);
             break;
         case 'R':
         case 'B': {
@@ -669,6 +681,166 @@ Group checkBaseband(const Parsed &parsed, uint32_t ts)
     return finish("BASEBAND / SIM", std::move(items));
 }
 
+std::string lower(std::string text)
+{
+    for (char &c : text) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return text;
+}
+
+// Value of the first key whose lower-case name contains `needle` (vendor keys vary in case).
+std::string valueLike(const Parsed &parsed, const char *needle)
+{
+    for (const auto &entry : parsed.values) {
+        if (!entry.second.empty() && lower(entry.first).find(needle) != std::string::npos) {
+            return entry.second;
+        }
+    }
+    return "";
+}
+
+bool isSignedNumber(const std::string &text)
+{
+    return isNumber(text[0] == '-' ? text.substr(1) : text);
+}
+
+// First integer in `line` after `key` (case-insensitive), e.g. "Min learned battery capacity: 4100 mAh".
+bool intAfterLike(const std::string &line, const char *key, long long *out)
+{
+    const std::string low = lower(line);
+    const size_t pos = low.find(key);
+    if (pos == std::string::npos) {
+        return false;
+    }
+    const size_t digit = line.find_first_of("0123456789", pos + strlen(key));
+    if (digit == std::string::npos) {
+        return false;
+    }
+    *out = atoll(line.c_str() + digit);
+    return true;
+}
+
+std::string fmt1(double value)
+{
+    char text[32];
+    snprintf(text, sizeof(text), "%.1f", value);
+    return text;
+}
+
+Item capacityItem(const Parsed &parsed, uint32_t ts)
+{
+    // Candidate sources, best first; every one found is listed as evidence.
+    std::string evidence;
+    auto note = [&evidence](const std::string &text) { evidence += (evidence.empty() ? "" : "; ") + text; };
+    int percent = -1;
+    bool rough = false;
+    const char *source = "";
+
+    // Samsung: ASOC is its own state-of-health percentage.
+    const std::string asoc = valueLike(parsed, "asoc");
+    if (isNumber(asoc) && atoi(asoc.c_str()) > 0 && atoi(asoc.c_str()) <= 120) {
+        percent = atoi(asoc.c_str());
+        source = "dumpsys battery (Samsung ASOC)";
+        note("Samsung ASOC " + asoc + "%");
+    }
+    const std::string bsoh = valueLike(parsed, "bsoh");
+    if (!bsoh.empty()) {
+        note("BSOH " + bsoh);
+    }
+    const std::string first_use = valueLike(parsed, "first");
+    if (!first_use.empty()) {
+        note("dùng lần đầu " + first_use);
+    }
+
+    // Fuel gauge full-charge capacity vs design (uAh).
+    const std::string full = value(parsed, "charge_full");
+    const std::string design = value(parsed, "charge_full_design");
+    long long design_mah = isNumber(design) ? atoll(design.c_str()) / 1000 : 0;
+    if (isNumber(full) && design_mah > 0) {
+        const long long full_mah = atoll(full.c_str()) / 1000;
+        const int p = static_cast<int>(full_mah * 100 / design_mah);
+        note("charge_full " + std::to_string(full_mah) + " / " + std::to_string(design_mah) + " mAh = " +
+             std::to_string(p) + "%");
+        if (percent < 0) {
+            percent = p;
+            source = "/sys/class/power_supply/battery (charge_full)";
+        }
+    }
+
+    // batterystats: design "Capacity" and the learned / estimated capacity (mAh).
+    long long stats_design = 0;
+    long long learned_min = 0;
+    long long learned_max = 0;
+    long long estimated = 0;
+    for (const std::string &line : parsed.battery_stats) {
+        long long v = 0;
+        if (intAfterLike(line, "min learned battery capacity", &v)) {
+            learned_min = v;
+        } else if (intAfterLike(line, "max learned battery capacity", &v)) {
+            learned_max = v;
+        } else if (intAfterLike(line, "estimated battery capacity", &v)) {
+            estimated = v;
+        } else if (intAfterLike(line, "capacity:", &v)) {
+            stats_design = v;
+        }
+    }
+    auto to_mah = [](long long v) { return v > 20000 ? v / 1000 : v; }; // some ROMs print uAh
+    learned_min = to_mah(learned_min);
+    learned_max = to_mah(learned_max);
+    estimated = to_mah(estimated);
+    if (design_mah <= 0) {
+        design_mah = stats_design;
+    }
+    const long long learned = learned_min > 0 && learned_max > 0 ? (learned_min + learned_max) / 2
+                              : learned_max > 0                  ? learned_max
+                                                                 : learned_min;
+    if (stats_design > 0) {
+        note("thiết kế " + std::to_string(stats_design) + " mAh (batterystats)");
+    }
+    if (learned > 0 && design_mah > 0) {
+        const int p = static_cast<int>(learned * 100 / design_mah);
+        note("học được " + std::to_string(learned_min) + "-" + std::to_string(learned_max) + " mAh = " +
+             std::to_string(p) + "%");
+        if (percent < 0) {
+            percent = p;
+            source = "dumpsys batterystats (learned capacity)";
+        }
+    } else if (estimated > 0) {
+        note("ước tính " + std::to_string(estimated) + " mAh");
+    }
+
+    // Last resort: charge counter scaled by the level (rough; only with enough charge in).
+    const std::string counter = valueLike(parsed, "charge counter");
+    const int level = atoi(value(parsed, "level").c_str());
+    if (isNumber(counter) && atoll(counter.c_str()) > 0 && level >= 30) {
+        const long long full_est = atoll(counter.c_str()) / 1000 * 100 / level;
+        note("charge counter " + std::to_string(atoll(counter.c_str()) / 1000) + " mAh ở " + std::to_string(level) +
+             "% -> đầy ~" + std::to_string(full_est) + " mAh");
+        if (percent < 0 && design_mah > 0) {
+            // The counter drifts; above 100% only means "no measurable wear".
+            percent = static_cast<int>(std::min<long long>(100, full_est * 100 / design_mah));
+            source = "dumpsys battery (charge counter, ước tính thô)";
+            rough = true;
+        }
+    }
+
+    if (percent < 0 || percent > 130) {
+        return makeItem("Sức khoẻ pin (dung lượng)", Status::Unsupported, "dumpsys battery / batterystats / sysfs",
+                        evidence.empty() ? "Máy không cho đọc dung lượng pin qua ADB." : evidence, ts);
+    }
+    Status status = percent >= 80 ? Status::Pass : (percent >= 60 && !rough ? Status::Check : Status::Fail);
+    if (rough && status == Status::Fail) {
+        status = Status::Check; // a rough estimate never fails the battery on its own
+    }
+    std::string verdict = percent >= 80 ? "  -> pin còn tốt" : percent >= 60 ? "  -> pin chai, cân nhắc thay"
+                                                                              : "  -> pin chai nặng, nên thay";
+    return makeItem("Sức khoẻ pin (dung lượng)", status, source,
+                    std::to_string(percent) + "%" + (rough ? " (ước tính thô)" : "") + verdict + ". " + evidence, ts);
+}
+
 Group checkBattery(const Parsed &parsed, uint32_t ts)
 {
     std::vector<Item> items;
@@ -684,19 +856,93 @@ Group checkBattery(const Parsed &parsed, uint32_t ts)
                                           "Unspecified failure", "Cold"};
     const int health_code = atoi(health.c_str());
     const char *health_name = health_code >= 1 && health_code <= 7 ? kHealth[health_code] : "?";
+    const std::string technology = value(parsed, "technology");
     items.push_back(makeItem("Health", health_code == 2 ? Status::Pass : (health_code <= 1 ? Status::Check
                                                                                             : Status::Fail),
                              source,
                              std::string(health_name) + " (health=" + (health.empty() ? "-" : health) +
-                                 "), level " + (value(parsed, "level").empty() ? "-" : value(parsed, "level")) + "%",
+                                 "), level " + (value(parsed, "level").empty() ? "-" : value(parsed, "level")) + "%" +
+                                 (technology.empty() ? "" : ", " + technology),
                              ts));
+
+    items.push_back(capacityItem(parsed, ts));
+
+    // Cycle count: sysfs, else a vendor/Android 14 "cycle" key in dumpsys battery.
+    std::string cycles = value(parsed, "cycle_count");
+    const char *cycle_source = "/sys/class/power_supply/battery/cycle_count";
+    if (!isNumber(cycles)) {
+        cycles = valueLike(parsed, "cycle");
+        cycle_source = "dumpsys battery";
+    }
+    if (isNumber(cycles)) {
+        const int count = atoi(cycles.c_str());
+        items.push_back(makeItem("Chu kỳ sạc", count > 800 ? Status::Check : Status::Pass, cycle_source,
+                                 std::to_string(count) + (count > 800 ? " -> nhiều chu kỳ" : ""), ts));
+    } else {
+        items.push_back(makeItem("Chu kỳ sạc", Status::Unsupported, cycle_source,
+                                 "Máy không cho đọc số chu kỳ sạc qua ADB.", ts));
+    }
+
+    // Charging while plugged into the board (which powers VBUS).
+    const int status_code = atoi(value(parsed, "status").c_str());
+    static const char *const kStatus[] = {"?", "Unknown", "Đang sạc", "Đang xả", "Không sạc", "Đầy"};
+    const char *status_name = status_code >= 1 && status_code <= 5 ? kStatus[status_code] : "?";
+    std::string sources;
+    for (const char *name : {"AC powered", "USB powered", "Wireless powered", "Dock powered"}) {
+        if (value(parsed, name) == "true") {
+            sources += (sources.empty() ? "" : "+") + std::string(name).substr(0, std::string(name).find(' '));
+        }
+    }
+    std::string charge_evidence = std::string(status_name) + ", nguồn: " + (sources.empty() ? "không" : sources);
+    const std::string max_current = value(parsed, "Max charging current");
+    const std::string max_voltage = value(parsed, "Max charging voltage");
+    if (isNumber(max_current) && atoll(max_current.c_str()) > 0) {
+        charge_evidence += ", sạc cho phép tối đa " + fmt1(atoll(max_current.c_str()) / 1e6) + " A";
+        if (isNumber(max_voltage) && atoll(max_voltage.c_str()) > 0) {
+            charge_evidence += " / " + fmt1(atoll(max_voltage.c_str()) / 1e6) + " V";
+        }
+    }
+    const int level = atoi(value(parsed, "level").c_str());
+    Status charge_status = Status::Pass;
+    if (sources.empty()) {
+        charge_status = Status::Check;
+        charge_evidence += "  -> máy không nhận nguồn qua cổng USB: nghi cổng sạc/IC sạc (hoặc board không cấp VBUS).";
+    } else if (status_code == 4 && level < 95) {
+        charge_status = Status::Check;
+        charge_evidence += "  -> có nguồn nhưng KHÔNG sạc: nghi IC sạc, pin, hoặc máy đang bật giới hạn sạc bảo vệ pin.";
+    }
+    items.push_back(makeItem("Sạc", status_code == 0 ? Status::Unsupported : charge_status, source, charge_evidence,
+                             ts));
+
+    // Instantaneous current; units (uA or mA) and sign convention depend on the vendor.
+    const std::string current = value(parsed, "current_now");
+    if (isSignedNumber(current)) {
+        long long ma = atoll(current.c_str());
+        if (ma > 10000 || ma < -10000) {
+            ma /= 1000;
+        }
+        const long long magnitude = ma < 0 ? -ma : ma;
+        std::string evidence = std::to_string(ma) + " mA (dấu +/- tuỳ hãng)";
+        Status status = Status::Pass;
+        if (status_code == 2 && magnitude < 50 && level < 95) {
+            status = Status::Check;
+            evidence += "  -> đang sạc nhưng dòng gần 0: nghi IC sạc/cổng sạc/pin.";
+        } else if (status_code == 3 && magnitude > 1500) {
+            status = Status::Check;
+            evidence += "  -> xả rất lớn khi cắm máy: nghi chạm/rò trên main hoặc app chạy nền.";
+        }
+        items.push_back(makeItem("Dòng điện", status, "/sys/class/power_supply/battery/current_now", evidence, ts));
+    } else {
+        items.push_back(makeItem("Dòng điện", Status::Unsupported, "/sys/class/power_supply/battery/current_now",
+                                 "Máy không cho đọc dòng điện qua ADB.", ts));
+    }
 
     const std::string temperature = value(parsed, "temperature");
     if (isNumber(temperature)) {
         const int tenths = atoi(temperature.c_str());
         char text[64];
         snprintf(text, sizeof(text), "%d.%d C", tenths / 10, tenths % 10);
-        items.push_back(makeItem("Nhiệt độ", tenths > 450 ? Status::Check : Status::Pass, source,
+        items.push_back(makeItem("Nhiệt độ pin", tenths > 450 ? Status::Check : Status::Pass, source,
                                  std::string(text) + (tenths > 450 ? " -> nóng bất thường" : ""), ts));
     }
 
@@ -709,29 +955,44 @@ Group checkBattery(const Parsed &parsed, uint32_t ts)
                                  ts));
     }
 
-    const std::string full = value(parsed, "full");
-    const std::string design = value(parsed, "design");
-    if (isNumber(full) && isNumber(design) && atoll(design.c_str()) > 0) {
-        const long long percent = atoll(full.c_str()) * 100 / atoll(design.c_str());
-        items.push_back(makeItem("Dung lượng còn lại", percent < 80 ? Status::Check : Status::Pass,
-                                 "/sys/class/power_supply/battery",
-                                 std::to_string(percent) + "% (" + full + " / " + design + " uAh)" +
-                                     (percent < 80 ? " -> pin chai, nên thay" : ""),
-                                 ts));
-    } else {
-        items.push_back(makeItem("Dung lượng còn lại", Status::Unsupported, "/sys/class/power_supply/battery",
-                                 "Máy không cho đọc charge_full/charge_full_design qua ADB.", ts));
+    // Board temperatures: charger/USB/PMIC/battery zones point at the part that heats up.
+    std::vector<std::pair<double, std::string>> zones;
+    for (const std::string &line : parsed.thermal) {
+        const size_t eq = line.rfind('=');
+        if (eq == std::string::npos || eq == 0 || !isSignedNumber(line.substr(eq + 1))) {
+            continue;
+        }
+        const long long raw = atoll(line.c_str() + eq + 1);
+        const double celsius = raw >= 1000 || raw <= -1000 ? raw / 1000.0 : raw >= 200 ? raw / 10.0 : raw;
+        if (celsius > -30 && celsius < 150 && celsius != 0) {
+            zones.emplace_back(celsius, line.substr(0, eq));
+        }
     }
-
-    const std::string cycles = value(parsed, "cycle");
-    if (isNumber(cycles)) {
-        const int count = atoi(cycles.c_str());
-        items.push_back(makeItem("Chu kỳ sạc", count > 800 ? Status::Check : Status::Pass,
-                                 "/sys/class/power_supply/battery/cycle_count",
-                                 std::to_string(count) + (count > 800 ? " -> nhiều chu kỳ" : ""), ts));
+    if (zones.empty()) {
+        items.push_back(makeItem("Nhiệt độ linh kiện", Status::Unsupported, "/sys/class/thermal",
+                                 "Máy không cho đọc thermal zone qua ADB.", ts));
     } else {
-        items.push_back(makeItem("Chu kỳ sạc", Status::Unsupported, "/sys/class/power_supply/battery/cycle_count",
-                                 "Máy không cho đọc cycle_count qua ADB.", ts));
+        std::sort(zones.begin(), zones.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+        std::string hot;
+        for (const auto &zone : zones) {
+            const std::string type = lower(zone.second);
+            const bool power_part = type.find("chg") != std::string::npos || type.find("charg") != std::string::npos ||
+                                    type.find("usb") != std::string::npos || type.find("pmic") != std::string::npos ||
+                                    type.find("batt") != std::string::npos || type.find("bms") != std::string::npos;
+            if ((power_part && zone.first > 50) || zone.first > 80) {
+                hot += (hot.empty() ? "" : ", ") + zone.second + " " + fmt1(zone.first) + " C";
+            }
+        }
+        std::string evidence = "Nóng nhất: ";
+        for (size_t i = 0; i < zones.size() && i < 6; ++i) {
+            evidence += (i == 0 ? "" : ", ") + zones[i].second + " " + fmt1(zones[i].first) + " C";
+        }
+        evidence += " (" + std::to_string(zones.size()) + " vùng)";
+        if (!hot.empty()) {
+            evidence += "  -> nóng bất thường: " + hot + " (IC sạc/cổng USB/PMIC nóng: nghi chạm, rò).";
+        }
+        items.push_back(makeItem("Nhiệt độ linh kiện", hot.empty() ? Status::Pass : Status::Check,
+                                 "/sys/class/thermal/thermal_zone*", evidence, ts));
     }
     return finish("BATTERY", std::move(items));
 }
