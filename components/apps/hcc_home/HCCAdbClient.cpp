@@ -393,12 +393,20 @@ bool HCCAdbClient::runJob(const char *command)
     }
     printf("[HCC ADB] job started (%d bytes)\n", length);
     _job_state = JobState::Running;
+    _job_started_ms = static_cast<uint32_t>(xTaskGetTickCount() * portTICK_PERIOD_MS);
     ++_job_serial;
     return true;
 }
 
 void HCCAdbClient::poll()
 {
+    if (_job_state == JobState::Running &&
+        static_cast<uint32_t>(xTaskGetTickCount() * portTICK_PERIOD_MS) - _job_started_ms > kJobTimeoutMs) {
+        printf("[HCC ADB] job timed out after %u ms (%u bytes received)\n", static_cast<unsigned>(kJobTimeoutMs),
+               static_cast<unsigned>(_job_output_length));
+        _job_state = JobState::TimedOut;
+        ++_job_serial;
+    }
     if (_state != State::WaitingKey || _stopping) {
         return;
     }
@@ -658,6 +666,8 @@ bool HCCAdbClient::handleMessage(uint32_t command, uint32_t arg0, uint32_t arg1,
     case kCmdClse:
         if (arg1 == kJobLocalId && _job_state == JobState::Running) {
             printf("[HCC ADB] job done (%u bytes)\n", static_cast<unsigned>(_job_output_length));
+            // Full output in the serial log, to tune the parser for a phone that reports oddly.
+            printf("[HCC ADB] ---- job output ----\n%s\n[HCC ADB] ---- end job output ----\n", _job_output);
             _job_state = JobState::Done;
             ++_job_serial;
         }

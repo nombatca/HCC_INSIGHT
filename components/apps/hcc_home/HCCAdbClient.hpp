@@ -27,6 +27,7 @@ public:
         Idle,
         Running,
         Done,
+        TimedOut, // no CLSE within kJobTimeoutMs; jobOutput() holds what arrived
     };
 
     struct Info {
@@ -58,10 +59,11 @@ public:
     JobState jobState() const { return _job_state; }
     uint32_t jobSerial() const { return _job_serial; }
     const char *jobOutput() const { return _job_output != nullptr ? _job_output : ""; }
+    size_t jobOutputLength() const { return _job_output_length; }
     // Resumes work deferred on the host key; call every USB loop iteration.
     void poll();
     // True while poll() has work to do without a USB event (the loop must not block forever).
-    bool needsPoll() const { return _state == State::WaitingKey; }
+    bool needsPoll() const { return _state == State::WaitingKey || _job_state == JobState::Running; }
     void stopForDeviceGone();
     void stopForShutdown();
     bool hasPendingTransfers() const { return _rx_transfer != nullptr || _tx_transfer != nullptr; }
@@ -84,6 +86,7 @@ private:
     static constexpr uint32_t kServiceLocalId = 2;
     static constexpr uint32_t kJobLocalId = 3;
     static constexpr size_t kJobOutputCapacity = 12288;
+    static constexpr uint32_t kJobTimeoutMs = 60000;
 
     struct TxMessage {
         uint8_t header[kHeaderSize];
@@ -138,6 +141,7 @@ private:
     size_t _shell_output_length = 0;
     JobState _job_state = JobState::Idle;
     uint32_t _job_serial = 0;
+    uint32_t _job_started_ms = 0;
     char *_job_output = nullptr;
     size_t _job_output_length = 0;
     Info _info = {};

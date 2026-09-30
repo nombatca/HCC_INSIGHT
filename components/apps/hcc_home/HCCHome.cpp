@@ -1474,7 +1474,8 @@ void HCCHome::usbClientTask(void *arg)
         }
         if (app->_adb.jobSerial() != app->_adb_job_seen) {
             app->_adb_job_seen = app->_adb.jobSerial();
-            if (app->_adb.jobState() == HCCAdbClient::JobState::Done) {
+            if (app->_adb.jobState() == HCCAdbClient::JobState::Done ||
+                app->_adb.jobState() == HCCAdbClient::JobState::TimedOut) {
                 lv_async_call(HCCHome::applyAndroidDiagnostics, app);
             }
         }
@@ -4976,18 +4977,30 @@ void HCCHome::applyAndroidDiagnostics(void *arg)
     if (app == nullptr) {
         return;
     }
-    const bool done = !app->_hw_android_start_failed && app->_adb.jobState() == HCCAdbClient::JobState::Done;
+    const HCCAdbClient::JobState job = app->_adb.jobState();
+    const bool finished = !app->_hw_android_start_failed &&
+                          (job == HCCAdbClient::JobState::Done || job == HCCAdbClient::JobState::TimedOut);
     app->_hw_android_start_failed = false;
-    if (done) {
+    char message[160];
+    if (!finished) {
+        snprintf(message, sizeof(message), "ADB: không chạy được lệnh chẩn đoán (kiểm tra kết nối)");
+    } else {
+        // Parse whatever arrived; groups whose section is missing stay NOT TESTED.
         app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
         app->_hw_result_android = true;
         app->_hw_has_result = true;
         app->updateHwCards();
+        const unsigned bytes = static_cast<unsigned>(app->_adb.jobOutputLength());
+        if (job == HCCAdbClient::JobState::TimedOut) {
+            snprintf(message, sizeof(message), "ADB: điện thoại không trả lời xong trong 60 giây (%u byte) - gửi log", bytes);
+        } else if (strstr(app->_adb.jobOutput(), "##E") == nullptr) {
+            snprintf(message, sizeof(message), "ADB: kết quả không đầy đủ (%u byte) - gửi log", bytes);
+        } else {
+            snprintf(message, sizeof(message), "ADB: XONG - chạm vào từng thẻ để xem evidence");
+        }
     }
     if (app->_hw_session_label != nullptr) {
-        lv_label_set_text(app->_hw_session_label,
-                          done ? "ADB: XONG - chạm vào từng thẻ để xem evidence"
-                               : "ADB: không chạy được lệnh chẩn đoán (kiểm tra kết nối)");
+        lv_label_set_text(app->_hw_session_label, message);
     }
 }
 
