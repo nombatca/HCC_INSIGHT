@@ -1464,13 +1464,13 @@ void HCCHome::usbClientTask(void *arg)
             app->_android_action_requested = AndroidAction::None;
             HCCHome::performAndroidAction(app, action);
         }
-        if (app->_hw_android_requested || app->_hw_camera_test_requested) {
-            const bool camera_test = app->_hw_camera_test_requested;
+        if (app->_hw_android_requested || app->_cam_job_requested) {
+            // Camera test steps run their own command (written by the UI before the flag).
+            const bool camera_job = app->_cam_job_requested;
             app->_hw_android_requested = false;
-            app->_hw_camera_test_requested = false;
-            app->_hw_last_job_camera = camera_test;
-            if (!app->_adb.runJob(camera_test ? HCCAndroidDiagnostics::cameraTestCommand()
-                                              : HCCAndroidDiagnostics::command())) {
+            app->_cam_job_requested = false;
+            app->_hw_last_job_camera = camera_job;
+            if (!app->_adb.runJob(camera_job ? app->_cam_job_command : HCCAndroidDiagnostics::command())) {
                 printf("[HCC ADB] diagnostics job could not start\n");
                 app->_hw_android_start_failed = true;
                 lv_async_call(HCCHome::applyAndroidDiagnostics, app);
@@ -4973,6 +4973,12 @@ void HCCHome::detachHwLabels()
     _hw_camera_status = nullptr;
     _hw_session_label = nullptr;
     _hw_dialog = nullptr;
+    // The camera test overlay lives on the same screen: drop it (a late job result is ignored).
+    _cam_panel = nullptr;
+    _cam_title = nullptr;
+    _cam_text = nullptr;
+    _cam_status = nullptr;
+    _cam_phase = CamWizardPhase::Idle;
 }
 
 // LVGL task (lv_async_call from the USB task): parse the finished ADB diagnostics job, or
@@ -4987,20 +4993,16 @@ void HCCHome::applyAndroidDiagnostics(void *arg)
     const bool finished = !app->_hw_android_start_failed &&
                           (job == HCCAdbClient::JobState::Done || job == HCCAdbClient::JobState::TimedOut);
     app->_hw_android_start_failed = false;
+    if (app->_hw_last_job_camera) {
+        HCCHome::camWizardJobDone(app, finished && job == HCCAdbClient::JobState::Done);
+        return;
+    }
     char message[160];
     if (!finished) {
         snprintf(message, sizeof(message), "ADB: không chạy được lệnh chẩn đoán (kiểm tra kết nối)");
     } else {
         // Parse whatever arrived; groups whose section is missing stay NOT TESTED.
-        if (app->_hw_last_job_camera) {
-            // The camera test only replaces the CAMERA card; keep the other cards' results.
-            if (!app->_hw_has_result || !app->_hw_result_android) {
-                app->_hw_result = HCCAndroidDiagnostics::parse("");
-            }
-            app->_hw_result.camera = HCCAndroidDiagnostics::parseCameraTest(app->_adb.jobOutput());
-        } else {
-            app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
-        }
+        app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
         app->_hw_result_android = true;
         app->_hw_has_result = true;
         app->updateHwCards();
@@ -5010,9 +5012,7 @@ void HCCHome::applyAndroidDiagnostics(void *arg)
         } else if (strstr(app->_adb.jobOutput(), "##E") == nullptr) {
             snprintf(message, sizeof(message), "ADB: kết quả không đầy đủ (%u byte) - gửi log", bytes);
         } else {
-            snprintf(message, sizeof(message), "%s",
-                     app->_hw_last_job_camera ? "ADB: test mở camera XONG - chạm thẻ CAMERA để xem"
-                                              : "ADB: XONG - chạm vào từng thẻ để xem evidence");
+            snprintf(message, sizeof(message), "ADB: XONG - chạm vào từng thẻ để xem evidence");
         }
     }
     if (app->_hw_session_label != nullptr) {
@@ -5035,18 +5035,9 @@ void HCCHome::updateHwCards()
     set(_hw_camera_status, _hw_result.camera);
 }
 
-void HCCHome::onHwCameraTestClicked(lv_event_t *event)
+// UI task: false (with a message) while ADB is not connected or another job is running.
+bool HCCHome::androidJobReady(HCCHome *app)
 {
-    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app && app->_usb_mode == USBMode::ANDROID) {
-        HCCHome::startAndroidJob(app, true);
-    }
-}
-
-// UI task: hands an ADB diagnostics job (full check or camera open test) to the USB task.
-void HCCHome::startAndroidJob(HCCHome *app, bool camera_test)
-{
-    // Runs as an ADB shell job in the USB task; applyAndroidDiagnostics() shows the result.
     const HCCAdbClient::State state = app->_adb.state();
     const bool ready = state == HCCAdbClient::State::ReadingInfo || state == HCCAdbClient::State::Ready;
     if (!ready || app->_adb.jobState() == HCCAdbClient::JobState::Running) {
@@ -5055,30 +5046,360 @@ void HCCHome::startAndroidJob(HCCHome *app, bool camera_test)
                               ready ? "ADB: đang chạy, vui lòng chờ..."
                                     : "ADB: CHƯA SẴN SÀNG (bật gỡ lỗi USB, bấm Cho phép)");
         }
+        return false;
+    }
+    return true;
+}
+
+// UI task: hands the full diagnostics job to the USB task.
+void HCCHome::startAndroidJob(HCCHome *app)
+{
+    // Runs as an ADB shell job in the USB task; applyAndroidDiagnostics() shows the result.
+    if (!HCCHome::androidJobReady(app)) {
         return;
     }
-    if (camera_test) {
-        app->_hw_camera_test_requested = true;
-    } else {
-        app->_hw_android_requested = true;
-    }
+    app->_hw_android_requested = true;
     if (app->_usb_client_registered && app->_usb_client != nullptr) {
         usb_host_client_unblock(app->_usb_client);
     }
     lv_obj_t *all_labels[] = {app->_hw_sensors_status, app->_hw_faceid_status, app->_hw_baseband_status,
                               app->_hw_battery_status, app->_hw_camera_status};
     for (lv_obj_t *label : all_labels) {
-        // The camera test only reruns the CAMERA card.
-        if (label == nullptr || (camera_test && label != app->_hw_camera_status)) {
-            continue;
+        if (label != nullptr) {
+            lv_label_set_text(label, "ĐANG CHẠY...");
+            lv_obj_set_style_text_color(label, lv_color_hex(0x7F96A8), 0);
         }
-        lv_label_set_text(label, "ĐANG CHẠY...");
-        lv_obj_set_style_text_color(label, lv_color_hex(0x7F96A8), 0);
     }
     if (app->_hw_session_label != nullptr) {
-        lv_label_set_text(app->_hw_session_label,
-                          camera_test ? "ADB: đang mở camera sau rồi camera trước trên điện thoại (~15 giây)..."
-                                      : "ADB: đang chạy chẩn đoán (5-10 giây)...");
+        lv_label_set_text(app->_hw_session_label, "ADB: đang chạy chẩn đoán (5-10 giây)...");
+    }
+}
+
+// ==================== GUIDED CAMERA TEST ====================
+//
+// UI task state machine. Each step: a job notes the phone clock (and opens the camera app for the
+// first front / back step), the technician looks at the phone and taps ĐẠT / LỖI / BỎ QUA on the
+// board, then a job reads which camera is open and the camera errors logged since the step began.
+// Camera errors turn an ĐẠT into FAIL.
+
+namespace {
+
+// Camera failures worth flagging (HAL / camera service), for grep -iE inside single quotes.
+constexpr char kCameraErrorPattern[] =
+    "CameraService.*(error|fail)|camera.*(open|connect|config).*(fail|error)|cam_err|probe fail|"
+    "ERROR_CAMERA|CameraDevice.*error|camera.*died";
+
+// Keeps only characters a logcat -T timestamp uses ("10-01 10:00:01.000").
+std::string sanitizePhoneTime(const std::string &raw)
+{
+    std::string clean;
+    for (char c : raw) {
+        if ((c >= '0' && c <= '9') || c == '-' || c == ':' || c == '.' || c == ' ') {
+            clean += c;
+        }
+    }
+    while (!clean.empty() && clean.back() == ' ') {
+        clean.pop_back();
+    }
+    return clean.size() >= 14 && clean.size() <= 24 ? clean : "";
+}
+
+std::string phoneTimeFrom(const char *output)
+{
+    const char *found = strstr(output, "PHONETIME=");
+    if (found == nullptr) {
+        return "";
+    }
+    found += strlen("PHONETIME=");
+    const char *end = strpbrk(found, "\r\n");
+    return sanitizePhoneTime(end != nullptr ? std::string(found, end - found) : std::string(found));
+}
+
+} // namespace
+
+void HCCHome::requestCameraJob(HCCHome *app, const char *command)
+{
+    snprintf(app->_cam_job_command, sizeof(app->_cam_job_command), "%s", command);
+    app->_cam_job_requested = true;
+    if (app->_usb_client_registered && app->_usb_client != nullptr) {
+        usb_host_client_unblock(app->_usb_client);
+    }
+}
+
+void HCCHome::camWizardShow(HCCHome *app, const char *status)
+{
+    if (app->_cam_panel == nullptr) {
+        return;
+    }
+    const bool in_step = app->_cam_index < app->_cam_steps.size() &&
+                         (app->_cam_phase == CamWizardPhase::Starting ||
+                          app->_cam_phase == CamWizardPhase::Waiting ||
+                          app->_cam_phase == CamWizardPhase::Checking);
+    if (in_step) {
+        const HCCAndroidDiagnostics::CameraStep &step = app->_cam_steps[app->_cam_index];
+        char title[160];
+        snprintf(title, sizeof(title), "Bước %u/%u: %s", static_cast<unsigned>(app->_cam_index + 1),
+                 static_cast<unsigned>(app->_cam_steps.size()), step.title.c_str());
+        lv_label_set_text(app->_cam_title, title);
+        lv_label_set_text(app->_cam_text, step.instruction.c_str());
+    } else if (app->_cam_phase == CamWizardPhase::Listing) {
+        lv_label_set_text(app->_cam_title, "TEST CAMERA");
+        lv_label_set_text(app->_cam_text,
+                          "Mở khoá màn hình điện thoại và hướng camera vào vật có chi tiết (chữ, đồ vật), đủ sáng.\n"
+                          "Board sẽ mở camera trước, rồi lần lượt từng camera sau.");
+    }
+    lv_label_set_text(app->_cam_status, status);
+}
+
+void HCCHome::onHwCameraTestClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_usb_mode != USBMode::ANDROID || app->_screen == nullptr ||
+        app->_cam_panel != nullptr || !HCCHome::androidJobReady(app)) {
+        return;
+    }
+
+    lv_obj_t *panel = lv_obj_create(app->_screen);
+    lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    app->_cam_panel = panel;
+
+    app->_cam_title = lv_label_create(panel);
+    lv_label_set_long_mode(app->_cam_title, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(app->_cam_title, 940);
+    lv_obj_align(app->_cam_title, LV_ALIGN_TOP_LEFT, 12, 10);
+    lv_obj_set_style_text_color(app->_cam_title, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(app->_cam_title, &lv_font_be_vietnam_22, 0);
+
+    app->_cam_text = lv_label_create(panel);
+    lv_label_set_long_mode(app->_cam_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(app->_cam_text, 940);
+    lv_obj_align(app->_cam_text, LV_ALIGN_TOP_LEFT, 12, 60);
+    lv_obj_set_style_text_color(app->_cam_text, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(app->_cam_text, &lv_font_be_vietnam_22, 0);
+
+    app->_cam_status = lv_label_create(panel);
+    lv_label_set_long_mode(app->_cam_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(app->_cam_status, 940);
+    lv_obj_align(app->_cam_status, LV_ALIGN_TOP_LEFT, 12, 250);
+    lv_obj_set_style_text_color(app->_cam_status, lv_color_hex(0xF2C94C), 0);
+    lv_obj_set_style_text_font(app->_cam_status, &lv_font_be_vietnam_18, 0);
+
+    const struct {
+        const char *text;
+        uint32_t color;
+        lv_event_cb_t callback;
+    } kButtons[] = {
+        {"ĐẠT", 0x2E9E5B, onCamWizardPass},
+        {"LỖI", 0xC0392B, onCamWizardFail},
+        {"BỎ QUA", 0x5B7286, onCamWizardSkip},
+        {"ĐÓNG", 0x2478D0, onCamWizardClose},
+    };
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t *button = lv_btn_create(panel);
+        lv_obj_set_size(button, 220, 64);
+        lv_obj_align(button, LV_ALIGN_BOTTOM_LEFT, 4 + i * 240, -8);
+        lv_obj_set_style_bg_color(button, lv_color_hex(kButtons[i].color), 0);
+        lv_obj_add_event_cb(button, kButtons[i].callback, LV_EVENT_CLICKED, app);
+        lv_obj_t *label = lv_label_create(button);
+        lv_label_set_text(label, kButtons[i].text);
+        lv_obj_center(label);
+        lv_obj_set_style_text_font(label, &lv_font_be_vietnam_22, 0);
+    }
+
+    app->_cam_steps.clear();
+    app->_cam_results.clear();
+    app->_cam_index = 0;
+    app->_cam_list_output.clear();
+    app->_cam_phase = CamWizardPhase::Listing;
+    HCCHome::camWizardShow(app, "Đang đọc danh sách camera từ điện thoại...");
+    HCCHome::requestCameraJob(app, HCCAndroidDiagnostics::cameraListCommand());
+}
+
+void HCCHome::camWizardBeginStep(HCCHome *app)
+{
+    const HCCAndroidDiagnostics::CameraStep &step = app->_cam_steps[app->_cam_index];
+    app->_cam_phase = CamWizardPhase::Starting;
+    app->_cam_step_time.clear();
+
+    // Phone clock first, so the error check covers the camera app launch too.
+    std::string command = "echo \"PHONETIME=$(date +'%m-%d %H:%M:%S.000')\";";
+    if (step.launch_facing >= 0) {
+        const char *facing = step.launch_facing == 1 ? "1" : "0";
+        command += std::string("am start -W -a android.media.action.STILL_IMAGE_CAMERA "
+                               "--ei android.intent.extras.CAMERA_FACING ") + facing +
+                   " --ei android.intent.extras.LENS_FACING_FRONT " + facing +
+                   " --ez android.intent.extra.USE_FRONT_CAMERA " + (step.launch_facing == 1 ? "true" : "false") +
+                   " >/dev/null 2>&1;sleep 2;";
+    }
+    command += "echo '##E'";
+    HCCHome::camWizardShow(app, step.launch_facing >= 0 ? "Đang mở camera trên điện thoại..." : "Chuẩn bị...");
+    HCCHome::requestCameraJob(app, command.c_str());
+}
+
+void HCCHome::camWizardNext(HCCHome *app)
+{
+    ++app->_cam_index;
+    if (app->_cam_index < app->_cam_steps.size()) {
+        HCCHome::camWizardBeginStep(app);
+    } else {
+        HCCHome::camWizardFinish(app);
+    }
+}
+
+void HCCHome::camWizardFinish(HCCHome *app)
+{
+    app->_cam_phase = CamWizardPhase::Finishing;
+    HCCHome::camWizardShow(app, "Đang đóng app camera trên điện thoại...");
+    HCCHome::requestCameraJob(app, "input keyevent KEYCODE_HOME;echo '##E'");
+}
+
+void HCCHome::camWizardVerdict(HCCHome *app, int verdict)
+{
+    if (app->_cam_phase != CamWizardPhase::Waiting) {
+        return;
+    }
+    if (verdict < 0) {
+        HCCAndroidDiagnostics::CameraStepResult result;
+        result.title = app->_cam_steps[app->_cam_index].title;
+        result.verdict = -1;
+        app->_cam_results.push_back(result);
+        HCCHome::camWizardNext(app);
+        return;
+    }
+    app->_cam_verdict = verdict;
+    app->_cam_phase = CamWizardPhase::Checking;
+    // Errors since the step began (or the last lines when the phone clock was not read).
+    std::string command = "echo '##O';dumpsys media.camera|grep -iE 'device [0-9]+ is open'|head -4|cut -c1-100;"
+                          "echo '##Y';logcat -d ";
+    command += app->_cam_step_time.empty() ? std::string("-t 300") : "-T \"" + app->_cam_step_time + "\"";
+    command += std::string(" 2>/dev/null|grep -iE '") + kCameraErrorPattern + "'|tail -5|cut -c1-160;echo '##E'";
+    HCCHome::camWizardShow(app, "Đang đọc log lỗi camera...");
+    HCCHome::requestCameraJob(app, command.c_str());
+}
+
+void HCCHome::camWizardJobDone(HCCHome *app, bool ok)
+{
+    if (app->_cam_panel == nullptr || app->_cam_phase == CamWizardPhase::Idle ||
+        app->_cam_phase == CamWizardPhase::Done) {
+        return; // closed or cancelled meanwhile
+    }
+    if (!ok) {
+        app->_cam_phase = CamWizardPhase::Done;
+        HCCHome::camWizardShow(app, "Lỗi ADB: lệnh không chạy xong (điện thoại rút ra?). Bấm ĐÓNG rồi thử lại.");
+        return;
+    }
+    const char *output = app->_adb.jobOutput();
+    switch (app->_cam_phase) {
+    case CamWizardPhase::Listing:
+        app->_cam_list_output = output;
+        app->_cam_steps = HCCAndroidDiagnostics::cameraSteps(output);
+        if (app->_cam_steps.empty()) {
+            app->_cam_phase = CamWizardPhase::Done;
+            HCCHome::camWizardShow(app, "Không đọc được danh sách camera từ điện thoại. Chạy RUN FULL TEST để xem "
+                                        "thẻ CAMERA.");
+            return;
+        }
+        app->_cam_index = 0;
+        HCCHome::camWizardBeginStep(app);
+        return;
+    case CamWizardPhase::Starting:
+        app->_cam_step_time = phoneTimeFrom(output);
+        app->_cam_phase = CamWizardPhase::Waiting;
+        HCCHome::camWizardShow(app, "Nhìn điện thoại rồi bấm ĐẠT hoặc LỖI (BỎ QUA nếu không xem được camera này).");
+        return;
+    case CamWizardPhase::Checking: {
+        HCCAndroidDiagnostics::CameraStepResult result;
+        result.title = app->_cam_steps[app->_cam_index].title;
+        result.verdict = app->_cam_verdict;
+        HCCAndroidDiagnostics::parseCameraCheck(output, &result.opened, &result.errors);
+        app->_cam_results.push_back(result);
+        HCCHome::camWizardNext(app);
+        return;
+    }
+    case CamWizardPhase::Finishing: {
+        // Only the CAMERA card changes; the other cards keep their results.
+        if (!app->_hw_has_result || !app->_hw_result_android) {
+            app->_hw_result = HCCAndroidDiagnostics::parse("");
+        }
+        app->_hw_result.camera =
+            HCCAndroidDiagnostics::cameraTestGroup(app->_cam_list_output.c_str(), app->_cam_results);
+        app->_hw_result_android = true;
+        app->_hw_has_result = true;
+        app->updateHwCards();
+
+        // The first items are the steps; the camera list follows them.
+        unsigned pass = 0, fail = 0, skipped = 0;
+        const auto &items = app->_hw_result.camera.items;
+        for (size_t i = 0; i < app->_cam_results.size() && i < items.size(); ++i) {
+            pass += items[i].status == HCCiPhoneDiagnostics::Status::Pass;
+            fail += items[i].status == HCCiPhoneDiagnostics::Status::Fail;
+            skipped += items[i].status == HCCiPhoneDiagnostics::Status::NotTested;
+        }
+        char summary[200];
+        snprintf(summary, sizeof(summary),
+                 "Xong %u camera: %u ĐẠT, %u LỖI, %u bỏ qua.\nBấm ĐÓNG rồi chạm thẻ CAMERA để xem chi tiết.",
+                 static_cast<unsigned>(app->_cam_results.size()), pass, fail, skipped);
+        app->_cam_phase = CamWizardPhase::Done;
+        lv_label_set_text(app->_cam_title, "KẾT QUẢ TEST CAMERA");
+        lv_label_set_text(app->_cam_text, summary);
+        lv_label_set_text(app->_cam_status, "");
+        if (app->_hw_session_label != nullptr) {
+            lv_label_set_text(app->_hw_session_label, "ADB: test camera XONG - chạm thẻ CAMERA để xem");
+        }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+void HCCHome::camWizardClose(HCCHome *app)
+{
+    if (app->_cam_panel != nullptr) {
+        lv_obj_del(app->_cam_panel);
+    }
+    app->_cam_panel = nullptr;
+    app->_cam_title = nullptr;
+    app->_cam_text = nullptr;
+    app->_cam_status = nullptr;
+    // A job still running reports into Idle and is ignored.
+    app->_cam_phase = CamWizardPhase::Idle;
+}
+
+void HCCHome::onCamWizardPass(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::camWizardVerdict(app, 1);
+    }
+}
+
+void HCCHome::onCamWizardFail(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::camWizardVerdict(app, 0);
+    }
+}
+
+void HCCHome::onCamWizardSkip(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::camWizardVerdict(app, -1);
+    }
+}
+
+void HCCHome::onCamWizardClose(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        HCCHome::camWizardClose(app);
     }
 }
 
@@ -5087,7 +5408,7 @@ void HCCHome::onHwRunFullClicked(lv_event_t *event)
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (!app) return;
     if (app->_usb_mode == USBMode::ANDROID) {
-        HCCHome::startAndroidJob(app, false);
+        HCCHome::startAndroidJob(app);
         return;
     }
     HCCiPhoneDiagnostics diag(&app->_usb_transport);
@@ -5282,7 +5603,7 @@ void HCCHome::showHardwareCheck()
     lv_obj_center(run_lbl);
     lv_obj_set_style_text_font(run_lbl, &lv_font_be_vietnam_18, 0);
 
-    // Android: open each camera for real (the camera list alone does not prove a module works).
+    // Android: guided test of every camera (the camera list alone does not prove a module works).
     if (android) {
         lv_obj_t *cam_btn = lv_btn_create(_screen);
         lv_obj_set_size(cam_btn, 300, 56);
@@ -5290,7 +5611,7 @@ void HCCHome::showHardwareCheck()
         lv_obj_set_style_bg_color(cam_btn, lv_color_hex(0x2478D0), 0);
         lv_obj_add_event_cb(cam_btn, onHwCameraTestClicked, LV_EVENT_CLICKED, this);
         lv_obj_t *cam_lbl = lv_label_create(cam_btn);
-        lv_label_set_text(cam_lbl, "TEST MỞ CAMERA");
+        lv_label_set_text(cam_lbl, "TEST CAMERA");
         lv_obj_center(cam_lbl);
         lv_obj_set_style_text_font(cam_lbl, &lv_font_be_vietnam_18, 0);
     }

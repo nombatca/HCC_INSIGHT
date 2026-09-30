@@ -94,7 +94,21 @@ private:
     void updateHwCards();
     static void onHwRunFullClicked(lv_event_t *event);
     static void onHwCameraTestClicked(lv_event_t *event);
-    static void startAndroidJob(HCCHome *app, bool camera_test);
+    static void startAndroidJob(HCCHome *app);
+    static bool androidJobReady(HCCHome *app);
+    // Guided camera test (TEST CAMERA): an overlay that walks the technician through every camera.
+    static void requestCameraJob(HCCHome *app, const char *command);
+    static void camWizardJobDone(HCCHome *app, bool ok);
+    static void camWizardBeginStep(HCCHome *app);
+    static void camWizardNext(HCCHome *app);
+    static void camWizardFinish(HCCHome *app);
+    static void camWizardShow(HCCHome *app, const char *status);
+    static void camWizardClose(HCCHome *app);
+    static void camWizardVerdict(HCCHome *app, int verdict);
+    static void onCamWizardPass(lv_event_t *event);
+    static void onCamWizardFail(lv_event_t *event);
+    static void onCamWizardSkip(lv_event_t *event);
+    static void onCamWizardClose(lv_event_t *event);
     static void onHwCardClicked(lv_event_t *event);
     static void onHwDialogCloseClicked(lv_event_t *event);
     static void onHwBackClicked(lv_event_t *event);
@@ -256,8 +270,30 @@ private:
     // Android hardware check: result platform, UI request to the USB task, job progress.
     bool _hw_result_android = false;
     volatile bool _hw_android_requested = false;
-    volatile bool _hw_camera_test_requested = false;
+    // Camera test jobs: the UI writes _cam_job_command, then sets the flag for the USB task.
+    volatile bool _cam_job_requested = false;
     bool _hw_last_job_camera = false; // set by the USB task when it starts a job
+    char _cam_job_command[768] = {};
+    enum class CamWizardPhase : uint8_t {
+        Idle,      // no test (or cancelled)
+        Listing,   // reading the camera list
+        Starting,  // step job running (phone time, camera app launch)
+        Waiting,   // waiting for ĐẠT / LỖI / BỎ QUA
+        Checking,  // reading camera errors since the step started
+        Finishing, // camera app closed, building the result
+        Done,
+    };
+    CamWizardPhase _cam_phase = CamWizardPhase::Idle;
+    std::vector<HCCAndroidDiagnostics::CameraStep> _cam_steps;
+    std::vector<HCCAndroidDiagnostics::CameraStepResult> _cam_results;
+    size_t _cam_index = 0;
+    int _cam_verdict = -1;
+    std::string _cam_list_output;
+    std::string _cam_step_time; // phone clock when the step began, for logcat -T
+    lv_obj_t *_cam_panel = nullptr;
+    lv_obj_t *_cam_title = nullptr;
+    lv_obj_t *_cam_text = nullptr;
+    lv_obj_t *_cam_status = nullptr;
     volatile bool _hw_android_start_failed = false;
     uint32_t _adb_job_seen = 0;
     lv_obj_t *_hw_session_label = nullptr;

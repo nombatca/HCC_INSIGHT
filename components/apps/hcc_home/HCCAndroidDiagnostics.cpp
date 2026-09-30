@@ -17,12 +17,12 @@ using Status = HCCAndroidDiagnostics::Status;
 using Item = HCCAndroidDiagnostics::Item;
 using Group = HCCAndroidDiagnostics::Group;
 
-// Camera service list (section K): device count and, per camera HAL device, facing, flash unit and
-// sensor pixel array (value on the line after the tag, hence -A1).
+// Camera service list (section K): device count and, per camera HAL device, facing, flash unit,
+// sensor pixel array and focal lengths (values on the line after the tag, hence -A1).
 #define HCC_CAMERA_LIST                                                                                   \
     "echo '##K';dumpsys media.camera 2>&1|grep -iE -A1 'number of camera devices|== camera hal device|"    \
-    "camera [0-9]+ static information|^ *facing:|has a flash unit|pixelarraysize \\('"                     \
-    "|grep -vE '^--$'|cut -c1-110|head -80;"
+    "camera [0-9]+ static information|^ *facing:|has a flash unit|pixelarraysize \\(|"                     \
+    "availablefocallengths \\('|grep -vE '^--$'|cut -c1-110|head -100;"
 
 // Sections are introduced by "##X" lines; a section is complete once the next marker arrives
 // ("##E" ends the last one). Output is filtered on the phone to stay well under the 12 KB
@@ -52,17 +52,10 @@ constexpr char kCommand[] =
     HCC_CAMERA_LIST
     "echo '##E'";
 
-// Camera open test: the camera list, then for back (0) and front (1) start the phone's camera app
-// on that side, wait, and record which camera device is open plus camera errors logged since.
-constexpr char kCameraTestCommand[] =
+// Camera list only, for the guided camera test (declared camera features + camera service list).
+constexpr char kCameraListCommand[] =
     "echo '##F';pm list features|grep camera;"
     HCC_CAMERA_LIST
-    "for f in 0 1;do t=$(date +'%m-%d %H:%M:%S.000');u=false;[ $f = 1 ]&&u=true;"
-    "am start -W -a android.media.action.STILL_IMAGE_CAMERA --ei android.intent.extras.CAMERA_FACING $f "
-    "--ei android.intent.extras.LENS_FACING_FRONT $f --ez android.intent.extra.USE_FRONT_CAMERA $u >/dev/null 2>&1;"
-    "sleep 5;echo \"##$f\";dumpsys media.camera|grep -iE 'device [0-9]+ is open|reject'|head -6|cut -c1-120;"
-    "logcat -d -T \"$t\" 2>/dev/null|grep -iE 'camera.*(error|fail|timeout|died)|cam_err|probe fail'"
-    "|tail -5|cut -c1-160;input keyevent KEYCODE_HOME;sleep 1;done;"
     "echo '##E'";
 
 struct Parsed {
@@ -80,7 +73,8 @@ struct Parsed {
     std::vector<std::string> battery_stats;     // dumpsys batterystats capacity lines
     std::vector<std::string> thermal;           // "zone_type=temp" lines
     std::vector<std::string> camera_lines;      // dumpsys media.camera (filtered)
-    std::vector<std::string> camera_open[2];    // camera open test, back (0) and front (1)
+    std::vector<std::string> camera_opened;     // guided test check: "Device N is open" lines
+    std::vector<std::string> camera_errors;     // guided test check: camera errors since the step
 };
 
 std::string trim(const std::string &text)
@@ -151,9 +145,11 @@ Parsed parseSections(const char *output)
         case 'K':
             parsed.camera_lines.push_back(text);
             break;
-        case '0':
-        case '1':
-            parsed.camera_open[section - '0'].push_back(text);
+        case 'O':
+            parsed.camera_opened.push_back(text);
+            break;
+        case 'Y':
+            parsed.camera_errors.push_back(text);
             break;
         case 'R':
         case 'B': {
@@ -1035,30 +1031,48 @@ struct CameraInfo {
     int flash = -1;      // 1 / 0, -1 unknown
     long long width = 0; // sensor pixel array
     long long height = 0;
+    double focal = 0;    // first available focal length (mm)
+    int focal_count = 0; // a logical multi-camera lists several
 };
 
-Group checkCamera(const Parsed &parsed, uint32_t ts)
+double megapixels(const CameraInfo &camera)
 {
-    const char *source = "dumpsys media.camera";
+    return camera.width * camera.height / 1e6;
+}
+
+std::vector<CameraInfo> parseCameras(const Parsed &parsed, long long *service_count)
+{
     std::vector<CameraInfo> cameras;
-    long long service_count = -1;
-    bool expect_pixel_array = false;
+    *service_count = -1;
+    enum class Next { None, PixelArray, Focal } next = Next::None;
     for (const std::string &line : parsed.camera_lines) {
         const std::string low = lower(line);
         long long number = 0;
-        if (expect_pixel_array && line[0] == '[') {
-            expect_pixel_array = false;
+        if (next != Next::None && line[0] == '[') {
             if (!cameras.empty()) {
+                CameraInfo &camera = cameras.back();
                 const char *p = line.c_str() + 1;
                 char *end = nullptr;
-                cameras.back().width = strtoll(p, &end, 10);
-                cameras.back().height = strtoll(end, nullptr, 10);
+                if (next == Next::PixelArray) {
+                    camera.width = strtoll(p, &end, 10);
+                    camera.height = strtoll(end, nullptr, 10);
+                } else {
+                    // "[2.2 5.4 13.0 ]": one value per lens the camera can use.
+                    camera.focal_count = 0;
+                    for (double v = strtod(p, &end); end != p; v = strtod(p, &end)) {
+                        if (camera.focal_count++ == 0) {
+                            camera.focal = v;
+                        }
+                        p = end;
+                    }
+                }
             }
+            next = Next::None;
             continue;
         }
-        expect_pixel_array = false;
+        next = Next::None;
         if (low.find("number of camera devices") != std::string::npos && intAfterLike(line, "devices", &number)) {
-            service_count = number;
+            *service_count = number;
         } else if (low.find("== camera hal device") != std::string::npos ||
                    (low.find("static information") != std::string::npos && low.find("camera") != std::string::npos)) {
             // "== Camera HAL device device@3.6/internal/2 (v3.6) static information: ==" -> id "2"
@@ -1076,9 +1090,41 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
         } else if (!cameras.empty() && low.rfind("has a flash unit:", 0) == 0) {
             cameras.back().flash = low.find("true") != std::string::npos ? 1 : 0;
         } else if (!cameras.empty() && low.find("pixelarraysize (") != std::string::npos) {
-            expect_pixel_array = true;
+            next = Next::PixelArray;
+        } else if (!cameras.empty() && low.find("availablefocallengths (") != std::string::npos) {
+            next = Next::Focal;
         }
     }
+    return cameras;
+}
+
+std::string describeCamera(const CameraInfo &camera)
+{
+    std::string text = camera.facing == "back"    ? "Sau"
+                       : camera.facing == "front" ? "Trước"
+                       : camera.facing.empty()    ? "?"
+                                                  : camera.facing;
+    if (camera.width > 0 && camera.height > 0) {
+        text += ", " + fmt1(megapixels(camera)) + " MP (" + std::to_string(camera.width) + "x" +
+                std::to_string(camera.height) + ")";
+    }
+    if (camera.focal > 0) {
+        text += ", tiêu cự " + fmt1(camera.focal) + " mm";
+    }
+    if (camera.focal_count > 1) {
+        text += " (camera logic gộp " + std::to_string(camera.focal_count) + " ống kính)";
+    }
+    if (camera.flash == 1) {
+        text += ", có flash";
+    }
+    return text;
+}
+
+Group checkCamera(const Parsed &parsed, uint32_t ts)
+{
+    const char *source = "dumpsys media.camera";
+    long long service_count = -1;
+    const std::vector<CameraInfo> cameras = parseCameras(parsed, &service_count);
 
     std::vector<Item> items;
     const bool declared_any = parsed.features.count("android.hardware.camera.any") > 0 ||
@@ -1104,22 +1150,7 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
                                  "của model để biết có thiếu camera con nào không.",
                              ts));
 
-    auto describe = [](const CameraInfo &camera) {
-        std::string text = camera.facing == "back"    ? "Sau"
-                           : camera.facing == "front" ? "Trước"
-                           : camera.facing.empty()    ? "?"
-                                                      : camera.facing;
-        if (camera.width > 0 && camera.height > 0) {
-            text += ", " + fmt1(camera.width * camera.height / 1e6) + " MP (" + std::to_string(camera.width) + "x" +
-                    std::to_string(camera.height) + ")";
-        }
-        if (camera.flash == 1) {
-            text += ", có flash";
-        }
-        return text;
-    };
-
-    // Declared (static config) vs what the camera HAL actually brought up.
+    // Declared (static config) vs what the camera HAL lists.
     struct Side {
         const char *label;
         const char *facing;
@@ -1133,7 +1164,7 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
         std::string found;
         for (const CameraInfo &camera : cameras) {
             if (camera.facing == side.facing) {
-                found += (found.empty() ? "" : "; ") + std::string("ID ") + camera.id + ": " + describe(camera);
+                found += (found.empty() ? "" : "; ") + std::string("ID ") + camera.id + ": " + describeCamera(camera);
                 back_flash = back_flash || (camera.flash == 1 && strcmp(side.facing, "back") == 0);
             }
         }
@@ -1141,7 +1172,7 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
         if (!found.empty()) {
             items.push_back(makeItem(side.label, Status::Pass, source,
                                      found + ". Danh sách lập lúc khởi động (nhiều máy lấy từ cấu hình, kể cả khi "
-                                             "tháo module): bấm TEST MỞ CAMERA để thử mở thật.",
+                                             "tháo module): bấm TEST CAMERA để thử từng camera.",
                                      ts));
         } else if (declared) {
             items.push_back(makeItem(side.label, Status::Fail, "dumpsys media.camera + pm list features",
@@ -1167,63 +1198,9 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
                                  ts));
     }
 
-    // Open test (TEST MO CAMERA): only proof that a module actually works; the list above comes
-    // from boot and, on many phones, from static config even with the module unplugged.
-    static const char *const kOpenLabels[] = {"Mở camera sau", "Mở camera trước"};
-    static const char *const kOpenFacing[] = {"back", "front"};
-    for (int side = 0; side < 2; ++side) {
-        if (parsed.done.count(static_cast<char>('0' + side)) == 0) {
-            continue;
-        }
-        std::vector<std::string> opened;
-        std::string errors;
-        for (const std::string &line : parsed.camera_open[side]) {
-            const std::string low = lower(line);
-            const size_t device = low.find("device ");
-            if (device != std::string::npos && low.find(" is open") != std::string::npos) {
-                opened.push_back(trim(line.substr(device + 7, low.find(" is open") - device - 7)));
-            } else {
-                errors += "\n    " + line;
-            }
-        }
-        std::string expected_open;
-        std::string other_open;
-        for (const std::string &id : opened) {
-            bool matches = false;
-            for (const CameraInfo &camera : cameras) {
-                matches = matches || (camera.id == id && camera.facing == kOpenFacing[side]);
-            }
-            (matches ? expected_open : other_open) += (id + " ");
-        }
-        const char *open_source = "am start camera + dumpsys media.camera + logcat";
-        if (!expected_open.empty()) {
-            items.push_back(makeItem(kOpenLabels[side], errors.empty() ? Status::Pass : Status::Check, open_source,
-                                     "Mở được camera ID " + trim(expected_open) +
-                                         (errors.empty() ? "." : ", nhưng có log lỗi camera:" + errors),
-                                     ts));
-        } else if (!errors.empty()) {
-            items.push_back(makeItem(kOpenLabels[side], Status::Fail, open_source,
-                                     "Mở camera LỖI: nghi module camera hỏng/không cắm, cáp/đầu nối, hoặc mất nguồn "
-                                     "camera." + errors,
-                                     ts));
-        } else if (!other_open.empty()) {
-            items.push_back(makeItem(kOpenLabels[side], Status::Check, open_source,
-                                     "App camera mở camera ID " + trim(other_open) +
-                                         " (hướng khác), không tự chuyển được: đổi camera trên điện thoại và "
-                                         "kiểm tra bằng mắt.",
-                                     ts));
-        } else {
-            items.push_back(makeItem(kOpenLabels[side], Status::Check, open_source,
-                                     "Không thấy camera nào mở và không có log lỗi: app camera không chạy (màn hình "
-                                     "khoá, đang hỏi quyền?) hoặc camera không mở được. Mở khoá màn hình rồi thử "
-                                     "lại, và xem trên điện thoại.",
-                                     ts));
-        }
-    }
-
     for (const CameraInfo &camera : cameras) {
         items.push_back(makeItem(("Camera ID " + camera.id).c_str(), Status::Pass, source,
-                                 describe(camera) + " (HAL nhận; chưa chụp thử ảnh)", ts));
+                                 describeCamera(camera) + " (HAL nhận; chưa chụp thử ảnh)", ts));
     }
     return finish("CAMERA", std::move(items));
 }
@@ -1235,17 +1212,163 @@ const char *HCCAndroidDiagnostics::command()
     return kCommand;
 }
 
-const char *HCCAndroidDiagnostics::cameraTestCommand()
+const char *HCCAndroidDiagnostics::cameraListCommand()
 {
-    return kCameraTestCommand;
+    return kCameraListCommand;
 }
 
-HCCAndroidDiagnostics::Group HCCAndroidDiagnostics::parseCameraTest(const char *output)
+std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraSteps(const char *list_output)
+{
+    const Parsed parsed = parseSections(list_output);
+    long long service_count = -1;
+    const std::vector<CameraInfo> cameras = parseCameras(parsed, &service_count);
+
+    // A logical multi-camera (several focal lengths) duplicates its physical lenses: skip it
+    // unless it is the only camera on that side.
+    auto lenses = [&cameras](const char *facing) {
+        std::vector<CameraInfo> physical;
+        std::vector<CameraInfo> logical;
+        for (const CameraInfo &camera : cameras) {
+            if (camera.facing == facing) {
+                (camera.focal_count > 1 ? logical : physical).push_back(camera);
+            }
+        }
+        return physical.empty() ? logical : physical;
+    };
+    const std::vector<CameraInfo> fronts = lenses("front");
+    const std::vector<CameraInfo> backs = lenses("back");
+
+    std::vector<CameraStep> steps;
+    auto title_of = [](const std::string &name, const CameraInfo &camera) {
+        std::string title = name + "  (ID " + camera.id;
+        if (camera.width > 0) {
+            title += ", " + fmt1(megapixels(camera)) + " MP";
+        }
+        return title + ")";
+    };
+    static const char kLook[] =
+        "Nhìn ảnh trên điện thoại: rõ nét, đủ sáng, lấy nét được, không đen / sọc / đốm / mờ?";
+
+    for (size_t i = 0; i < fronts.size(); ++i) {
+        CameraStep step;
+        step.launch_facing = i == 0 ? 1 : -1;
+        step.title = title_of(i == 0 ? "CAMERA TRƯỚC" : "CAMERA TRƯỚC PHỤ", fronts[i]);
+        step.instruction = i == 0 ? std::string("Điện thoại đang mở camera trước.\n") + kLook
+                                  : std::string("Trên điện thoại đổi sang camera trước phụ (nếu app cho chọn); "
+                                                "không có thì bấm BỎ QUA.\n") + kLook;
+        steps.push_back(step);
+    }
+
+    // Back lenses: main = most pixels; the others are classified by focal length relative to it.
+    size_t main_index = 0;
+    for (size_t i = 1; i < backs.size(); ++i) {
+        if (backs[i].width * backs[i].height > backs[main_index].width * backs[main_index].height) {
+            main_index = i;
+        }
+    }
+    if (!backs.empty()) {
+        CameraStep step;
+        step.launch_facing = 0;
+        step.title = title_of("CAMERA SAU CHÍNH", backs[main_index]);
+        step.instruction = std::string("Điện thoại đang mở camera sau ở 1x.\n") + kLook;
+        steps.push_back(step);
+    }
+    struct Other {
+        CameraInfo camera;
+        double ratio; // focal / main focal, roughly the optical zoom; 0 if unknown
+    };
+    std::vector<Other> others;
+    const double main_focal = backs.empty() ? 0 : backs[main_index].focal;
+    for (size_t i = 0; i < backs.size(); ++i) {
+        if (i != main_index) {
+            others.push_back({backs[i], main_focal > 0 && backs[i].focal > 0 ? backs[i].focal / main_focal : 0});
+        }
+    }
+    // Ultra-wide first, then tele by increasing zoom, unknown focal last.
+    std::sort(others.begin(), others.end(), [](const Other &a, const Other &b) {
+        const bool a_known = a.ratio > 0;
+        const bool b_known = b.ratio > 0;
+        return a_known != b_known ? a_known : a.ratio < b.ratio;
+    });
+    const double main_mp = backs.empty() ? 0 : megapixels(backs[main_index]);
+    for (const Other &other : others) {
+        CameraStep step;
+        step.launch_facing = -1;
+        if (other.ratio > 0 && other.ratio < 0.8) {
+            step.title = title_of("CAMERA GÓC SIÊU RỘNG", other.camera);
+            step.instruction = std::string("Trên điện thoại bấm 0.5x (hoặc 0.6x). Ảnh phải rộng hơn hẳn 1x.\n") + kLook;
+        } else if (other.ratio > 1.5) {
+            char zoom[16];
+            snprintf(zoom, sizeof(zoom), "%.0fx", other.ratio);
+            step.title = title_of(std::string("CAMERA TELE (~") + zoom + ")", other.camera);
+            step.instruction = std::string("Trên điện thoại bấm ") + zoom + " (hoặc zoom tới " + zoom +
+                               ", chờ 2 giây cho máy chuyển ống kính).\n" + kLook;
+        } else {
+            const bool small = main_mp > 0 && megapixels(other.camera) < main_mp * 0.3;
+            step.title = title_of(small ? "CAMERA PHỤ (MACRO / ĐỘ SÂU)" : "CAMERA SAU PHỤ", other.camera);
+            step.instruction = std::string("Nếu app camera có chế độ Macro, bật Macro và đưa máy lại gần vật.\n"
+                                           "Camera độ sâu (depth) không xem riêng được: bấm BỎ QUA.\n") + kLook;
+        }
+        steps.push_back(step);
+    }
+    return steps;
+}
+
+void HCCAndroidDiagnostics::parseCameraCheck(const char *check_output, std::string *opened, std::string *errors)
+{
+    const Parsed parsed = parseSections(check_output);
+    opened->clear();
+    errors->clear();
+    for (const std::string &line : parsed.camera_opened) {
+        const std::string low = lower(line);
+        const size_t device = low.find("device ");
+        const size_t open = low.find(" is open");
+        if (device != std::string::npos && open != std::string::npos && open > device) {
+            *opened += (opened->empty() ? "" : ", ") + trim(line.substr(device + 7, open - device - 7));
+        }
+    }
+    for (const std::string &line : parsed.camera_errors) {
+        *errors += (errors->empty() ? "" : "\n    ") + line;
+    }
+}
+
+HCCAndroidDiagnostics::Group HCCAndroidDiagnostics::cameraTestGroup(const char *list_output,
+                                                                    const std::vector<CameraStepResult> &results)
 {
     const uint32_t ts = static_cast<uint32_t>(time(nullptr));
-    const Parsed parsed = parseSections(output);
-    return parsed.done.count('F') > 0 && parsed.done.count('K') > 0 ? checkCamera(parsed, ts)
-                                                                      : notTested("CAMERA", ts);
+    const char *source = "Thợ đánh giá + dumpsys media.camera + logcat";
+    std::vector<Item> items;
+    for (const CameraStepResult &result : results) {
+        std::string evidence;
+        Status status = Status::NotTested;
+        if (result.verdict < 0) {
+            evidence = "Bỏ qua.";
+        } else if (result.verdict == 0) {
+            status = Status::Fail;
+            evidence = "Thợ đánh giá LỖI.";
+        } else if (!result.errors.empty()) {
+            status = Status::Fail;
+            evidence = "Thợ bấm ĐẠT nhưng có log lỗi camera trong lúc test: nghi module, cáp hoặc nguồn camera.";
+        } else {
+            status = Status::Pass;
+            evidence = "Thợ xác nhận ảnh đạt, không có log lỗi camera.";
+        }
+        if (!result.opened.empty()) {
+            evidence += " Camera đang mở: ID " + result.opened + ".";
+        }
+        if (!result.errors.empty()) {
+            evidence += "\n  Log lỗi:\n    " + result.errors;
+        }
+        items.push_back(makeItem(result.title.c_str(), status, source, evidence, ts));
+    }
+
+    // The camera list follows as reference.
+    const Parsed parsed = parseSections(list_output);
+    if (parsed.done.count('F') > 0 && parsed.done.count('K') > 0) {
+        const Group list = checkCamera(parsed, ts);
+        items.insert(items.end(), list.items.begin(), list.items.end());
+    }
+    return finish("CAMERA", std::move(items));
 }
 
 HCCAndroidDiagnostics::FullResult HCCAndroidDiagnostics::parse(const char *output)

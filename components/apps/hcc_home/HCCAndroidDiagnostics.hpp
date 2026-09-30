@@ -17,10 +17,27 @@ public:
     using FullResult = HCCiPhoneDiagnostics::FullResult;
 
     static const char *command();
-    // Starts the phone's camera app on the back then the front camera and checks each opened
-    // (about 15 s; the phone screen must be unlocked). parseCameraTest() returns the CAMERA group.
-    static const char *cameraTestCommand();
-    static Group parseCameraTest(const char *output);
+
+    // ---- Guided camera test (TEST CAMERA) ----
+    // One step per camera: front first, then back main, ultra-wide, tele..., macro/other.
+    struct CameraStep {
+        std::string title;       // "CAMERA TELE (~3x)  (ID 3, 8.0 MP)"
+        std::string instruction; // what the technician does / looks at
+        int launch_facing = -1;  // 1 = open the camera app on the front camera, 0 = back, -1 = none
+    };
+    struct CameraStepResult {
+        std::string title;
+        int verdict = -1;   // 1 = technician says OK, 0 = faulty, -1 = skipped
+        std::string opened; // camera IDs the camera service had open at check time
+        std::string errors; // camera error log lines since the step started
+    };
+    // Declared camera features + camera service list (with focal lengths).
+    static const char *cameraListCommand();
+    static std::vector<CameraStep> cameraSteps(const char *list_output);
+    // Output of a step check (sections ##O open cameras, ##Y camera errors).
+    static void parseCameraCheck(const char *check_output, std::string *opened, std::string *errors);
+    // CAMERA card: one item per step (camera errors turn an OK into FAIL), then the camera list.
+    static Group cameraTestGroup(const char *list_output, const std::vector<CameraStepResult> &results);
     // Every group is NotTested when the output is missing or truncated.
     static FullResult parse(const char *output);
 };
