@@ -2823,8 +2823,7 @@ void HCCHome::showI2C()
         return;
     }
 
-    _usb_status_label = nullptr;
-    _usb_info_label = nullptr;
+    detachUsbLabels();
 
     lv_obj_clean(_screen);
 
@@ -4198,6 +4197,7 @@ void HCCHome::showPanic()
         return;
     }
 
+    detachUsbLabels();
     _panic_file_dropdown = nullptr;
     _panic_status_label = nullptr;
     _panic_url_label = nullptr;
@@ -4944,6 +4944,20 @@ void HCCHome::onHwBackClicked(lv_event_t *event)
     }
 }
 
+// The USB client task refreshes the USB HUB labels (lv_async_call(applyUSBResult)) at any
+// time, e.g. when the phone is unplugged; every other screen must detach them before
+// lv_obj_clean() frees them.
+void HCCHome::detachUsbLabels()
+{
+    _usb_status_label = nullptr;
+    _usb_info_label = nullptr;
+    _usb_mode_label = nullptr;
+    _recovery_button_label = nullptr;
+    _bootloader_button_label = nullptr;
+    _purple_button_label = nullptr;
+    _reboot_button_label = nullptr;
+}
+
 void HCCHome::detachHwLabels()
 {
     _hw_sensors_status = nullptr;
@@ -5125,6 +5139,7 @@ void HCCHome::showHardwareCheck()
 {
     if (_screen == nullptr) return;
 
+    detachUsbLabels();
     detachHwLabels();
 
     const bool android = _usb_mode == USBMode::ANDROID;

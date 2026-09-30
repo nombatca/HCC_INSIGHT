@@ -98,6 +98,7 @@ private:
     static void onHwBackClicked(lv_event_t *event);
     static void applyAndroidDiagnostics(void *arg);
     void detachHwLabels();
+    void detachUsbLabels();
     // Recovery-mode exit: send iBoot commands (setenv auto-boot true / saveenv / reboot).
     static bool submitRecoveryExitCommand(HCCHome *app);
     static void onRecoveryExitComplete(usb_transfer_t *transfer);
