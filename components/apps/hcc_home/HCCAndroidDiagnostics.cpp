@@ -17,6 +17,13 @@ using Status = HCCAndroidDiagnostics::Status;
 using Item = HCCAndroidDiagnostics::Item;
 using Group = HCCAndroidDiagnostics::Group;
 
+// Camera service list (section K): device count and, per camera HAL device, facing, flash unit and
+// sensor pixel array (value on the line after the tag, hence -A1).
+#define HCC_CAMERA_LIST                                                                                   \
+    "echo '##K';dumpsys media.camera 2>&1|grep -iE -A1 'number of camera devices|== camera hal device|"    \
+    "camera [0-9]+ static information|^ *facing:|has a flash unit|pixelarraysize \\('"                     \
+    "|grep -vE '^--$'|cut -c1-110|head -80;"
+
 // Sections are introduced by "##X" lines; a section is complete once the next marker arrives
 // ("##E" ends the last one). Output is filtered on the phone to stay well under the 12 KB
 // the ADB client keeps: some ROMs print very long dumpsys battery / telephony.registry.
@@ -42,9 +49,20 @@ constexpr char kCommand[] =
     "capacity'|cut -c1-120;"
     "echo '##H';for z in /sys/class/thermal/thermal_zone*;do echo \"$(cat $z/type 2>/dev/null)=$(cat $z/temp "
     "2>/dev/null)\";done|grep -v '=$'|head -60|cut -c1-48;"
-    "echo '##K';dumpsys media.camera 2>&1|grep -iE -A1 'number of camera devices|== camera hal device|"
-    "camera [0-9]+ static information|^ *facing:|has a flash unit|pixelarraysize \\('"
-    "|grep -vE '^--$'|cut -c1-110|head -80;"
+    HCC_CAMERA_LIST
+    "echo '##E'";
+
+// Camera open test: the camera list, then for back (0) and front (1) start the phone's camera app
+// on that side, wait, and record which camera device is open plus camera errors logged since.
+constexpr char kCameraTestCommand[] =
+    "echo '##F';pm list features|grep camera;"
+    HCC_CAMERA_LIST
+    "for f in 0 1;do t=$(date +'%m-%d %H:%M:%S.000');u=false;[ $f = 1 ]&&u=true;"
+    "am start -W -a android.media.action.STILL_IMAGE_CAMERA --ei android.intent.extras.CAMERA_FACING $f "
+    "--ei android.intent.extras.LENS_FACING_FRONT $f --ez android.intent.extra.USE_FRONT_CAMERA $u >/dev/null 2>&1;"
+    "sleep 5;echo \"##$f\";dumpsys media.camera|grep -iE 'device [0-9]+ is open|reject'|head -6|cut -c1-120;"
+    "logcat -d -T \"$t\" 2>/dev/null|grep -iE 'camera.*(error|fail|timeout|died)|cam_err|probe fail'"
+    "|tail -5|cut -c1-160;input keyevent KEYCODE_HOME;sleep 1;done;"
     "echo '##E'";
 
 struct Parsed {
@@ -62,6 +80,7 @@ struct Parsed {
     std::vector<std::string> battery_stats;     // dumpsys batterystats capacity lines
     std::vector<std::string> thermal;           // "zone_type=temp" lines
     std::vector<std::string> camera_lines;      // dumpsys media.camera (filtered)
+    std::vector<std::string> camera_open[2];    // camera open test, back (0) and front (1)
 };
 
 std::string trim(const std::string &text)
@@ -131,6 +150,10 @@ Parsed parseSections(const char *output)
             break;
         case 'K':
             parsed.camera_lines.push_back(text);
+            break;
+        case '0':
+        case '1':
+            parsed.camera_open[section - '0'].push_back(text);
             break;
         case 'R':
         case 'B': {
@@ -1102,8 +1125,8 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
         const char *facing;
         const char *feature;
     } kSides[] = {
-        {"Camera sau", "back", "android.hardware.camera"},
-        {"Camera trước", "front", "android.hardware.camera.front"},
+        {"Camera sau (danh sách)", "back", "android.hardware.camera"},
+        {"Camera trước (danh sách)", "front", "android.hardware.camera.front"},
     };
     bool back_flash = false;
     for (const auto &side : kSides) {
@@ -1116,7 +1139,10 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
         }
         const bool declared = parsed.features.count(side.feature) > 0;
         if (!found.empty()) {
-            items.push_back(makeItem(side.label, Status::Pass, source, found, ts));
+            items.push_back(makeItem(side.label, Status::Pass, source,
+                                     found + ". Danh sách lập lúc khởi động (nhiều máy lấy từ cấu hình, kể cả khi "
+                                             "tháo module): bấm TEST MỞ CAMERA để thử mở thật.",
+                                     ts));
         } else if (declared) {
             items.push_back(makeItem(side.label, Status::Fail, "dumpsys media.camera + pm list features",
                                      std::string("Máy khai báo ") + side.feature +
@@ -1141,6 +1167,60 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
                                  ts));
     }
 
+    // Open test (TEST MO CAMERA): only proof that a module actually works; the list above comes
+    // from boot and, on many phones, from static config even with the module unplugged.
+    static const char *const kOpenLabels[] = {"Mở camera sau", "Mở camera trước"};
+    static const char *const kOpenFacing[] = {"back", "front"};
+    for (int side = 0; side < 2; ++side) {
+        if (parsed.done.count(static_cast<char>('0' + side)) == 0) {
+            continue;
+        }
+        std::vector<std::string> opened;
+        std::string errors;
+        for (const std::string &line : parsed.camera_open[side]) {
+            const std::string low = lower(line);
+            const size_t device = low.find("device ");
+            if (device != std::string::npos && low.find(" is open") != std::string::npos) {
+                opened.push_back(trim(line.substr(device + 7, low.find(" is open") - device - 7)));
+            } else {
+                errors += "\n    " + line;
+            }
+        }
+        std::string expected_open;
+        std::string other_open;
+        for (const std::string &id : opened) {
+            bool matches = false;
+            for (const CameraInfo &camera : cameras) {
+                matches = matches || (camera.id == id && camera.facing == kOpenFacing[side]);
+            }
+            (matches ? expected_open : other_open) += (id + " ");
+        }
+        const char *open_source = "am start camera + dumpsys media.camera + logcat";
+        if (!expected_open.empty()) {
+            items.push_back(makeItem(kOpenLabels[side], errors.empty() ? Status::Pass : Status::Check, open_source,
+                                     "Mở được camera ID " + trim(expected_open) +
+                                         (errors.empty() ? "." : ", nhưng có log lỗi camera:" + errors),
+                                     ts));
+        } else if (!errors.empty()) {
+            items.push_back(makeItem(kOpenLabels[side], Status::Fail, open_source,
+                                     "Mở camera LỖI: nghi module camera hỏng/không cắm, cáp/đầu nối, hoặc mất nguồn "
+                                     "camera." + errors,
+                                     ts));
+        } else if (!other_open.empty()) {
+            items.push_back(makeItem(kOpenLabels[side], Status::Check, open_source,
+                                     "App camera mở camera ID " + trim(other_open) +
+                                         " (hướng khác), không tự chuyển được: đổi camera trên điện thoại và "
+                                         "kiểm tra bằng mắt.",
+                                     ts));
+        } else {
+            items.push_back(makeItem(kOpenLabels[side], Status::Check, open_source,
+                                     "Không thấy camera nào mở và không có log lỗi: app camera không chạy (màn hình "
+                                     "khoá, đang hỏi quyền?) hoặc camera không mở được. Mở khoá màn hình rồi thử "
+                                     "lại, và xem trên điện thoại.",
+                                     ts));
+        }
+    }
+
     for (const CameraInfo &camera : cameras) {
         items.push_back(makeItem(("Camera ID " + camera.id).c_str(), Status::Pass, source,
                                  describe(camera) + " (HAL nhận; chưa chụp thử ảnh)", ts));
@@ -1153,6 +1233,19 @@ Group checkCamera(const Parsed &parsed, uint32_t ts)
 const char *HCCAndroidDiagnostics::command()
 {
     return kCommand;
+}
+
+const char *HCCAndroidDiagnostics::cameraTestCommand()
+{
+    return kCameraTestCommand;
+}
+
+HCCAndroidDiagnostics::Group HCCAndroidDiagnostics::parseCameraTest(const char *output)
+{
+    const uint32_t ts = static_cast<uint32_t>(time(nullptr));
+    const Parsed parsed = parseSections(output);
+    return parsed.done.count('F') > 0 && parsed.done.count('K') > 0 ? checkCamera(parsed, ts)
+                                                                      : notTested("CAMERA", ts);
 }
 
 HCCAndroidDiagnostics::FullResult HCCAndroidDiagnostics::parse(const char *output)

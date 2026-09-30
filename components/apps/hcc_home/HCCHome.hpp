@@ -93,6 +93,8 @@ private:
     void showHardwareCheck();
     void updateHwCards();
     static void onHwRunFullClicked(lv_event_t *event);
+    static void onHwCameraTestClicked(lv_event_t *event);
+    static void startAndroidJob(HCCHome *app, bool camera_test);
     static void onHwCardClicked(lv_event_t *event);
     static void onHwDialogCloseClicked(lv_event_t *event);
     static void onHwBackClicked(lv_event_t *event);
@@ -254,6 +256,8 @@ private:
     // Android hardware check: result platform, UI request to the USB task, job progress.
     bool _hw_result_android = false;
     volatile bool _hw_android_requested = false;
+    volatile bool _hw_camera_test_requested = false;
+    bool _hw_last_job_camera = false; // set by the USB task when it starts a job
     volatile bool _hw_android_start_failed = false;
     uint32_t _adb_job_seen = 0;
     lv_obj_t *_hw_session_label = nullptr;

@@ -1464,9 +1464,13 @@ void HCCHome::usbClientTask(void *arg)
             app->_android_action_requested = AndroidAction::None;
             HCCHome::performAndroidAction(app, action);
         }
-        if (app->_hw_android_requested) {
+        if (app->_hw_android_requested || app->_hw_camera_test_requested) {
+            const bool camera_test = app->_hw_camera_test_requested;
             app->_hw_android_requested = false;
-            if (!app->_adb.runJob(HCCAndroidDiagnostics::command())) {
+            app->_hw_camera_test_requested = false;
+            app->_hw_last_job_camera = camera_test;
+            if (!app->_adb.runJob(camera_test ? HCCAndroidDiagnostics::cameraTestCommand()
+                                              : HCCAndroidDiagnostics::command())) {
                 printf("[HCC ADB] diagnostics job could not start\n");
                 app->_hw_android_start_failed = true;
                 lv_async_call(HCCHome::applyAndroidDiagnostics, app);
@@ -4988,7 +4992,15 @@ void HCCHome::applyAndroidDiagnostics(void *arg)
         snprintf(message, sizeof(message), "ADB: không chạy được lệnh chẩn đoán (kiểm tra kết nối)");
     } else {
         // Parse whatever arrived; groups whose section is missing stay NOT TESTED.
-        app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
+        if (app->_hw_last_job_camera) {
+            // The camera test only replaces the CAMERA card; keep the other cards' results.
+            if (!app->_hw_has_result || !app->_hw_result_android) {
+                app->_hw_result = HCCAndroidDiagnostics::parse("");
+            }
+            app->_hw_result.camera = HCCAndroidDiagnostics::parseCameraTest(app->_adb.jobOutput());
+        } else {
+            app->_hw_result = HCCAndroidDiagnostics::parse(app->_adb.jobOutput());
+        }
         app->_hw_result_android = true;
         app->_hw_has_result = true;
         app->updateHwCards();
@@ -4998,7 +5010,9 @@ void HCCHome::applyAndroidDiagnostics(void *arg)
         } else if (strstr(app->_adb.jobOutput(), "##E") == nullptr) {
             snprintf(message, sizeof(message), "ADB: kết quả không đầy đủ (%u byte) - gửi log", bytes);
         } else {
-            snprintf(message, sizeof(message), "ADB: XONG - chạm vào từng thẻ để xem evidence");
+            snprintf(message, sizeof(message), "%s",
+                     app->_hw_last_job_camera ? "ADB: test mở camera XONG - chạm thẻ CAMERA để xem"
+                                              : "ADB: XONG - chạm vào từng thẻ để xem evidence");
         }
     }
     if (app->_hw_session_label != nullptr) {
@@ -5021,37 +5035,59 @@ void HCCHome::updateHwCards()
     set(_hw_camera_status, _hw_result.camera);
 }
 
+void HCCHome::onHwCameraTestClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app && app->_usb_mode == USBMode::ANDROID) {
+        HCCHome::startAndroidJob(app, true);
+    }
+}
+
+// UI task: hands an ADB diagnostics job (full check or camera open test) to the USB task.
+void HCCHome::startAndroidJob(HCCHome *app, bool camera_test)
+{
+    // Runs as an ADB shell job in the USB task; applyAndroidDiagnostics() shows the result.
+    const HCCAdbClient::State state = app->_adb.state();
+    const bool ready = state == HCCAdbClient::State::ReadingInfo || state == HCCAdbClient::State::Ready;
+    if (!ready || app->_adb.jobState() == HCCAdbClient::JobState::Running) {
+        if (app->_hw_session_label != nullptr) {
+            lv_label_set_text(app->_hw_session_label,
+                              ready ? "ADB: đang chạy, vui lòng chờ..."
+                                    : "ADB: CHƯA SẴN SÀNG (bật gỡ lỗi USB, bấm Cho phép)");
+        }
+        return;
+    }
+    if (camera_test) {
+        app->_hw_camera_test_requested = true;
+    } else {
+        app->_hw_android_requested = true;
+    }
+    if (app->_usb_client_registered && app->_usb_client != nullptr) {
+        usb_host_client_unblock(app->_usb_client);
+    }
+    lv_obj_t *all_labels[] = {app->_hw_sensors_status, app->_hw_faceid_status, app->_hw_baseband_status,
+                              app->_hw_battery_status, app->_hw_camera_status};
+    for (lv_obj_t *label : all_labels) {
+        // The camera test only reruns the CAMERA card.
+        if (label == nullptr || (camera_test && label != app->_hw_camera_status)) {
+            continue;
+        }
+        lv_label_set_text(label, "ĐANG CHẠY...");
+        lv_obj_set_style_text_color(label, lv_color_hex(0x7F96A8), 0);
+    }
+    if (app->_hw_session_label != nullptr) {
+        lv_label_set_text(app->_hw_session_label,
+                          camera_test ? "ADB: đang mở camera sau rồi camera trước trên điện thoại (~15 giây)..."
+                                      : "ADB: đang chạy chẩn đoán (5-10 giây)...");
+    }
+}
+
 void HCCHome::onHwRunFullClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (!app) return;
     if (app->_usb_mode == USBMode::ANDROID) {
-        // Runs as an ADB shell job in the USB task; applyAndroidDiagnostics() shows the result.
-        const HCCAdbClient::State state = app->_adb.state();
-        const bool ready = state == HCCAdbClient::State::ReadingInfo || state == HCCAdbClient::State::Ready;
-        if (!ready || app->_adb.jobState() == HCCAdbClient::JobState::Running) {
-            if (app->_hw_session_label != nullptr) {
-                lv_label_set_text(app->_hw_session_label,
-                                  ready ? "ADB: đang chạy, vui lòng chờ..."
-                                        : "ADB: CHƯA SẴN SÀNG (bật gỡ lỗi USB, bấm Cho phép)");
-            }
-            return;
-        }
-        app->_hw_android_requested = true;
-        if (app->_usb_client_registered && app->_usb_client != nullptr) {
-            usb_host_client_unblock(app->_usb_client);
-        }
-        lv_obj_t *labels[] = {app->_hw_sensors_status, app->_hw_faceid_status, app->_hw_baseband_status,
-                              app->_hw_battery_status, app->_hw_camera_status};
-        for (lv_obj_t *label : labels) {
-            if (label != nullptr) {
-                lv_label_set_text(label, "ĐANG CHẠY...");
-                lv_obj_set_style_text_color(label, lv_color_hex(0x7F96A8), 0);
-            }
-        }
-        if (app->_hw_session_label != nullptr) {
-            lv_label_set_text(app->_hw_session_label, "ADB: đang chạy chẩn đoán (5-10 giây)...");
-        }
+        HCCHome::startAndroidJob(app, false);
         return;
     }
     HCCiPhoneDiagnostics diag(&app->_usb_transport);
@@ -5245,6 +5281,19 @@ void HCCHome::showHardwareCheck()
     lv_label_set_text(run_lbl, "RUN FULL TEST");
     lv_obj_center(run_lbl);
     lv_obj_set_style_text_font(run_lbl, &lv_font_be_vietnam_18, 0);
+
+    // Android: open each camera for real (the camera list alone does not prove a module works).
+    if (android) {
+        lv_obj_t *cam_btn = lv_btn_create(_screen);
+        lv_obj_set_size(cam_btn, 300, 56);
+        lv_obj_align(cam_btn, LV_ALIGN_TOP_LEFT, 348, 330);
+        lv_obj_set_style_bg_color(cam_btn, lv_color_hex(0x2478D0), 0);
+        lv_obj_add_event_cb(cam_btn, onHwCameraTestClicked, LV_EVENT_CLICKED, this);
+        lv_obj_t *cam_lbl = lv_label_create(cam_btn);
+        lv_label_set_text(cam_lbl, "TEST MỞ CAMERA");
+        lv_obj_center(cam_lbl);
+        lv_obj_set_style_text_font(cam_lbl, &lv_font_be_vietnam_18, 0);
+    }
 
     // Ghi chú giới hạn.
     lv_obj_t *note = lv_label_create(_screen);

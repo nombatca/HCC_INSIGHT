@@ -17,6 +17,10 @@ public:
     using FullResult = HCCiPhoneDiagnostics::FullResult;
 
     static const char *command();
+    // Starts the phone's camera app on the back then the front camera and checks each opened
+    // (about 15 s; the phone screen must be unlocked). parseCameraTest() returns the CAMERA group.
+    static const char *cameraTestCommand();
+    static Group parseCameraTest(const char *output);
     // Every group is NotTested when the output is missing or truncated.
     static FullResult parse(const char *output);
 };
