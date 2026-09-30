@@ -1,7 +1,9 @@
 #include "HCCAndroidDiagnostics.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -58,6 +60,17 @@ constexpr char kCameraListCommand[] =
     HCC_CAMERA_LIST
     "echo '##E'";
 
+// Guided camera test probe: camera IDs open now (##O) and the camera app's likely buttons (##U):
+// uiautomator dump, one "text|resource-id|content-desc|bounds" line per node that looks like a
+// zoom value ("0.6", "3x") or a switch-camera / lens control.
+constexpr char kCameraProbeCommand[] =
+    "echo '##O';dumpsys media.camera|grep -iE 'device [0-9]+ is open'|head -4|cut -c1-100;"
+    "u=/data/local/tmp/hcc_ui.xml;uiautomator dump $u >/dev/null 2>&1;echo '##U';"
+    "tr '>' '\\n' <$u|sed -n 's/.* text=\"\\([^\"]*\\)\" resource-id=\"\\([^\"]*\\)\".* "
+    "content-desc=\"\\([^\"]*\\)\".* bounds=\"\\([^\"]*\\)\".*/\\1|\\2|\\3|\\4/p'"
+    "|grep -iE '^[.,0-9]{1,5} ?x?\\||\\|[.,0-9]{1,5} ?x|switch|flip|toggle|facing|front|selfie|chuyển|đổi|lật|"
+    "trước|wide|rộng|tele|zoom'|head -40|cut -c1-160;rm -f $u;";
+
 struct Parsed {
     bool complete = false;
     std::set<char> done; // sections followed by another marker, i.e. not cut off
@@ -75,6 +88,7 @@ struct Parsed {
     std::vector<std::string> camera_lines;      // dumpsys media.camera (filtered)
     std::vector<std::string> camera_opened;     // guided test check: "Device N is open" lines
     std::vector<std::string> camera_errors;     // guided test check: camera errors since the step
+    std::vector<std::string> ui_nodes;          // camera app buttons: "text|resource-id|desc|bounds"
 };
 
 std::string trim(const std::string &text)
@@ -150,6 +164,9 @@ Parsed parseSections(const char *output)
             break;
         case 'Y':
             parsed.camera_errors.push_back(text);
+            break;
+        case 'U':
+            parsed.ui_nodes.push_back(text);
             break;
         case 'R':
         case 'B': {
@@ -1237,6 +1254,18 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
     };
     const std::vector<CameraInfo> fronts = lenses("front");
     const std::vector<CameraInfo> backs = lenses("back");
+    // Every ID on a side (logical ones included): what the camera app may have open.
+    auto ids_of = [&cameras](const char *facing) {
+        std::vector<std::string> ids;
+        for (const CameraInfo &camera : cameras) {
+            if (camera.facing == facing) {
+                ids.push_back(camera.id);
+            }
+        }
+        return ids;
+    };
+    const std::vector<std::string> front_ids = ids_of("front");
+    const std::vector<std::string> back_ids = ids_of("back");
 
     std::vector<CameraStep> steps;
     auto title_of = [](const std::string &name, const CameraInfo &camera) {
@@ -1252,8 +1281,11 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
     for (size_t i = 0; i < fronts.size(); ++i) {
         CameraStep step;
         step.launch_facing = i == 0 ? 1 : -1;
+        step.front = true;
+        step.facing_ids = front_ids;
         step.title = title_of(i == 0 ? "CAMERA TRƯỚC" : "CAMERA TRƯỚC PHỤ", fronts[i]);
-        step.instruction = i == 0 ? std::string("Điện thoại đang mở camera trước.\n") + kLook
+        step.instruction = i == 0 ? std::string("Board mở camera trước (tự bấm nút đổi camera nếu app mở nhầm "
+                                                "camera sau).\n") + kLook
                                   : std::string("Trên điện thoại đổi sang camera trước phụ (nếu app cho chọn); "
                                                 "không có thì bấm BỎ QUA.\n") + kLook;
         steps.push_back(step);
@@ -1269,8 +1301,10 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
     if (!backs.empty()) {
         CameraStep step;
         step.launch_facing = 0;
+        step.facing_ids = back_ids;
+        step.zoom = 1;
         step.title = title_of("CAMERA SAU CHÍNH", backs[main_index]);
-        step.instruction = std::string("Điện thoại đang mở camera sau ở 1x.\n") + kLook;
+        step.instruction = std::string("Board mở camera sau ở 1x (tự đổi camera / bấm 1x nếu cần).\n") + kLook;
         steps.push_back(step);
     }
     struct Other {
@@ -1294,15 +1328,19 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
     for (const Other &other : others) {
         CameraStep step;
         step.launch_facing = -1;
+        step.facing_ids = back_ids;
         if (other.ratio > 0 && other.ratio < 0.8) {
+            step.zoom = 0.5;
             step.title = title_of("CAMERA GÓC SIÊU RỘNG", other.camera);
-            step.instruction = std::string("Trên điện thoại bấm 0.5x (hoặc 0.6x). Ảnh phải rộng hơn hẳn 1x.\n") + kLook;
+            step.instruction = std::string("Board bấm nút 0.5x / 0.6x trong app camera (không thấy nút thì tự bấm). "
+                                           "Ảnh phải rộng hơn hẳn 1x.\n") + kLook;
         } else if (other.ratio > 1.5) {
             char zoom[16];
             snprintf(zoom, sizeof(zoom), "%.0fx", other.ratio);
+            step.zoom = other.ratio;
             step.title = title_of(std::string("CAMERA TELE (~") + zoom + ")", other.camera);
-            step.instruction = std::string("Trên điện thoại bấm ") + zoom + " (hoặc zoom tới " + zoom +
-                               ", chờ 2 giây cho máy chuyển ống kính).\n" + kLook;
+            step.instruction = std::string("Board bấm nút ") + zoom + " trong app camera (không thấy nút thì tự zoom "
+                               "tới " + zoom + "), chờ 2 giây cho máy chuyển ống kính.\n" + kLook;
         } else {
             const bool small = main_mp > 0 && megapixels(other.camera) < main_mp * 0.3;
             step.title = title_of(small ? "CAMERA PHỤ (MACRO / ĐỘ SÂU)" : "CAMERA SAU PHỤ", other.camera);
@@ -1312,6 +1350,144 @@ std::vector<HCCAndroidDiagnostics::CameraStep> HCCAndroidDiagnostics::cameraStep
         steps.push_back(step);
     }
     return steps;
+}
+
+const char *HCCAndroidDiagnostics::cameraProbeCommand()
+{
+    return kCameraProbeCommand;
+}
+
+namespace {
+
+struct UiNode {
+    std::string text;
+    std::string id;
+    std::string desc;
+    int x = 0; // bounds center
+    int y = 0;
+};
+
+// "text|resource-id|content-desc|[x1,y1][x2,y2]" lines from the probe.
+std::vector<UiNode> uiNodes(const char *probe_output)
+{
+    std::vector<UiNode> nodes;
+    for (const std::string &line : parseSections(probe_output).ui_nodes) {
+        std::vector<std::string> fields;
+        size_t start = 0;
+        for (size_t bar = line.find('|'); bar != std::string::npos; bar = line.find('|', start)) {
+            fields.push_back(line.substr(start, bar - start));
+            start = bar + 1;
+        }
+        fields.push_back(line.substr(start));
+        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+        if (fields.size() != 4 || sscanf(fields[3].c_str(), "[%d,%d][%d,%d]", &x1, &y1, &x2, &y2) != 4 ||
+            x2 <= x1 || y2 <= y1) {
+            continue;
+        }
+        UiNode node;
+        node.text = trim(fields[0]);
+        node.id = fields[1];
+        node.desc = trim(fields[2]);
+        node.x = (x1 + x2) / 2;
+        node.y = (y1 + y2) / 2;
+        nodes.push_back(node);
+    }
+    return nodes;
+}
+
+// Zoom value shown on a button: "0.6", ".5", "0,6", "3x", "3.0x", or a description starting
+// with one ("0.6x Góc siêu rộng"). 0 when it is not a zoom value.
+double zoomValue(const std::string &text)
+{
+    std::string number;
+    size_t i = 0;
+    for (; i < text.size() && ((text[i] >= '0' && text[i] <= '9') || text[i] == '.' || text[i] == ','); ++i) {
+        number += text[i] == ',' ? '.' : text[i];
+    }
+    if (number.empty() || number.size() > 5 || number == ".") {
+        return 0;
+    }
+    // After the number: nothing, or an "x" (optionally followed by words).
+    const std::string rest = trim(text.substr(i));
+    if (!rest.empty() && rest[0] != 'x' && rest[0] != 'X') {
+        return 0;
+    }
+    const double value = atof(number[0] == '.' ? ("0" + number).c_str() : number.c_str());
+    return value > 0.1 && value <= 100 ? value : 0;
+}
+
+HCCAndroidDiagnostics::UiTap tapOn(const UiNode &node)
+{
+    HCCAndroidDiagnostics::UiTap tap;
+    tap.found = true;
+    tap.x = node.x;
+    tap.y = node.y;
+    tap.label = !node.text.empty() ? node.text : !node.desc.empty() ? node.desc : node.id;
+    return tap;
+}
+
+bool containsAny(const std::string &text, std::initializer_list<const char *> words)
+{
+    for (const char *word : words) {
+        if (text.find(word) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findSwitchCameraButton(const char *probe_output)
+{
+    for (const UiNode &node : uiNodes(probe_output)) {
+        const std::string key = lower(node.id + " " + node.desc + " " + node.text);
+        if (containsAny(key, {"shutter", "chụp", "video", "flash", "setting", "cài đặt", "gallery", "thư viện",
+                              "mode", "chế độ", "zoom"})) {
+            continue;
+        }
+        if (containsAny(key, {"switch", "flip", "toggle", "facing", "front", "selfie", "chuyển", "đổi", "Đổi",
+                              "lật", "trước"})) {
+            return tapOn(node);
+        }
+    }
+    return UiTap();
+}
+
+HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *probe_output, double zoom)
+{
+    const std::vector<UiNode> nodes = uiNodes(probe_output);
+    const UiNode *best = nullptr;
+    double best_value = 0;
+    for (const UiNode &node : nodes) {
+        double value = zoomValue(node.text);
+        if (value == 0) {
+            value = zoomValue(node.desc);
+        }
+        if (value == 0) {
+            continue;
+        }
+        const bool better = zoom < 1 ? value < 1 && (best == nullptr || value < best_value)
+                                     : best == nullptr || std::fabs(value - zoom) < std::fabs(best_value - zoom);
+        if (better) {
+            best = &node;
+            best_value = value;
+        }
+    }
+    // Close enough to be that lens (a "2" button next to a 3x tele is the main camera's crop).
+    if (best != nullptr && (zoom < 1 || std::fabs(best_value - zoom) <= zoom * 0.25)) {
+        return tapOn(*best);
+    }
+    // Ultra-wide shown as a word instead of a number ("Ultra wide", "Góc siêu rộng").
+    if (zoom < 1) {
+        for (const UiNode &node : nodes) {
+            const std::string key = lower(node.id + " " + node.desc + " " + node.text);
+            if (containsAny(key, {"ultra", "siêu rộng", "uw"}) && !containsAny(key, {"tele"})) {
+                return tapOn(node);
+            }
+        }
+    }
+    return UiTap();
 }
 
 void HCCAndroidDiagnostics::parseCameraCheck(const char *check_output, std::string *opened, std::string *errors)

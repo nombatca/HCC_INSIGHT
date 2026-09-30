@@ -5133,6 +5133,7 @@ void HCCHome::camWizardShow(HCCHome *app, const char *status)
     }
     const bool in_step = app->_cam_index < app->_cam_steps.size() &&
                          (app->_cam_phase == CamWizardPhase::Starting ||
+                          app->_cam_phase == CamWizardPhase::Tapping ||
                           app->_cam_phase == CamWizardPhase::Waiting ||
                           app->_cam_phase == CamWizardPhase::Checking);
     if (in_step) {
@@ -5225,8 +5226,12 @@ void HCCHome::camWizardBeginStep(HCCHome *app)
     const HCCAndroidDiagnostics::CameraStep &step = app->_cam_steps[app->_cam_index];
     app->_cam_phase = CamWizardPhase::Starting;
     app->_cam_step_time.clear();
+    app->_cam_note.clear();
+    app->_cam_tapped_switch = false;
+    app->_cam_zoom_tapped = false;
 
-    // Phone clock first, so the error check covers the camera app launch too.
+    // Phone clock first, so the error check covers the camera app launch too; then what is open
+    // and which buttons the camera app shows.
     std::string command = "echo \"PHONETIME=$(date +'%m-%d %H:%M:%S.000')\";";
     if (step.launch_facing >= 0) {
         const char *facing = step.launch_facing == 1 ? "1" : "0";
@@ -5235,10 +5240,91 @@ void HCCHome::camWizardBeginStep(HCCHome *app)
                    " --ei android.intent.extras.LENS_FACING_FRONT " + facing +
                    " --ez android.intent.extra.USE_FRONT_CAMERA " + (step.launch_facing == 1 ? "true" : "false") +
                    " >/dev/null 2>&1;sleep 2;";
+    } else {
+        command += "sleep 1;";
     }
+    command += HCCAndroidDiagnostics::cameraProbeCommand();
     command += "echo '##E'";
-    HCCHome::camWizardShow(app, step.launch_facing >= 0 ? "Đang mở camera trên điện thoại..." : "Chuẩn bị...");
+    HCCHome::camWizardShow(app, step.launch_facing >= 0 ? "Đang mở camera trên điện thoại..."
+                                                        : "Đang tìm nút trong app camera...");
     HCCHome::requestCameraJob(app, command.c_str());
+}
+
+void HCCHome::camWizardTap(HCCHome *app, int x, int y)
+{
+    app->_cam_phase = CamWizardPhase::Tapping;
+    char tap[48];
+    snprintf(tap, sizeof(tap), "input tap %d %d;sleep 2;", x, y);
+    std::string command = tap;
+    command += HCCAndroidDiagnostics::cameraProbeCommand();
+    command += "echo '##E'";
+    HCCHome::camWizardShow(app, (app->_cam_note + "\nĐang chờ app camera chuyển...").c_str());
+    HCCHome::requestCameraJob(app, command.c_str());
+}
+
+void HCCHome::camWizardWait(HCCHome *app)
+{
+    app->_cam_phase = CamWizardPhase::Waiting;
+    const std::string status = (app->_cam_note.empty() ? std::string() : app->_cam_note + "\n") +
+                               "Nhìn điện thoại rồi bấm ĐẠT hoặc LỖI (BỎ QUA nếu không xem được camera này).";
+    HCCHome::camWizardShow(app, status.c_str());
+}
+
+// After a probe (step start or a tap): make sure the app shows the right side, then the right lens.
+// Each button is tapped at most once per step; anything the board cannot do is left to the
+// technician with a note.
+void HCCHome::camWizardAfterProbe(HCCHome *app, const char *output)
+{
+    const HCCAndroidDiagnostics::CameraStep &step = app->_cam_steps[app->_cam_index];
+    std::string opened;
+    std::string errors;
+    HCCAndroidDiagnostics::parseCameraCheck(output, &opened, &errors);
+
+    bool side_ok = false;
+    for (const std::string &id : step.facing_ids) {
+        // opened is "0" or "0, 2": match whole IDs.
+        const std::string padded = ", " + opened + ",";
+        side_ok = side_ok || padded.find(", " + id + ",") != std::string::npos;
+    }
+    const char *want = step.front ? "trước" : "sau";
+    if (!opened.empty() && !side_ok) {
+        if (!app->_cam_tapped_switch) {
+            const HCCAndroidDiagnostics::UiTap button = HCCAndroidDiagnostics::findSwitchCameraButton(output);
+            app->_cam_tapped_switch = true;
+            if (button.found) {
+                app->_cam_note = "Board đã bấm nút đổi camera ('" + button.label + "').";
+                HCCHome::camWizardTap(app, button.x, button.y);
+                return;
+            }
+            app->_cam_note = std::string("App đang mở nhầm camera, board không tìm thấy nút đổi camera: tự đổi sang "
+                                         "camera ") + want + " trên điện thoại.";
+        } else {
+            app->_cam_note += std::string(" App vẫn chưa sang camera ") + want + ": tự đổi trên điện thoại.";
+        }
+        HCCHome::camWizardWait(app);
+        return;
+    }
+    if (opened.empty() && app->_cam_note.empty()) {
+        app->_cam_note = "Không thấy camera nào đang mở: app camera có đang hiện trên điện thoại không (màn hình "
+                         "khoá / hỏi quyền)?";
+    }
+
+    if (step.zoom > 0 && !app->_cam_zoom_tapped) {
+        app->_cam_zoom_tapped = true;
+        const HCCAndroidDiagnostics::UiTap button = HCCAndroidDiagnostics::findZoomButton(output, step.zoom);
+        if (button.found) {
+            app->_cam_note += (app->_cam_note.empty() ? "" : " ") + std::string("Board đã bấm '") + button.label + "'.";
+            HCCHome::camWizardTap(app, button.x, button.y);
+            return;
+        }
+        if (step.zoom != 1) {
+            char zoom[16];
+            snprintf(zoom, sizeof(zoom), "%.1fx", step.zoom);
+            app->_cam_note += (app->_cam_note.empty() ? "" : " ") +
+                              std::string("Không tìm thấy nút ") + zoom + " trong app: tự bấm / zoom trên điện thoại.";
+        }
+    }
+    HCCHome::camWizardWait(app);
 }
 
 void HCCHome::camWizardNext(HCCHome *app)
@@ -5309,8 +5395,10 @@ void HCCHome::camWizardJobDone(HCCHome *app, bool ok)
         return;
     case CamWizardPhase::Starting:
         app->_cam_step_time = phoneTimeFrom(output);
-        app->_cam_phase = CamWizardPhase::Waiting;
-        HCCHome::camWizardShow(app, "Nhìn điện thoại rồi bấm ĐẠT hoặc LỖI (BỎ QUA nếu không xem được camera này).");
+        HCCHome::camWizardAfterProbe(app, output);
+        return;
+    case CamWizardPhase::Tapping:
+        HCCHome::camWizardAfterProbe(app, output);
         return;
     case CamWizardPhase::Checking: {
         HCCAndroidDiagnostics::CameraStepResult result;

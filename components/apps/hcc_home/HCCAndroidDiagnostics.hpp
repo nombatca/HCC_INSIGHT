@@ -24,7 +24,22 @@ public:
         std::string title;       // "CAMERA TELE (~3x)  (ID 3, 8.0 MP)"
         std::string instruction; // what the technician does / looks at
         int launch_facing = -1;  // 1 = open the camera app on the front camera, 0 = back, -1 = none
+        bool front = false;      // the step needs a front camera open (else a back one)
+        std::vector<std::string> facing_ids; // camera IDs on that side, to check what the app opened
+        double zoom = 0;         // lens to select in the camera app (0.5, 3...); 0 = leave as is
     };
+    // A button found in the camera app's UI (uiautomator dump), to tap with `input tap`.
+    struct UiTap {
+        bool found = false;
+        int x = 0;
+        int y = 0;
+        std::string label; // its text / description, shown to the technician
+    };
+    // Shell fragment: camera IDs open now (##O) and the camera app's buttons (##U).
+    static const char *cameraProbeCommand();
+    static UiTap findSwitchCameraButton(const char *probe_output);
+    // zoom < 1: the ultra-wide button (smallest value); else the value closest to zoom.
+    static UiTap findZoomButton(const char *probe_output, double zoom);
     struct CameraStepResult {
         std::string title;
         int verdict = -1;   // 1 = technician says OK, 0 = faulty, -1 = skipped

@@ -100,6 +100,9 @@ private:
     static void requestCameraJob(HCCHome *app, const char *command);
     static void camWizardJobDone(HCCHome *app, bool ok);
     static void camWizardBeginStep(HCCHome *app);
+    static void camWizardAfterProbe(HCCHome *app, const char *output);
+    static void camWizardTap(HCCHome *app, int x, int y);
+    static void camWizardWait(HCCHome *app);
     static void camWizardNext(HCCHome *app);
     static void camWizardFinish(HCCHome *app);
     static void camWizardShow(HCCHome *app, const char *status);
@@ -273,11 +276,12 @@ private:
     // Camera test jobs: the UI writes _cam_job_command, then sets the flag for the USB task.
     volatile bool _cam_job_requested = false;
     bool _hw_last_job_camera = false; // set by the USB task when it starts a job
-    char _cam_job_command[768] = {};
+    char _cam_job_command[1536] = {};
     enum class CamWizardPhase : uint8_t {
         Idle,      // no test (or cancelled)
         Listing,   // reading the camera list
-        Starting,  // step job running (phone time, camera app launch)
+        Starting,  // step job running (phone time, camera app launch, UI probe)
+        Tapping,   // tapping the switch-camera / zoom button found in the camera app
         Waiting,   // waiting for ĐẠT / LỖI / BỎ QUA
         Checking,  // reading camera errors since the step started
         Finishing, // camera app closed, building the result
@@ -290,6 +294,9 @@ private:
     int _cam_verdict = -1;
     std::string _cam_list_output;
     std::string _cam_step_time; // phone clock when the step began, for logcat -T
+    std::string _cam_note;      // what the board did in the camera app this step, shown to the technician
+    bool _cam_tapped_switch = false;
+    bool _cam_zoom_tapped = false;
     lv_obj_t *_cam_panel = nullptr;
     lv_obj_t *_cam_title = nullptr;
     lv_obj_t *_cam_text = nullptr;
