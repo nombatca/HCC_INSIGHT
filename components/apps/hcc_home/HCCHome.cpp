@@ -2584,6 +2584,7 @@ bool HCCHome::close(void)
     _hw_faceid_status = nullptr;
     _hw_baseband_status = nullptr;
     _hw_battery_status = nullptr;
+    _hw_camera_status = nullptr;
     _hw_session_label = nullptr;
     _hw_dialog = nullptr;
     _panic_file_dropdown = nullptr;
@@ -4965,6 +4966,7 @@ void HCCHome::detachHwLabels()
     _hw_faceid_status = nullptr;
     _hw_baseband_status = nullptr;
     _hw_battery_status = nullptr;
+    _hw_camera_status = nullptr;
     _hw_session_label = nullptr;
     _hw_dialog = nullptr;
 }
@@ -5016,6 +5018,7 @@ void HCCHome::updateHwCards()
     set(_hw_faceid_status, _hw_result.faceid);
     set(_hw_baseband_status, _hw_result.baseband);
     set(_hw_battery_status, _hw_result.battery);
+    set(_hw_camera_status, _hw_result.camera);
 }
 
 void HCCHome::onHwRunFullClicked(lv_event_t *event)
@@ -5039,7 +5042,7 @@ void HCCHome::onHwRunFullClicked(lv_event_t *event)
             usb_host_client_unblock(app->_usb_client);
         }
         lv_obj_t *labels[] = {app->_hw_sensors_status, app->_hw_faceid_status, app->_hw_baseband_status,
-                              app->_hw_battery_status};
+                              app->_hw_battery_status, app->_hw_camera_status};
         for (lv_obj_t *label : labels) {
             if (label != nullptr) {
                 lv_label_set_text(label, "ĐANG CHẠY...");
@@ -5071,7 +5074,8 @@ void HCCHome::onHwCardClicked(lv_event_t *event)
     if (idx == 0) g = &app->_hw_result.sensors;
     else if (idx == 1) g = &app->_hw_result.faceid;
     else if (idx == 2) g = &app->_hw_result.baseband;
-    else g = &app->_hw_result.battery;
+    else if (idx == 3) g = &app->_hw_result.battery;
+    else g = &app->_hw_result.camera;
 
     // Dựng nội dung evidence.
     std::string body;
@@ -5186,17 +5190,19 @@ void HCCHome::showHardwareCheck()
     lv_obj_set_style_text_color(sess, ready ? lv_color_hex(0x69E0C0) : lv_color_hex(0xF2C94C), 0);
     lv_obj_set_style_text_font(sess, &lv_font_be_vietnam_18, 0);
 
-    // 4 card: SENSORS | FACE ID | BASEBAND | BATTERY
+    // iPhone: SENSORS | FACE ID | BASEBAND | BATTERY; Android adds CAMERA (5 narrower cards).
     const char *iphone_names[] = {"SENSORS", "FACE ID", "BASEBAND", "BATTERY"};
-    const char *android_names[] = {"SENSORS", "VÂN TAY / FACE", "BASEBAND / SIM", "BATTERY"};
+    const char *android_names[] = {"SENSORS", "VÂN TAY / FACE", "BASEBAND / SIM", "BATTERY", "CAMERA"};
     const char *const *names = android ? android_names : iphone_names;
     lv_obj_t **statusLabels[] = {&_hw_sensors_status, &_hw_faceid_status,
-                                 &_hw_baseband_status, &_hw_battery_status};
-    const int cx[] = {28, 274, 520, 766};
-    for (int i = 0; i < 4; ++i) {
+                                 &_hw_baseband_status, &_hw_battery_status, &_hw_camera_status};
+    const int card_count = android ? 5 : 4;
+    const int card_width = android ? 184 : 232;
+    const int card_step = android ? 196 : 246;
+    for (int i = 0; i < card_count; ++i) {
         lv_obj_t *card = lv_obj_create(_screen);
-        lv_obj_set_size(card, 232, 200);
-        lv_obj_align(card, LV_ALIGN_TOP_LEFT, cx[i], 100);
+        lv_obj_set_size(card, card_width, 200);
+        lv_obj_align(card, LV_ALIGN_TOP_LEFT, 28 + i * card_step, 100);
         lv_obj_set_style_bg_color(card, lv_color_hex(0x182630), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(0x304553), 0);
         lv_obj_set_style_border_width(card, 1, 0);
@@ -5208,6 +5214,8 @@ void HCCHome::showHardwareCheck()
 
         lv_obj_t *cn = lv_label_create(card);
         lv_label_set_text(cn, names[i]);
+        lv_label_set_long_mode(cn, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(cn, card_width - 32);
         lv_obj_align(cn, LV_ALIGN_TOP_LEFT, 16, 14);
         lv_obj_set_style_text_color(cn, lv_color_hex(0xB8C5CF), 0);
         lv_obj_set_style_text_font(cn, &lv_font_be_vietnam_18, 0);
@@ -5220,7 +5228,7 @@ void HCCHome::showHardwareCheck()
         *statusLabels[i] = st;
 
         lv_obj_t *hint = lv_label_create(card);
-        lv_label_set_text(hint, "Chạm để xem evidence");
+        lv_label_set_text(hint, android ? "Chạm để xem" : "Chạm để xem evidence");
         lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 16, -14);
         lv_obj_set_style_text_color(hint, lv_color_hex(0x5B7286), 0);
         lv_obj_set_style_text_font(hint, &lv_font_be_vietnam_16, 0);
@@ -5243,10 +5251,9 @@ void HCCHome::showHardwareCheck()
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(note, 940);
     lv_label_set_text(note, android ?
-        "SENSORS/VÂN TAY: so sánh cảm biến máy khai báo với cảm biến HAL thực sự thấy; "
+        "SENSORS/VÂN TAY/CAMERA: so sánh linh kiện máy khai báo với linh kiện hệ thống thực sự thấy; "
         "khai báo mà không thấy -> FAIL/CHECK (nghi hỏng IC, cáp). PASS = linh kiện lên, chưa đo chức năng. "
-        "BASEBAND: modem, IMEI, từng SIM, đăng ký mạng, sóng (dBm), băng tần, log modem. "
-        "BATTERY: % chai (ASOC/learned/charge_full), chu kỳ, trạng thái sạc, dòng điện, nhiệt độ linh kiện." :
+        "BASEBAND: modem, IMEI, SIM, mạng, sóng, băng tần. BATTERY: % chai, chu kỳ, sạc, dòng, nhiệt độ." :
         "SENSORS: iOS không cấp dữ liệu sensor qua Lockdown -> UNSUPPORTED. "
         "FACE ID: chỉ dò lỗi subsystem qua os_trace (không bao giờ PASS, không đụng sinh trắc). "
         "BASEBAND: dùng Lockdown GetValue thật + log CommCenter làm evidence.");

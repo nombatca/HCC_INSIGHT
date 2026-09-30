@@ -247,6 +247,7 @@ private:
     lv_obj_t *_hw_faceid_status;
     lv_obj_t *_hw_baseband_status;
     lv_obj_t *_hw_battery_status;
+    lv_obj_t *_hw_camera_status = nullptr;
     lv_obj_t *_hw_dialog;
     HCCiPhoneDiagnostics::FullResult _hw_result;
     bool _hw_has_result;

@@ -22,7 +22,7 @@ using Group = HCCAndroidDiagnostics::Group;
 // the ADB client keeps: some ROMs print very long dumpsys battery / telephony.registry.
 constexpr char kCommand[] =
     "echo '##S';dumpsys sensorservice|grep -o 'android\\.sensor\\.[a-z_]*'|sort -u;"
-    "echo '##F';pm list features|grep -E 'sensor|fingerprint|biometrics|telephony';"
+    "echo '##F';pm list features|grep -E 'sensor|fingerprint|biometrics|telephony|camera';"
     "echo '##P';dumpsys fingerprint 2>/dev/null|grep -ciE 'sensorid|sensor_id|sensorprops|prints';"
     "echo '##A';dumpsys face 2>/dev/null|grep -ciE 'sensorid|sensor_id|sensorprops';"
     "echo '##R';for p in gsm.version.baseband gsm.sim.state gsm.sim.operator.alpha gsm.sim.operator.numeric "
@@ -42,6 +42,9 @@ constexpr char kCommand[] =
     "capacity'|cut -c1-120;"
     "echo '##H';for z in /sys/class/thermal/thermal_zone*;do echo \"$(cat $z/type 2>/dev/null)=$(cat $z/temp "
     "2>/dev/null)\";done|grep -v '=$'|head -60|cut -c1-48;"
+    "echo '##K';dumpsys media.camera 2>&1|grep -iE -A1 'number of camera devices|== camera hal device|"
+    "camera [0-9]+ static information|^ *facing:|has a flash unit|pixelarraysize \\('"
+    "|grep -vE '^--$'|cut -c1-110|head -80;"
     "echo '##E'";
 
 struct Parsed {
@@ -58,6 +61,7 @@ struct Parsed {
     std::vector<std::string> imei_lines;        // service call / getprop output
     std::vector<std::string> battery_stats;     // dumpsys batterystats capacity lines
     std::vector<std::string> thermal;           // "zone_type=temp" lines
+    std::vector<std::string> camera_lines;      // dumpsys media.camera (filtered)
 };
 
 std::string trim(const std::string &text)
@@ -124,6 +128,9 @@ Parsed parseSections(const char *output)
             break;
         case 'H':
             parsed.thermal.push_back(text);
+            break;
+        case 'K':
+            parsed.camera_lines.push_back(text);
             break;
         case 'R':
         case 'B': {
@@ -997,6 +1004,150 @@ Group checkBattery(const Parsed &parsed, uint32_t ts)
     return finish("BATTERY", std::move(items));
 }
 
+// ---- CAMERA ----
+
+struct CameraInfo {
+    std::string id;
+    std::string facing;  // "back", "front", "external" or ""
+    int flash = -1;      // 1 / 0, -1 unknown
+    long long width = 0; // sensor pixel array
+    long long height = 0;
+};
+
+Group checkCamera(const Parsed &parsed, uint32_t ts)
+{
+    const char *source = "dumpsys media.camera";
+    std::vector<CameraInfo> cameras;
+    long long service_count = -1;
+    bool expect_pixel_array = false;
+    for (const std::string &line : parsed.camera_lines) {
+        const std::string low = lower(line);
+        long long number = 0;
+        if (expect_pixel_array && line[0] == '[') {
+            expect_pixel_array = false;
+            if (!cameras.empty()) {
+                const char *p = line.c_str() + 1;
+                char *end = nullptr;
+                cameras.back().width = strtoll(p, &end, 10);
+                cameras.back().height = strtoll(end, nullptr, 10);
+            }
+            continue;
+        }
+        expect_pixel_array = false;
+        if (low.find("number of camera devices") != std::string::npos && intAfterLike(line, "devices", &number)) {
+            service_count = number;
+        } else if (low.find("== camera hal device") != std::string::npos ||
+                   (low.find("static information") != std::string::npos && low.find("camera") != std::string::npos)) {
+            // "== Camera HAL device device@3.6/internal/2 (v3.6) static information: ==" -> id "2"
+            CameraInfo camera;
+            const size_t paren = line.find(" (");
+            const size_t slash = line.rfind('/', paren);
+            if (slash != std::string::npos && paren != std::string::npos && paren > slash) {
+                camera.id = line.substr(slash + 1, paren - slash - 1);
+            } else {
+                camera.id = std::to_string(cameras.size());
+            }
+            cameras.push_back(camera);
+        } else if (!cameras.empty() && low.rfind("facing:", 0) == 0) {
+            cameras.back().facing = trim(low.substr(strlen("facing:")));
+        } else if (!cameras.empty() && low.rfind("has a flash unit:", 0) == 0) {
+            cameras.back().flash = low.find("true") != std::string::npos ? 1 : 0;
+        } else if (!cameras.empty() && low.find("pixelarraysize (") != std::string::npos) {
+            expect_pixel_array = true;
+        }
+    }
+
+    std::vector<Item> items;
+    const bool declared_any = parsed.features.count("android.hardware.camera.any") > 0 ||
+                              parsed.features.count("android.hardware.camera") > 0 ||
+                              parsed.features.count("android.hardware.camera.front") > 0;
+    if (parsed.camera_lines.empty()) {
+        items.push_back(makeItem("Dịch vụ camera", Status::Unsupported, source,
+                                 "Không đọc được dumpsys media.camera.", ts));
+        return finish("CAMERA", std::move(items));
+    }
+    if (cameras.empty() && service_count <= 0) {
+        items.push_back(makeItem("Dịch vụ camera", declared_any ? Status::Fail : Status::Unsupported, source,
+                                 declared_any ? "Máy có camera nhưng dịch vụ camera không thấy camera nào: nghi nguồn "
+                                                "camera (LDO/PMIC), cáp, hoặc tất cả module camera hỏng."
+                                              : "Máy không khai báo camera.",
+                                 ts));
+        return finish("CAMERA", std::move(items));
+    }
+    items.push_back(makeItem("Dịch vụ camera", Status::Pass, source,
+                             std::to_string(service_count < 0 ? 0 : service_count) + " camera cho ứng dụng, " +
+                                 std::to_string(cameras.size()) +
+                                 " camera phần cứng (kể cả camera con của cụm nhiều camera). So với thông số "
+                                 "của model để biết có thiếu camera con nào không.",
+                             ts));
+
+    auto describe = [](const CameraInfo &camera) {
+        std::string text = camera.facing == "back"    ? "Sau"
+                           : camera.facing == "front" ? "Trước"
+                           : camera.facing.empty()    ? "?"
+                                                      : camera.facing;
+        if (camera.width > 0 && camera.height > 0) {
+            text += ", " + fmt1(camera.width * camera.height / 1e6) + " MP (" + std::to_string(camera.width) + "x" +
+                    std::to_string(camera.height) + ")";
+        }
+        if (camera.flash == 1) {
+            text += ", có flash";
+        }
+        return text;
+    };
+
+    // Declared (static config) vs what the camera HAL actually brought up.
+    struct Side {
+        const char *label;
+        const char *facing;
+        const char *feature;
+    } kSides[] = {
+        {"Camera sau", "back", "android.hardware.camera"},
+        {"Camera trước", "front", "android.hardware.camera.front"},
+    };
+    bool back_flash = false;
+    for (const auto &side : kSides) {
+        std::string found;
+        for (const CameraInfo &camera : cameras) {
+            if (camera.facing == side.facing) {
+                found += (found.empty() ? "" : "; ") + std::string("ID ") + camera.id + ": " + describe(camera);
+                back_flash = back_flash || (camera.flash == 1 && strcmp(side.facing, "back") == 0);
+            }
+        }
+        const bool declared = parsed.features.count(side.feature) > 0;
+        if (!found.empty()) {
+            items.push_back(makeItem(side.label, Status::Pass, source, found, ts));
+        } else if (declared) {
+            items.push_back(makeItem(side.label, Status::Fail, "dumpsys media.camera + pm list features",
+                                     std::string("Máy khai báo ") + side.feature +
+                                         " nhưng HAL không có camera này: nghi module camera, cáp/đầu nối, "
+                                         "hoặc mất nguồn camera.",
+                                     ts));
+        } else {
+            items.push_back(makeItem(side.label, Status::Unsupported, "pm list features",
+                                     "Máy không khai báo camera này.", ts));
+        }
+    }
+
+    if (parsed.features.count("android.hardware.camera.flash") > 0) {
+        items.push_back(makeItem("Đèn flash", back_flash ? Status::Pass : Status::Check,
+                                 "dumpsys media.camera (Has a flash unit)",
+                                 back_flash ? "Camera sau báo có flash (chưa bật thử đèn)."
+                                            : "Máy khai báo có flash nhưng camera sau không báo flash: nghi LED "
+                                              "flash, IC flash hoặc cáp.",
+                                 ts));
+    } else {
+        items.push_back(makeItem("Đèn flash", Status::Unsupported, "pm list features", "Máy không khai báo flash.",
+                                 ts));
+    }
+
+    for (const CameraInfo &camera : cameras) {
+        items.push_back(makeItem(("Camera ID " + camera.id).c_str(), Status::Pass, source,
+                                 describe(camera) + " (HAL nhận; chưa chụp thử ảnh)", ts));
+    }
+    return finish("CAMERA", std::move(items));
+}
+
 } // namespace
 
 const char *HCCAndroidDiagnostics::command()
@@ -1022,5 +1173,6 @@ HCCAndroidDiagnostics::FullResult HCCAndroidDiagnostics::parse(const char *outpu
     result.faceid = has("FPA") ? checkBiometrics(parsed, ts) : notTested("VÂN TAY / FACE", ts);
     result.baseband = has("FR") ? checkBaseband(parsed, ts) : notTested("BASEBAND / SIM", ts);
     result.battery = has("B") ? checkBattery(parsed, ts) : notTested("BATTERY", ts);
+    result.camera = has("FK") ? checkCamera(parsed, ts) : notTested("CAMERA", ts);
     return result;
 }

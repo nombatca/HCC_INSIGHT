@@ -78,14 +78,14 @@ private:
     static constexpr size_t kHeaderSize = 24;
     static constexpr size_t kRxStreamCapacity = kHeaderSize + kMaxPayload + 1024;
     // Large enough for the diagnostics shell command; the phone accepts at least 4096.
-    static constexpr size_t kTxPayloadCapacity = 2048;
+    static constexpr size_t kTxPayloadCapacity = 3072;
     static constexpr size_t kTxQueueDepth = 4;
     static constexpr size_t kShellOutputCapacity = 3072;
     static constexpr size_t kTokenSize = 20;
     static constexpr uint32_t kShellLocalId = 1;
     static constexpr uint32_t kServiceLocalId = 2;
     static constexpr uint32_t kJobLocalId = 3;
-    static constexpr size_t kJobOutputCapacity = 12288;
+    static constexpr size_t kJobOutputCapacity = 20480;
     static constexpr uint32_t kJobTimeoutMs = 60000;
 
     struct TxMessage {

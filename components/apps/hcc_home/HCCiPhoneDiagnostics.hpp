@@ -30,6 +30,7 @@ public:
         Group faceid;
         Group baseband;
         Group battery;
+        Group camera; // Android only
     };
 
     explicit HCCiPhoneDiagnostics(const HCCUSBTransport *transport) : _t(transport) {}
