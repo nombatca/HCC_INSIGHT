@@ -1459,6 +1459,7 @@ HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *p
     const std::vector<UiNode> nodes = uiNodes(probe_output);
     const UiNode *best = nullptr;
     double best_value = 0;
+    bool numeric_buttons = false;
     for (const UiNode &node : nodes) {
         double value = zoomValue(node.text);
         if (value == 0) {
@@ -1467,6 +1468,7 @@ HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *p
         if (value == 0) {
             continue;
         }
+        numeric_buttons = true;
         const bool better = zoom < 1 ? value < 1 && (best == nullptr || value < best_value)
                                      : best == nullptr || std::fabs(value - zoom) < std::fabs(best_value - zoom);
         if (better) {
@@ -1478,13 +1480,19 @@ HCCAndroidDiagnostics::UiTap HCCAndroidDiagnostics::findZoomButton(const char *p
     if (best != nullptr && (zoom < 1 || std::fabs(best_value - zoom) <= zoom * 0.25)) {
         return tapOn(*best);
     }
-    // Ultra-wide shown as a word instead of a number ("Ultra wide", "Góc siêu rộng").
-    if (zoom < 1) {
-        for (const UiNode &node : nodes) {
-            const std::string key = lower(node.id + " " + node.desc + " " + node.text);
-            if (containsAny(key, {"ultra", "siêu rộng", "uw"}) && !containsAny(key, {"tele"})) {
-                return tapOn(node);
-            }
+    // Lens shown as an icon with a word instead of a number (Samsung One UI 2-4: "Góc siêu rộng",
+    // "Góc rộng", "Tele" / "Ultra wide", "Wide", "Telephoto"). Only for such icon-only UIs: when
+    // numbers are shown, a "Tele 3x" button must not stand in for a missing 5x.
+    for (const UiNode &node : nodes) {
+        if (numeric_buttons && zoom >= 1) {
+            break;
+        }
+        const std::string key = lower(node.id + " " + node.desc + " " + node.text);
+        const bool ultra = containsAny(key, {"ultra", "siêu rộng", "uw"});
+        const bool tele = containsAny(key, {"tele"});
+        const bool wide = containsAny(key, {"wide", "rộng"});
+        if ((zoom < 1 && ultra && !tele) || (zoom >= 1.5 && tele) || (zoom >= 1 && zoom < 1.5 && wide && !ultra && !tele)) {
+            return tapOn(node);
         }
     }
     return UiTap();
