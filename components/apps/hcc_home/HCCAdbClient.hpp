@@ -57,7 +57,7 @@ public:
     bool runJob(const char *command);
     JobState jobState() const { return _job_state; }
     uint32_t jobSerial() const { return _job_serial; }
-    const char *jobOutput() const { return _job_output; }
+    const char *jobOutput() const { return _job_output != nullptr ? _job_output : ""; }
     // Resumes work deferred on the host key; call every USB loop iteration.
     void poll();
     // True while poll() has work to do without a USB event (the loop must not block forever).
@@ -75,14 +75,15 @@ private:
     static constexpr size_t kMaxPayload = 4096;
     static constexpr size_t kHeaderSize = 24;
     static constexpr size_t kRxStreamCapacity = kHeaderSize + kMaxPayload + 1024;
-    static constexpr size_t kTxPayloadCapacity = 1024;
+    // Large enough for the diagnostics shell command; the phone accepts at least 4096.
+    static constexpr size_t kTxPayloadCapacity = 2048;
     static constexpr size_t kTxQueueDepth = 4;
     static constexpr size_t kShellOutputCapacity = 3072;
     static constexpr size_t kTokenSize = 20;
     static constexpr uint32_t kShellLocalId = 1;
     static constexpr uint32_t kServiceLocalId = 2;
     static constexpr uint32_t kJobLocalId = 3;
-    static constexpr size_t kJobOutputCapacity = 6144;
+    static constexpr size_t kJobOutputCapacity = 12288;
 
     struct TxMessage {
         uint8_t header[kHeaderSize];
@@ -115,7 +116,9 @@ private:
     bool _tx_in_flight = false;
     bool _stopping = false;
 
-    TxMessage _tx_queue[kTxQueueDepth] = {};
+    // Large staging buffers live in PSRAM (allocated once, on first start()); the app object
+    // itself is in internal RAM.
+    TxMessage *_tx_queue = nullptr;
     size_t _tx_head = 0;
     size_t _tx_count = 0;
     bool _tx_payload_phase = false;
@@ -135,7 +138,7 @@ private:
     size_t _shell_output_length = 0;
     JobState _job_state = JobState::Idle;
     uint32_t _job_serial = 0;
-    char _job_output[kJobOutputCapacity] = {};
+    char *_job_output = nullptr;
     size_t _job_output_length = 0;
     Info _info = {};
 };

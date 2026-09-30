@@ -1,5 +1,6 @@
 #include "HCCAdbClient.hpp"
 
+#include "esp_heap_caps.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -229,6 +230,13 @@ void keyTask(void *)
     vTaskDelete(nullptr);
 }
 
+// PSRAM when available (malloc here only uses internal RAM), else internal RAM.
+void *allocLarge(size_t size)
+{
+    void *buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return buffer != nullptr ? buffer : heap_caps_malloc(size, MALLOC_CAP_8BIT);
+}
+
 void writeU32(uint8_t *out, uint32_t value)
 {
     out[0] = static_cast<uint8_t>(value);
@@ -314,8 +322,20 @@ bool HCCAdbClient::start(usb_device_handle_t device, uint8_t out_endpoint, uint8
     _info = {};
     _job_state = JobState::Idle;
     _job_output_length = 0;
-    _job_output[0] = '\0';
     ++_job_serial;
+
+    if (_tx_queue == nullptr) {
+        _tx_queue = static_cast<TxMessage *>(allocLarge(sizeof(TxMessage) * kTxQueueDepth));
+    }
+    if (_job_output == nullptr) {
+        _job_output = static_cast<char *>(allocLarge(kJobOutputCapacity));
+    }
+    if (_tx_queue == nullptr || _job_output == nullptr) {
+        printf("[HCC ADB] buffer alloc failed\n");
+        _state = State::Failed;
+        return false;
+    }
+    _job_output[0] = '\0';
 
     // Bulk IN transfers must be a whole number of max-size packets.
     const size_t rx_size = ((kMaxPayload + in_mps - 1) / in_mps) * in_mps;
@@ -358,7 +378,8 @@ bool HCCAdbClient::runService(const char *service)
 bool HCCAdbClient::runJob(const char *command)
 {
     static constexpr char kPrefix[] = "shell:";
-    char service[kTxPayloadCapacity];
+    // Static: 2 KB is too much for the USB client task's stack; only that task calls this.
+    static char service[kTxPayloadCapacity];
     const int length = snprintf(service, sizeof(service), "%s%s", kPrefix, command);
     if (_stopping || _job_state == JobState::Running || length <= 0 ||
         static_cast<size_t>(length) >= sizeof(service) ||
