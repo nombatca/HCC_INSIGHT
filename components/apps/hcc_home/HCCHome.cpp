@@ -3820,7 +3820,7 @@ void HCCHome::updatePanicUrlLabel()
 void HCCHome::onPanicPollTimer(lv_timer_t *timer)
 {
     HCCHome *app = static_cast<HCCHome *>(timer->user_data);
-    if (app == nullptr || app->_pi_list == nullptr) {
+    if (app == nullptr || app->_pi_detail == nullptr) {
         return;
     }
     // Wi-Fi vừa có / mất IP: cập nhật địa chỉ gửi panic.
@@ -3844,7 +3844,7 @@ void HCCHome::onPanicPollTimer(lv_timer_t *timer)
 
 void HCCHome::onPanicListDeleted(lv_event_t *event)
 {
-    // Danh sách bị xoá = rời màn PANIC: dừng timer.
+    // Vùng kết quả bị xoá = rời màn PANIC: dừng timer.
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr) {
         return;
@@ -3854,6 +3854,7 @@ void HCCHome::onPanicListDeleted(lv_event_t *event)
         app->_panic_poll_timer = nullptr;
     }
     app->_pi_list = nullptr;
+    app->_pi_detail = nullptr;
 }
 
 void HCCHome::onPanicAnalyzeClicked(lv_event_t *event)
@@ -4318,26 +4319,9 @@ void HCCHome::showPanic()
     lv_obj_set_style_text_color(_panic_status_label, lv_color_hex(0x69E0C0), 0);
     lv_obj_set_style_text_font(_panic_status_label, &lv_font_be_vietnam_16, 0);
 
-    /* ===== Danh sách panic (trái) ===== */
-    lv_obj_t *list_title = lv_label_create(_screen);
-    lv_label_set_text(list_title, "DANH SÁCH PANIC");
-    lv_obj_align(list_title, LV_ALIGN_TOP_LEFT, 24, 90);
-    lv_obj_set_style_text_color(list_title, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(list_title, &lv_font_be_vietnam_18, 0);
-
-    _pi_list_count = lv_label_create(_screen);
-    lv_label_set_text(_pi_list_count, "(0)");
-    lv_obj_align(_pi_list_count, LV_ALIGN_TOP_LEFT, 300, 92);
-    lv_obj_set_style_text_color(_pi_list_count, lv_color_hex(0x7F96A8), 0);
-    lv_obj_set_style_text_font(_pi_list_count, &lv_font_be_vietnam_16, 0);
-
-    _pi_list = lv_list_create(_screen);
-    lv_obj_set_size(_pi_list, 340, 344);
-    lv_obj_align(_pi_list, LV_ALIGN_TOP_LEFT, 24, 118);
-    lv_obj_set_style_bg_color(_pi_list, lv_color_hex(0x101C28), 0);
-    lv_obj_set_style_border_color(_pi_list, lv_color_hex(0x304553), 0);
-    lv_obj_set_style_border_width(_pi_list, 1, 0);
-    lv_obj_set_style_radius(_pi_list, 10, 0);
+    /* Không còn ô danh sách panic: chọn panic bằng ô "File panic" ở trên; kết quả dùng toàn chiều ngang. */
+    _pi_list = nullptr;
+    _pi_list_count = nullptr;
 
     /* ===== Kết quả (phải) =====
      * Khung KẾT LUẬN cố định (không cuộn): Model -> Lỗi -> PHẦN CỨNG NGHI NGỜ -> Confidence.
@@ -4349,8 +4333,8 @@ void HCCHome::showPanic()
     const lv_font_t *f16 = &lv_font_be_vietnam_16;
 
     lv_obj_t *hero = lv_obj_create(_screen);
-    lv_obj_set_size(hero, 636, 186);
-    lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 372, 118);
+    lv_obj_set_size(hero, 976, 196);
+    lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 24, 92);
     lv_obj_set_style_bg_color(hero, lv_color_hex(0x142433), 0);
     lv_obj_set_style_border_color(hero, lv_color_hex(0x2A3E52), 0);
     lv_obj_set_style_border_width(hero, 1, 0);
@@ -4406,8 +4390,8 @@ void HCCHome::showPanic()
 
     // Vùng cuộn: Signature/HEX -> Các bước kiểm tra -> Verified/Repair case.
     _pi_detail = lv_obj_create(_screen);
-    lv_obj_set_size(_pi_detail, 636, 154);
-    lv_obj_align(_pi_detail, LV_ALIGN_TOP_LEFT, 372, 308);
+    lv_obj_set_size(_pi_detail, 976, 170);
+    lv_obj_align(_pi_detail, LV_ALIGN_TOP_LEFT, 24, 294);
     lv_obj_set_style_bg_opa(_pi_detail, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_pi_detail, 0, 0);
     lv_obj_set_style_pad_all(_pi_detail, 2, 0);
@@ -4442,7 +4426,7 @@ void HCCHome::showPanic()
         lv_timer_del(_panic_poll_timer);
     }
     _panic_poll_timer = lv_timer_create(onPanicPollTimer, 1000, this);
-    lv_obj_add_event_cb(_pi_list, onPanicListDeleted, LV_EVENT_DELETE, this);
+    lv_obj_add_event_cb(_pi_detail, onPanicListDeleted, LV_EVENT_DELETE, this);
 
     /* ===== Thanh nút dưới cùng ===== */
     const lv_coord_t by = 474;
@@ -4458,7 +4442,7 @@ void HCCHome::showPanic()
 
     lv_obj_t *detail_btn = lv_btn_create(_screen);
     lv_obj_set_size(detail_btn, 300, 52);
-    lv_obj_align(detail_btn, LV_ALIGN_TOP_LEFT, 372, by);
+    lv_obj_align(detail_btn, LV_ALIGN_TOP_LEFT, 300, by);
     styleBtn(detail_btn, "XEM PHÂN TÍCH CHI TIẾT", onPanicDetailClicked, this, lv_color_hex(0x2478D0), &lv_font_be_vietnam_16);
 }
 
