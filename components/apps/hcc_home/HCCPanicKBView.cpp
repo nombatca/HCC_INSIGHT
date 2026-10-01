@@ -294,8 +294,15 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
         const CaseRecord &r = *top->rec;
         std::vector<std::string> comps;
         for (const auto &c : r.components) addUnique(comps, c.name + (c.ref.empty() ? "" : " (" + c.ref + ")"));
-        b.hardware = r.hardware_area.empty() ? std::string("(case chưa ghi khu vực)") : r.hardware_area;
-        if (!comps.empty()) b.hardware += "\nLinh kiện: " + joinList(comps, 3);
+        // Dòng chính: khu vực; case chưa ghi khu vực thì dùng linh kiện / cách sửa.
+        if (!r.hardware_area.empty()) {
+            b.hardware = r.hardware_area;
+            if (!comps.empty()) b.hardware += "\nLinh kiện: " + joinList(comps, 3);
+        } else if (!comps.empty()) {
+            b.hardware = joinList(comps, 3);
+        } else {
+            b.hardware = r.repair_action.empty() ? std::string("(case chưa ghi khu vực / linh kiện)") : r.repair_action;
+        }
         b.hardware_confirmed = r.status == "VERIFIED" && top->match_type == "exact";
         b.hardware_known = true;
         if (!b.hardware_confirmed) b.hardware += "\n(theo case " + r.status + " - " + matchText(top->match_type) + ")";

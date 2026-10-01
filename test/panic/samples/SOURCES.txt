@@ -10,6 +10,7 @@ kernel_data_abort: xnu arm64/sleh.c
 kernel_generic: TONG HOP
 pmu: TONG HOP
 sep_panic: TONG HOP
+smc_d94_firmware_dump: nhu #17 + dump firmware dang khac (GIA DINH)
 smc_d94_other_hex: nhu #17 nhung S.sensor[1] = 0x180000
 smc_d94_taop_taoc: TONG HOP theo vi du nguoi dung (dinh dang tag GIA DINH)
 smc_d94_taop_taoc_variant: bien the cua #17 (khac cpu/caller/thoi diem)

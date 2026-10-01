@@ -4333,7 +4333,7 @@ void HCCHome::showPanic()
     const lv_font_t *f16 = &lv_font_be_vietnam_16;
 
     lv_obj_t *hero = lv_obj_create(_screen);
-    lv_obj_set_size(hero, 976, 196);
+    lv_obj_set_size(hero, 976, 214);
     lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 24, 92);
     lv_obj_set_style_bg_color(hero, lv_color_hex(0x142433), 0);
     lv_obj_set_style_border_color(hero, lv_color_hex(0x2A3E52), 0);
@@ -4378,20 +4378,21 @@ void HCCHome::showPanic()
     _pi_conf = lv_label_create(hrow);
     lv_label_set_recolor(_pi_conf, true);
     lv_obj_set_style_text_font(_pi_conf, f16, 0);
+    lv_obj_set_style_text_color(_pi_conf, white, 0);
     lv_label_set_text(_pi_conf, "-");
 
     _pi_conclusion = lv_label_create(hero);
     lv_label_set_long_mode(_pi_conclusion, LV_LABEL_LONG_DOT);
     lv_obj_set_width(_pi_conclusion, lv_pct(100));
-    lv_obj_set_height(_pi_conclusion, 88);  // 3 dòng chữ 22: luôn thấy, không cuộn
+    lv_obj_set_height(_pi_conclusion, 96);  // 3 dòng chữ 22: luôn thấy, không cuộn
     lv_obj_set_style_text_font(_pi_conclusion, &lv_font_be_vietnam_22, 0);
     lv_obj_set_style_text_color(_pi_conclusion, white, 0);
     lv_label_set_text(_pi_conclusion, "-");
 
     // Vùng cuộn: Signature/HEX -> Các bước kiểm tra -> Verified/Repair case.
     _pi_detail = lv_obj_create(_screen);
-    lv_obj_set_size(_pi_detail, 976, 170);
-    lv_obj_align(_pi_detail, LV_ALIGN_TOP_LEFT, 24, 294);
+    lv_obj_set_size(_pi_detail, 976, 152);
+    lv_obj_align(_pi_detail, LV_ALIGN_TOP_LEFT, 24, 312);
     lv_obj_set_style_bg_opa(_pi_detail, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_pi_detail, 0, 0);
     lv_obj_set_style_pad_all(_pi_detail, 2, 0);

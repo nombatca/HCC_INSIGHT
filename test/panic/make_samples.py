@@ -153,6 +153,16 @@ def main():
     sample("smc_d94_other_hex", "nhu #17 nhung S.sensor[1] = 0x180000", product="iPhone17,2",
            panic_string="panic(cpu 2 caller 0xfffffff0441a2b3c): " + smc % 1572864 + TAIL)
 
+    # 20. Như #17 nhưng dump firmware có dòng RTKit KHÔNG đứng đầu dòng + thanh ghi mailbox
+    #     (mô phỏng panic thật iPhone17,2 trong ảnh chụp người dùng; định dạng dòng là GIẢ ĐỊNH).
+    dump = ("\n - Misc(2) OUTBOX1 not ready\n"
+            "Firmware info: RTKit-3082.40.2.release - Client: AppleSMCFirmware_H17-6164.REL\n"
+            "MailBox(0): (0)\n Inbox KIC_INBOX_CTRL = 0x00020001, AKF_KIC_MAILBOX_SET = 0x11111101\n"
+            " Outbox AKF_AP_OUTBOX_CTRL = 0x00020001, AKF_AP_MAILBOX_SET = 0x00000001\n"
+            "0x5441435000001013 [TX] user01 0x00000001169eae98\n")
+    sample("smc_d94_firmware_dump", "nhu #17 + dump firmware dang khac (GIA DINH)", product="iPhone17,2",
+           panic_string="panic(cpu 2 caller 0xfffffff0441a2b3c): " + smc % 3145728 + dump + TAIL)
+
     # 16. Text thô (không JSON) - vd chữ AI chép từ ảnh panic.
     with open(os.path.join(OUT, "text_only.ips"), "w") as f:
         f.write("bug_type: 210\nproduct: iPhone13,2\nOS Version: iPhone OS 16.7.2 (20H115)\n"

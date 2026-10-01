@@ -1,0 +1,7 @@
+# Dump firmware (RTKit / mailbox) không phải thông điệp: không thành mã lỗi, driver hay signature
+same_signature: smc_d94_taop_taoc
+has: firmware_client: AppleSMCFirmware_H17-6164.REL
+has: mailbox: TX 0x5441435000001013 ascii=TACP
+lacks: code: AKF_
+lacks: code: KIC_
+lacks: applesmcfirmware

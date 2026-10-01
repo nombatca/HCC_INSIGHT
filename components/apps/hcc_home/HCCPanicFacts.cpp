@@ -106,13 +106,28 @@ const char *kMetadataPrefixes[] = {
     "kernelcache base:", "kernel text exec", "rtkit-",
 };
 
+// Dòng mở đầu / thuộc dump firmware coprocessor (RTKit) sau thông điệp: mỗi bản iOS ghi hơi khác
+// ("RTKit-2758... - Client: ...", "RTKit: RTKit-...", "Firmware: ... Client: AppleSMCFirmware_H17...",
+// "MailBox(0)", "Inbox AKF_...", "Call Stack:"...). Không phải thông điệp panic.
+bool isFirmwareDumpLine(const std::string &low_trimmed)
+{
+    static const char *starts[] = {"rtkit", "mailbox(", "inbox ", "outbox ", "call stack", "naslr slide",
+                                   "time: 0x", "uuid:", "mcm", "dir endpoint", "========="};
+    for (const char *p : starts) {
+        if (startsWith(low_trimmed, p)) return true;
+    }
+    return low_trimmed.find("client: apple") != std::string::npos ||
+           low_trimmed.find("- client:") != std::string::npos ||
+           low_trimmed.find("_err_sts") != std::string::npos;
+}
+
 bool isMetadataLine(const std::string &low_trimmed)
 {
     for (const char *p : kMetadataPrefixes) {
         std::string lp = toLower(p);
         if (startsWith(low_trimmed, lp.c_str())) return true;
     }
-    return false;
+    return isFirmwareDumpLine(low_trimmed);
 }
 
 // "Thông điệp" kernel exception do xnu arm64/sleh.c tạo (đầu thông điệp).
@@ -424,12 +439,16 @@ private:
                     size_t c2 = pt.find(':', pid);
                     if (c2 != std::string::npos) f.panicked_task = trim(pt.substr(c2 + 1));
                 }
-            } else if (startsWith(lt, "rtkit-") && f.firmware_rtkit.empty()) {
-                // "RTKit-2758.40.19.release - Client: AppleSMCFirmware,HIT-..."
-                size_t sp = t.find(' ');
-                f.firmware_rtkit = t.substr(0, sp);
+            } else if (f.firmware_rtkit.empty() && lt.find("rtkit-") != std::string::npos) {
+                // "RTKit-2758.40.19.release - Client: AppleSMCFirmware,HIT-..." (có thể có tiền tố)
+                size_t r = lt.find("rtkit-");
+                size_t sp = t.find_first_of(" ,", r);
+                f.firmware_rtkit = t.substr(r, sp == std::string::npos ? std::string::npos : sp - r);
                 size_t cl = lt.find("client:");
                 if (cl != std::string::npos) f.firmware_client = trim(t.substr(cl + 7));
+            }
+            if (f.firmware_client.empty() && lt.find("client:") != std::string::npos && isFirmwareDumpLine(lt)) {
+                f.firmware_client = trim(t.substr(lt.find("client:") + 7));
             }
         }
     }
@@ -885,7 +904,7 @@ private:
                 if (lexicalTags(tok).empty()) continue;
                 const std::string lt = toLower(tok);
                 // Bỏ từ chung chung (đã có loại panic riêng) và tiền tố "0x...".
-                if (lt == "panic" || startsWith(lt, "0x")) continue;
+                if (lt == "panic" || startsWith(lt, "0x") || lt.find("firmware") != std::string::npos) continue;
                 bool known = false;
                 for (const auto &d : f.drivers) {
                     // Mảnh của tên đã có (busy entry bị ngắt dòng "'smc-" / "charger'") -> bỏ.
@@ -1020,6 +1039,10 @@ private:
         ig.evidence = ev("panicString", line.number, line.text);
         if (ll == "caller") {
             ig.reason = "caller_address";
+        } else if (ll.find("_ctrl") != std::string::npos || ll.find("mailbox") != std::string::npos ||
+                   ll.find("inbox") != std::string::npos || ll.find("outbox") != std::string::npos ||
+                   startsWith(ll, "akf_") || startsWith(ll, "kic_")) {
+            ig.reason = "firmware_register";  // thanh ghi mailbox coprocessor (dump RTKit), không phải mã lỗi
         } else if (base == 16 && (digits > 10 || v >= 0xFFFFFF0000000000ULL)) {
             ig.reason = "kernel_address";  // con trỏ 64-bit (vd 0xfffffff0...)
         } else if (ll == "state" || ll == "thread" || ll == "task" || ll == "va" || ll == "addr" ||
