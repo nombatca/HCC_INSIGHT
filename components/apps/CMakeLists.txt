@@ -11,6 +11,8 @@ list(APPEND APPS_C_SRCS ${APPS_DIR}/hcc_home/assets/img_hcc_home_wallpaper.c)
 idf_component_register(
     SRCS ${APPS_C_SRCS} ${APPS_CPP_SRCS}
     INCLUDE_DIRS ${APPS_DIR}
+    # Knowledge Base V1 mặc định cho phân tích panic (HCCPanicKBStore::defaultKbJson).
+    EMBED_TXTFILES ${APPS_DIR}/hcc_home/kb/hcc_kb_default.json
     REQUIRES lvgl__lvgl esp_event esp_wifi esp_http_client esp_http_server nvs_flash esp_driver_jpeg esp_mm esp-brookesia product_audio esp32_p4_wifi6_touch_lcd_7b esp_video vn_fonts esp_netif mbedtls esp_websocket_client json usb mdns)
 
 target_compile_options(

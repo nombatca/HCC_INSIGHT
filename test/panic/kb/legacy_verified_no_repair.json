@@ -1,0 +1,21 @@
+{
+	"match":	{"model": "iPhone12,1", "panic_type": "210", "keyword": ""},
+	"error":	"TEST - case cũ VERIFIED thiếu cách sửa",
+	"cause":	"",
+	"repair":	"",
+	"confidence":	"Cao - da kiem chung (VERIFIED)",
+	"tier":	"VERIFIED",
+	"case":	{
+		"panic_file":	"watchdog_timeout.ips",
+		"model":	"iPhone12,1",
+		"panic_type":	"210",
+		"signature":	"iphone12,1|210|watchdog",
+		"code_hex":	"",
+		"source":	"",
+		"hardware":	"TEST",
+		"repair_action":	"",
+		"note":	"",
+		"created_at":	"2026-09-02 10:00",
+		"status":	"VERIFIED"
+	}
+}

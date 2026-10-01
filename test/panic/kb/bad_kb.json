@@ -1,0 +1,25 @@
+{
+  "kb_version": 1,
+  "sources": [
+    {"id": "forum", "type": "community", "title": "forum post"},
+    {"id": "apple", "type": "apple_doc", "title": "apple doc"}
+  ],
+  "kind_rules": [
+    {"id": "bad.documented_community", "kind": "smc", "group": "SMC_SENSOR",
+     "mechanism": {"value": "x", "level": "DOCUMENTED", "sources": ["forum"]}},
+    {"id": "bad.documented_nosource", "kind": "aop", "group": "AOP",
+     "mechanism": {"value": "x", "level": "DOCUMENTED"}},
+    {"id": "bad.inferred_noreason", "kind": "sep", "group": "SEP",
+     "mechanism": {"value": "x", "level": "INFERRED"}},
+    {"id": "bad.verified_in_rule", "kind": "pmu", "group": "POWER_PMU",
+     "mechanism": {"value": "x", "level": "VERIFIED", "sources": ["apple"]}},
+    {"id": "bad.missing_source", "kind": "baseband", "group": "BASEBAND",
+     "mechanism": {"value": "x", "level": "DOCUMENTED", "sources": ["nope"]}},
+    {"id": "good.documented", "kind": "i2c", "group": "",
+     "mechanism": {"value": "x", "level": "DOCUMENTED", "sources": ["apple"]}}
+  ],
+  "driver_rules": [
+    {"id": "bad.one_keyword", "group": "USB_PHY", "match": {"exact": ["foo"]}, "requires_facts": 1,
+     "subsystem": {"value": "x", "level": "INFERRED", "reasoning": "r"}}
+  ]
+}

@@ -1,0 +1,266 @@
+{
+  "kb_version": 1,
+  "schema": "hcc.kb.v1",
+  "note": "KB mặc định nhúng trong firmware. Mức bằng chứng: DOCUMENTED (nguồn apple_source/apple_doc/standard), INFERRED (phải có reasoning), UNKNOWN. VERIFIED chỉ đến từ case sửa thực tế trên SD (kb/v1/cases), không có trong file này.",
+
+  "sources": [
+    {"id": "xnu_ioservice", "type": "apple_source", "title": "xnu iokit/Kernel/IOService.cpp - busy timeout / waitQuiet panic", "ref": "https://github.com/apple-oss-distributions/xnu/blob/main/iokit/Kernel/IOService.cpp"},
+    {"id": "xnu_debug", "type": "apple_source", "title": "xnu osfmk/kern/debug.c - panic(cpu N caller ...)", "ref": "https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/debug.c"},
+    {"id": "xnu_model_dep", "type": "apple_source", "title": "xnu osfmk/arm/model_dep.c - metadata panic log ARM", "ref": "https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/arm/model_dep.c"},
+    {"id": "xnu_sleh", "type": "apple_source", "title": "xnu osfmk/arm64/sleh.c - kernel exception, register dump", "ref": "https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/arm64/sleh.c"},
+    {"id": "arm_arm", "type": "standard", "title": "Arm Architecture Reference Manual for A-profile - ESR_ELx.EC", "ref": "https://developer.arm.com/documentation/ddi0487/latest"},
+    {"id": "apple_ips", "type": "apple_doc", "title": "Apple - Interpreting the JSON format of a crash report (.ips)", "ref": "https://developer.apple.com/documentation/xcode/interpreting-the-json-format-of-a-crash-report"},
+    {"id": "apple_sep", "type": "apple_doc", "title": "Apple Platform Security - Secure Enclave", "ref": "https://support.apple.com/guide/security/sec59b0b31ff"},
+    {"id": "apple_mac_smc", "type": "apple_doc", "title": "Apple Support - Reset the SMC of your Mac (vai trò SMC trên Mac Intel)", "ref": "https://support.apple.com/102605", "note": "Chỉ nói về Mac; dùng cho iPhone là suy luận."},
+    {"id": "nxp_i2c", "type": "standard", "title": "NXP UM10204 - I2C-bus specification and user manual", "ref": "https://www.nxp.com/docs/en/user-guide/UM10204.pdf"},
+    {"id": "nvme_spec", "type": "standard", "title": "NVM Express Base Specification", "ref": "https://nvmexpress.org/specifications/"},
+    {"id": "usb_typec", "type": "standard", "title": "USB-IF USB Type-C Cable and Connector Specification (Dual-Role Data)", "ref": "https://www.usb.org/usb-type-cr-cable-and-connector-specification"},
+    {"id": "ifixit_kernel_panics", "type": "community", "title": "iFixit Wiki - iPhone Kernel Panics", "ref": "https://www.ifixit.com/Wiki/iPhone_Kernel_Panics"},
+    {"id": "ifixit_smc_assert", "type": "community", "title": "iFixit Wiki - iPhone SMC Panic Assertion Failed", "ref": "https://www.ifixit.com/Wiki/iPhone_SMC_Panic_Assertion_Failed"},
+    {"id": "dfrws_2025", "type": "research", "title": "DFRWS APAC 2025 - A study on the recovery of damaged iPhone (panic-full)", "ref": "https://dfrws.org/wp-content/uploads/2025/10/A-study-on-the-recovery-of-damaged-iPhone-h_2025_Forensic-Science-Internatio.pdf"},
+    {"id": "hcc_real_2026_09", "type": "hcc_observation", "title": "2 panic thật người dùng HCC gửi (test/panic/samples/real) - chưa có kết quả sửa", "ref": "test/panic/samples/real"}
+  ],
+
+  "groups": [
+    {"id": "SMC_SENSOR", "name": "SMC / Sensor", "kinds": ["smc"], "tags": ["smc"]},
+    {"id": "USB_PHY", "name": "USB / USB-C / PHY", "kinds": ["usb_phy"], "tags": ["usb_phy"]},
+    {"id": "BASEBAND", "name": "Baseband", "kinds": ["baseband"], "tags": ["baseband"]},
+    {"id": "ANS_NAND", "name": "ANS / NAND / NVMe", "kinds": ["ans_nvme"], "tags": ["ans_nvme"]},
+    {"id": "POWER_PMU", "name": "Power / PMU", "kinds": ["pmu"], "tags": ["pmu"]},
+    {"id": "WATCHDOG", "name": "Watchdog / timeout", "kinds": ["busy_timeout", "iokit_daemon_stall", "userspace_watchdog", "watchdog_timeout"], "tags": []},
+    {"id": "AOP", "name": "AOP", "kinds": ["aop"], "tags": ["aop"]},
+    {"id": "SEP", "name": "SEP (Secure Enclave)", "kinds": ["sep"], "tags": ["sep"]},
+    {"id": "KERNEL_SOFTWARE", "name": "Kernel / Software", "kinds": ["kernel_exception", "kernel_generic"], "tags": []}
+  ],
+
+  "kind_rules": [
+    {
+      "id": "kind.busy_timeout", "kind": "busy_timeout", "group": "WATCHDOG",
+      "mechanism": {"value": "IOKit: một hoặc nhiều IOService (driver) giữ registry ở trạng thái busy quá thời hạn ghi trong log (N giây) nên kernel panic. Tên trong dấu nháy là các driver đang giữ busy; (x,y) là biến trạng thái nội bộ __state[0..1], không phải mã lỗi.", "level": "DOCUMENTED", "sources": ["xnu_ioservice"]},
+      "hardware_area": {"value": "Khối phần cứng do (các) driver giữ busy điều khiển - phải xác định theo từng driver", "level": "INFERRED", "reasoning": "Driver thường chờ phần cứng nó điều khiển; phần cứng không phản hồi thì driver không thoát busy. Busy timeout cũng có thể do lỗi phần mềm của driver."},
+      "checks": [
+        {"step": "Đọc danh sách driver giữ busy (role=busy_entry): đó là các đối tượng IOKit bị kẹt.", "level": "DOCUMENTED", "sources": ["xnu_ioservice"]},
+        {"step": "Nhiều driver cùng kẹt một lúc: ưu tiên kiểm tra tài nguyên chung (nguồn/bus chung) trước từng linh kiện.", "level": "INFERRED", "reasoning": "Nhiều driver độc lập cùng kẹt đồng thời thường phụ thuộc chung một tài nguyên."},
+        {"step": "Restore/cập nhật iOS để loại trừ lỗi phần mềm trước khi can thiệp phần cứng.", "level": "INFERRED", "reasoning": "Busy timeout có thể do driver phần mềm."}
+      ]
+    },
+    {
+      "id": "kind.iokit_daemon_stall", "kind": "iokit_daemon_stall", "group": "WATCHDOG",
+      "mechanism": {"value": "IOKit: registry chờ quá hạn vì daemon IOKit chưa xử lý xong các yêu cầu đang chờ.", "level": "DOCUMENTED", "sources": ["xnu_ioservice"]},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Restore/cập nhật iOS; đối chiếu case cùng signature.", "level": "INFERRED", "reasoning": "Thông điệp chỉ nói daemon phần mềm chưa phản hồi."}
+      ]
+    },
+    {
+      "id": "kind.userspace_watchdog", "kind": "userspace_watchdog", "group": "WATCHDOG",
+      "mechanism": {"value": "Dịch vụ hệ thống (vd thermalmonitord) không check-in với watchdog trong thời hạn ghi trong log nên máy panic và khởi động lại. Với thermalmonitord, log thường kèm 'Missing sensor(s)': các sensor dịch vụ không đọc được.", "level": "INFERRED", "sources": ["ifixit_kernel_panics", "dfrws_2025"], "reasoning": "Suy từ chính thông điệp + báo cáo cộng đồng; watchdogd / thermalmonitord không có mã nguồn công khai."},
+      "hardware_area": {"value": "Các sensor được liệt kê trong 'Missing sensor(s)' (vị trí phụ thuộc model)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Báo cáo cộng đồng: thay/sửa cụm chứa sensor bị thiếu thường hết lỗi. Chưa có case HCC."},
+      "checks": [
+        {"step": "Tra từng sensor trong 'Missing sensor(s)' theo đúng model; nếu chưa có mapping thì giữ UNKNOWN, không đoán.", "level": "INFERRED", "reasoning": "Tên sensor -> vị trí khác nhau giữa các model."},
+        {"step": "Đối chiếu số giây trong log (thường 180 s) với chu kỳ khởi động lại thực tế của máy.", "level": "INFERRED", "reasoning": "Thời hạn watchdog ghi trực tiếp trong thông điệp."}
+      ]
+    },
+    {
+      "id": "kind.watchdog_timeout", "kind": "watchdog_timeout", "group": "WATCHDOG",
+      "mechanism": {"value": "watchdogd không check-in trong thời hạn nên kernel watchdog panic (hệ thống bị treo).", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Suy từ thông điệp 'no checkins from watchdogd'; watchdogd không có mã nguồn công khai."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Tìm thêm dữ kiện khác trong log (driver, sensor) trước khi khoanh vùng phần cứng.", "level": "INFERRED", "reasoning": "Treo hệ thống có nhiều nguyên nhân."}
+      ]
+    },
+    {
+      "id": "kind.smc", "kind": "smc", "group": "SMC_SENSOR",
+      "mechanism": {"value": "Firmware SMC (coprocessor chạy RTKit, client AppleSMCFirmware) báo lỗi/ASSERT và làm kernel panic.", "level": "INFERRED", "sources": ["apple_mac_smc", "ifixit_smc_assert", "hcc_real_2026_09"], "reasoning": "Apple chỉ mô tả SMC trên Mac (nguồn, sạc, nhiệt, sensor); trên iPhone suy từ tên + log thật (client AppleSMCFirmware)."},
+      "hardware_area": {"value": "Khối nguồn / sạc / sensor do SMC giám sát - cụ thể theo ASSERT và sensor array", "level": "INFERRED", "sources": ["apple_mac_smc", "ifixit_smc_assert"], "reasoning": "Theo vai trò SMC trên Mac + báo cáo cộng đồng; ý nghĩa từng ASSERT / phần tử sensor array chưa có tài liệu."},
+      "checks": [
+        {"step": "Ghi lại ASSERT text và các phần tử S.sensor / F.sensor khác 0; đối chiếu VERIFIED case cùng model.", "level": "INFERRED", "reasoning": "Đó là các dữ kiện cụ thể duy nhất trong SMC PANIC."},
+        {"step": "Không thay linh kiện chỉ dựa trên một phần tử sensor array chưa có mapping.", "level": "INFERRED", "reasoning": "Ý nghĩa phần tử / bit chưa có tài liệu."}
+      ]
+    },
+    {
+      "id": "kind.aop", "kind": "aop", "group": "AOP",
+      "mechanism": {"value": "Coprocessor AOP (Always-On Processor) báo panic.", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Giải nghĩa tên AOP theo cộng đồng; Apple không công bố tài liệu AOP."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Ghi lại chuỗi sau 'AOP' và đối chiếu case cùng signature.", "level": "INFERRED", "reasoning": "Chưa có mapping phần cứng."}
+      ]
+    },
+    {
+      "id": "kind.sep", "kind": "sep", "group": "SEP",
+      "mechanism": {"value": "Secure Enclave Processor (bộ xử lý bảo mật riêng chạy sepOS) báo panic.", "level": "DOCUMENTED", "sources": ["apple_sep"]},
+      "hardware_area": {"value": "Secure Enclave là subsystem bảo mật riêng trong SoC; nguyên nhân phần cứng ngoài SoC: UNKNOWN", "level": "DOCUMENTED", "sources": ["apple_sep"]},
+      "checks": [
+        {"step": "Ghi lại chuỗi sau 'SEP Panic' và đối chiếu case; không suy ra linh kiện ngoài SoC khi chưa có case.", "level": "INFERRED", "reasoning": "Chưa có tài liệu nối SEP panic với linh kiện cụ thể."}
+      ]
+    },
+    {
+      "id": "kind.ans_nvme", "kind": "ans_nvme", "group": "ANS_NAND",
+      "mechanism": {"value": "Bộ điều khiển lưu trữ (driver ANS / NVMe) báo lỗi.", "level": "INFERRED", "sources": ["nvme_spec"], "reasoning": "Tên driver chứa ANS / NVMe; NVMe là giao thức lưu trữ chuẩn; 'ANS' chưa có tài liệu Apple."},
+      "hardware_area": {"value": "Khối lưu trữ (NAND) và bộ điều khiển", "level": "INFERRED", "sources": ["nvme_spec"], "reasoning": "Suy từ tên driver."},
+      "checks": [
+        {"step": "Restore để loại trừ phần mềm; nếu còn lỗi cùng signature thì đối chiếu case.", "level": "INFERRED", "reasoning": "Lỗi lưu trữ có thể do phần mềm hoặc phần cứng."}
+      ]
+    },
+    {
+      "id": "kind.baseband", "kind": "baseband", "group": "BASEBAND",
+      "mechanism": {"value": "Khối baseband (modem di động) báo lỗi / reset.", "level": "INFERRED", "reasoning": "'Baseband' là thuật ngữ chung cho modem di động; thông điệp chi tiết không có tài liệu."},
+      "hardware_area": {"value": "Khối modem / baseband", "level": "INFERRED", "reasoning": "Suy từ tên trong thông điệp."},
+      "checks": []
+    },
+    {
+      "id": "kind.pmu", "kind": "pmu", "group": "POWER_PMU",
+      "mechanism": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Xác định 'PMU' là Power Management Unit hay ARM Performance Monitoring Unit trước khi khoanh vùng.", "level": "INFERRED", "reasoning": "Cùng chữ viết tắt cho hai khối khác nhau."}
+      ]
+    },
+    {
+      "id": "kind.i2c", "kind": "i2c", "group": "",
+      "mechanism": {"value": "Thông điệp nêu bus I2C (i2cN). I2C là bus 2 dây SDA/SCL; một thiết bị giữ SDA ở mức thấp có thể làm treo cả bus.", "level": "DOCUMENTED", "sources": ["nxp_i2c"]},
+      "hardware_area": {"value": "Thiết bị trên bus i2cN - phụ thuộc model, UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Cần sơ đồ / case theo model để biết thiết bị nào nằm trên bus N; không đoán.", "level": "INFERRED", "reasoning": "Danh sách thiết bị trên từng bus không công khai."}
+      ]
+    },
+    {
+      "id": "kind.usb_phy", "kind": "usb_phy", "group": "USB_PHY",
+      "mechanism": {"value": "Driver USB / Type-C / PHY có tên trong panic.", "level": "INFERRED", "reasoning": "Nhận theo tên driver (atc*, *dpphy*, usb-drd*)."},
+      "hardware_area": {"value": "Cổng USB-C / Lightning và đường tín hiệu tới SoC", "level": "INFERRED", "reasoning": "PHY là lớp vật lý của cổng; suy từ tên driver."},
+      "checks": []
+    },
+    {
+      "id": "kind.kernel_exception", "kind": "kernel_exception", "group": "KERNEL_SOFTWARE",
+      "mechanism": {"value": "CPU gặp exception khi chạy ở kernel (vd Data Abort); ESR.EC cho biết lớp exception.", "level": "DOCUMENTED", "sources": ["xnu_sleh", "arm_arm"]},
+      "hardware_area": {"value": "Ưu tiên phần mềm / driver; chỉ nghi RAM / SoC khi lặp lại cùng kiểu sau restore", "level": "INFERRED", "reasoning": "Exception kernel đa số do lỗi phần mềm; lỗi phần cứng bộ nhớ hiếm hơn và thường không lặp cùng địa chỉ."},
+      "checks": [
+        {"step": "Restore iOS; nếu panic lặp lại cùng lớp ESR thì thu thêm log để đối chiếu.", "level": "INFERRED", "reasoning": "Loại trừ phần mềm trước."}
+      ]
+    },
+    {
+      "id": "kind.kernel_generic", "kind": "kernel_generic", "group": "KERNEL_SOFTWARE",
+      "mechanism": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "checks": [
+        {"step": "Restore iOS; đối chiếu case cùng signature.", "level": "INFERRED", "reasoning": "Thông điệp không thuộc nhóm đã biết."}
+      ]
+    }
+  ],
+
+  "driver_rules": [
+    {
+      "id": "drv.atc_dpphy", "group": "USB_PHY",
+      "match": {"prefix": ["atc"], "contains": ["dpphy"]},
+      "subsystem": {"value": "PHY cổng Type-C / DisplayPort (theo tên driver)", "level": "INFERRED", "reasoning": "Tên chứa 'atc' và 'dpphy' (DisplayPort PHY); Apple không công bố driver này."},
+      "hardware_area": {"value": "Cổng USB-C và đường tín hiệu tới SoC", "level": "INFERRED", "reasoning": "PHY là lớp vật lý của cổng."},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.usb_drd", "group": "USB_PHY",
+      "match": {"prefix": ["usb-drd"]},
+      "subsystem": {"value": "Bộ điều khiển USB dual-role (host/device)", "level": "INFERRED", "sources": ["usb_typec"], "reasoning": "DRD = Dual-Role Data theo chuẩn USB Type-C; gán cho driver usb-drdN theo tên."},
+      "hardware_area": {"value": "Đường data USB của cổng sạc", "level": "INFERRED", "reasoning": "Suy từ chức năng dual-role data."},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.ans_nvme", "group": "ANS_NAND",
+      "match": {"prefix": ["appleans", "ans2", "ans3"], "contains": ["nvme"]},
+      "subsystem": {"value": "Bộ điều khiển lưu trữ NVMe (ANS)", "level": "INFERRED", "sources": ["nvme_spec"], "reasoning": "Tên driver chứa ANS / NVMe."},
+      "hardware_area": {"value": "Khối lưu trữ (NAND) và bộ điều khiển", "level": "INFERRED", "reasoning": "Suy từ tên driver."},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.smc", "group": "SMC_SENSOR",
+      "match": {"exact": ["smc"], "prefix": ["applesmc"]},
+      "subsystem": {"value": "SMC (System Management Controller)", "level": "INFERRED", "sources": ["apple_mac_smc"], "reasoning": "Tên 'SMC'/'AppleSMC'; vai trò SMC chỉ có tài liệu trên Mac."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.baseband", "group": "BASEBAND",
+      "match": {"contains": ["baseband"]},
+      "subsystem": {"value": "Driver baseband / modem", "level": "INFERRED", "reasoning": "Tên chứa 'baseband'."},
+      "hardware_area": {"value": "Khối modem / baseband", "level": "INFERRED", "reasoning": "Suy từ tên."},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.sep", "group": "SEP",
+      "match": {"exact": ["sep"], "prefix": ["applesep"]},
+      "subsystem": {"value": "Secure Enclave Processor", "level": "INFERRED", "sources": ["apple_sep"], "reasoning": "'SEP' là viết tắt Secure Enclave Processor (Apple gọi hệ điều hành của nó là sepOS); gán theo tên."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.aop", "group": "AOP",
+      "match": {"exact": ["aop"], "prefix": ["appleaop"]},
+      "subsystem": {"value": "AOP (Always-On Processor)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Giải nghĩa tên theo cộng đồng."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "bus_rail": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    },
+    {
+      "id": "drv.i2c", "group": "",
+      "match": {"prefix": ["i2c"]},
+      "subsystem": {"value": "Bộ điều khiển bus I2C số N (theo tên i2cN)", "level": "INFERRED", "sources": ["nxp_i2c"], "reasoning": "Tên driver i2c + số bus."},
+      "hardware_area": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "bus_rail": {"value": "Bus I2C (số theo tên driver)", "level": "INFERRED", "reasoning": "Số trong tên driver là số bus."},
+      "components": {"value": "UNKNOWN", "level": "UNKNOWN"},
+      "requires_facts": 2
+    }
+  ],
+
+  "sensor_rules": [
+    {
+      "id": "sensor.prs0", "name": "PRS0", "models": [],
+      "meaning": {"value": "Cảm biến áp suất (barometer)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "iFixit liệt kê PRS0 là barometer."},
+      "location": {"value": "UNKNOWN", "level": "UNKNOWN"}
+    },
+    {
+      "id": "sensor.prs0_iphone_x", "name": "PRS0", "models": ["iPhone10,3", "iPhone10,6"],
+      "meaning": {"value": "Cảm biến áp suất (barometer)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "iFixit liệt kê PRS0 là barometer."},
+      "location": {"value": "Trên cụm cáp chân sạc", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Báo cáo cộng đồng (iFixit) cho iPhone X; chưa có case HCC."}
+    },
+    {
+      "id": "sensor.mic1", "name": "mic1", "models": [],
+      "meaning": {"value": "Micro (iFixit: mic dưới)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Tên 'mic' + iFixit."},
+      "location": {"value": "UNKNOWN", "level": "UNKNOWN"}
+    },
+    {
+      "id": "sensor.mic2", "name": "mic2", "models": [],
+      "meaning": {"value": "Micro (iFixit: mic sau)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Tên 'mic' + iFixit."},
+      "location": {"value": "UNKNOWN", "level": "UNKNOWN"}
+    }
+  ],
+
+  "code_rules": [],
+
+  "unknowns": [
+    {"id": "unk.s_sensor_array", "what": "code", "value": "s.sensor[*]", "reason": "ý nghĩa phần tử S.sensor array và từng bit chưa có tài liệu (vd S.sensor[1]=1572864, bit 19,20 trong panic thật); chưa có case sửa xác nhận", "seen_in": "test/panic/samples/real/smc_bsc_failure_fragment.ips"},
+    {"id": "unk.f_sensor_array", "what": "code", "value": "f.sensor[*]", "reason": "ý nghĩa phần tử F.sensor array chưa có tài liệu"},
+    {"id": "unk.smc_bsc", "what": "assert_text", "value": "smc bsc failure", "reason": "chưa có tài liệu nghĩa 'BSC'; thấy trong panic thật (kernel T8140)", "seen_in": "test/panic/samples/real/smc_bsc_failure_fragment.ips"},
+    {"id": "unk.mailbox", "what": "mailbox_ascii", "value": "*", "reason": "4 byte cao đọc được ASCII (vd TG0B, B0S5, B0FG...) giống tên khoá SMC - chỉ là quan sát, ý nghĩa khoá chưa có tài liệu"},
+    {"id": "unk.kernel_target", "what": "kernel_target", "value": "*", "reason": "tên cấu hình kernel (Txxxx); chưa có bảng đối chiếu sang model đã kiểm chứng"},
+    {"id": "unk.smc_charger", "what": "driver", "value": "smc-charger", "reason": "tên driver thấy trong panic thật iPhone13,4 (busy timeout); chức năng / phần cứng chưa có tài liệu hay case xác nhận", "seen_in": "test/panic/samples/real/busy_timeout_smc_charger_iphone13_4.ips"},
+    {"id": "unk.smc_ext_charger", "what": "driver", "value": "smc-ext-charger", "reason": "tên driver thấy trong panic thật iPhone13,4; chức năng / phần cứng chưa có tài liệu hay case xác nhận"},
+    {"id": "unk.portmicro", "what": "driver", "value": "portmicro", "reason": "tên driver thấy trong panic thật iPhone13,4; chức năng / phần cứng chưa có tài liệu hay case xác nhận"},
+    {"id": "unk.lap_uart_1", "what": "driver", "value": "lap-uart-1", "reason": "tên driver thấy trong panic thật iPhone13,4; chức năng / phần cứng chưa có tài liệu hay case xác nhận"},
+    {"id": "unk.audio_codec", "what": "driver", "value": "audio-codec", "reason": "tên driver thấy trong panic thật iPhone13,4; gợi ý codec âm thanh theo tên nhưng chưa có tài liệu / case nối với linh kiện"},
+    {"id": "unk.lapoverusbhid", "what": "driver", "value": "lapoverusbhid", "reason": "tên driver thấy trong panic thật iPhone13,4 (entry bị cắt); chức năng chưa có tài liệu"},
+    {"id": "unk.tg0b", "what": "sensor", "value": "tg0b", "reason": "tên sensor chưa có tài liệu"},
+    {"id": "unk.s_sensor_index", "what": "sensor", "value": "s.sensor[*]", "reason": "phần tử khác 0 của S.sensor array; sensor nào ứng với chỉ số nào chưa có tài liệu"}
+  ]
+}

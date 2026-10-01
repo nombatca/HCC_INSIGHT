@@ -1,0 +1,27 @@
+{
+  "schema": "hcc.case.v1",
+  "id": "example_iphone15_4_busy_usbc",
+  "status": "VERIFIED",
+  "model": "iPhone15,4",
+  "ios": "iPhone OS 17.5 (21F90)",
+  "panic_type": "210",
+  "primary_kind": "busy_timeout",
+  "signature": "v1|iPhone15,4|210|busy_timeout|k=busy_timeout,usb_phy|d=atc-dpphy0,atc0-dpphy,usb-drd0|s=-|c=-|w=-|x=-|a=-",
+  "signature_generic": "v1|*|210|busy_timeout|k=busy_timeout,usb_phy|d=atc-dpphy0,atc0-dpphy,usb-drd0|s=-|c=-|w=-|x=-|a=-",
+  "drivers": ["atc0-dpphy", "atc-dpphy0", "usb-drd0"],
+  "sensors": [],
+  "codes": [],
+  "hardware_area": "VÍ DỤ MẪU - không phải ca thật",
+  "components": [{"name": "VÍ DỤ: cụm cáp chân sạc", "ref": "", "action": "replaced"}],
+  "bus_rail": ["VÍ DỤ: tên rail/bus đo được"],
+  "measurements": [
+    {"point": "VÍ DỤ: chân VBUS", "type": "voltage", "before": "0", "after": "5.0", "unit": "V", "note": ""},
+    {"point": "VÍ DỤ: đường D+", "type": "diode", "before": "OL", "after": "0.45", "unit": "V", "note": ""}
+  ],
+  "repair_action": "VÍ DỤ: thay cụm cáp chân sạc",
+  "result": {"panic_resolved": true, "observed_days": 3, "note": "VÍ DỤ: theo dõi 3 ngày không panic lại"},
+  "notes": "File mẫu để copy khi thêm case thật. Đây KHÔNG phải ca sửa thật.",
+  "date": "2026-10-01",
+  "technician": "",
+  "evidence": {"panic_file": "busy_timeout_usbc.ips", "panic_excerpt": "busy timeout[0], (60s): ... 'atc0-dpphy' ...", "attachments": []}
+}
