@@ -766,7 +766,10 @@ private:
                 size_t c1 = rest.find(':');
                 size_t c2 = (c1 == std::string::npos) ? c1 : rest.find(':', c1 + 1);
                 if (c2 != std::string::npos && isdigit((unsigned char)rest[c1 + 1])) {
-                    f.assert_location = rest.substr(0, c2);
+                    // Đường dẫn không chứa khoảng trắng: bỏ khoảng trắng do copy/OCR chèn vào ("target/ d94/...")
+                    for (char ch : rest.substr(0, c2)) {
+                        if (!isspace((unsigned char)ch)) f.assert_location += ch;
+                    }
                     // "target/d47/target.cpp" -> "d47"
                     size_t tp = f.assert_location.find("target/");
                     if (tp != std::string::npos) {

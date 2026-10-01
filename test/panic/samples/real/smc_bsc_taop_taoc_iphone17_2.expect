@@ -1,0 +1,21 @@
+# Panic THẬT iPhone17,2 (người dùng gửi, 2026-10-01; panic ngày 2026-08-24). crashReporterKey đã xoá.
+# Văn bản có lỗi copy/OCR: "target/ d94", "12c_err_inf", "nRTKit:", UUID tách. Cuối log bị cắt.
+has: product: iPhone17,2
+has: os_version: iPhone OS 26.4.2 (23E261)
+has: kernel_target: T8140
+has: primary_kind: smc
+has: assert_location: target/d94/target.cpp:250
+has: assert_text: SMC BSC failure
+has: smc_target: d94
+has: assert_tags: TAOP,TAOC
+has: code: S.sensor[1] raw=3145728 hex=0x300000 dec=3145728 bits=[20,21] ctx=smc
+has: sensor: S.sensor[1] ctx=sensor_array_nonzero  <- L3
+has: firmware_rtkit: RTKit-3255.100.143.release
+has: firmware_client: AppleSMCFirmware_H17-6164.102.4.d94.REL
+has: note: Ý nghĩa từng bit của S.sensor[1] 0x300000: UNKNOWN - chưa có bảng bit đã kiểm chứng
+# mailbox [RX]/[TX], call stack, *_err_sts, AKF_* không phải mã lỗi
+lacks: code: AKF_
+lacks: code: KIC_
+lacks: 0x443150640002a010 (
+lacks: kind: i2c
+has: signature: v1|iPhone17,2|210|smc|k=smc|d=smc|s=s.sensor[1]|c=0x300000|w=-|x=-|a=smc bsc failure|t=d94|g=TAOC,TAOP

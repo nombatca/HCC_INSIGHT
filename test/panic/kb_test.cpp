@@ -356,7 +356,7 @@ int main(int argc, char **argv)
     printf("[10] Basic / Detail\n");
     {
         const char *names[] = {"samples/real/busy_timeout_smc_charger_iphone13_4.ips", "samples/real/smc_bsc_failure_fragment.ips",
-                               "samples/smc_d94_taop_taoc.ips", "samples/userspace_watchdog_missing_sensor.ips",
+                               "samples/real/smc_bsc_taop_taoc_iphone17_2.ips", "samples/smc_d94_taop_taoc.ips", "samples/userspace_watchdog_missing_sensor.ips",
                                "samples/kernel_data_abort.ips", "samples/sep_panic.ips", "samples/i2c_bus.ips",
                                "samples/busy_timeout_usbc.ips"};
         for (const char *n : names) {
@@ -387,6 +387,36 @@ int main(int argc, char **argv)
         check(bu.hardware_confirmed && bu.hardware.find("VÍ DỤ MẪU") == 0, "basic USB: kết luận theo VERIFIED exact");
         check(bu.confidence_text == "CAO", "basic USB: confidence CAO");
         check(bu.steps.find("1. Đo VÍ DỤ: chân VBUS: trước 0 -> sau 5.0 V (theo case)") == 0, "basic USB: bước đo từ case trước");
+    }
+
+    // ---- 11. Panic THẬT iPhone17,2 d94 TAOP TAOC (2026-08-24): không tự thành VERIFIED ----
+    printf("[11] Panic thật iPhone17,2 SMC BSC TAOP TAOC\n");
+    {
+        const std::string text = readAll(root + "/samples/real/smc_bsc_taop_taoc_iphone17_2.ips");
+        PanicFacts real = HCCPanicParser::parse(text).facts;
+        check(real.smc_target == "d94", "real: target d94 (bỏ khoảng trắng OCR 'target/ d94')");
+        std::string clean = text;
+        size_t sp = clean.find("target/ d94");
+        if (sp != std::string::npos) clean.erase(sp + 7, 1);
+        check(HCCPanicParser::parse(clean).facts.signature == real.signature, "real: bản có/không khoảng trắng cùng signature");
+
+        Analysis a0 = analyze(real, kb, {});
+        check(a0.cases.empty() && a0.confidence <= Confidence::Low, "real: không có case -> tối đa LOW");
+        check(!renderBasic(real, a0).hardware_confirmed, "real: phần cứng chưa xác nhận");
+
+        // Panic d47 0x180000 (máy khác, HEX khác) không được khớp exact với case từ panic này
+        CaseRecord c = caseFromFacts(real);
+        c.id = "test_real_d94";
+        c.status = "REPAIR_CONFIRMED";
+        c.repair_action = "TEST";
+        const std::vector<CaseRecord> cs = {c};
+        Analysis self = analyze(real, kb, cs);
+        check(!self.cases.empty() && self.cases[0].match_type == "exact" && self.cases[0].confidence == Confidence::Medium,
+              "real: case REPAIR_CONFIRMED cùng panic -> exact MEDIUM (không HIGH)");
+        Analysis other = analyze(factsOf(root + "/samples/real/smc_bsc_failure_fragment.ips"), kb, cs);
+        bool exact = false;
+        for (const auto &m : other.cases) exact = exact || m.match_type == "exact" || m.match_type == "same_signature_other_model";
+        check(!exact, "real: panic d47 0x180000 không khớp case d94 0x300000");
     }
 
     printf("\nKB: %d kiểm tra, %d lỗi\n", g_checks, g_fail);
