@@ -7,6 +7,7 @@
 #include <string>
 
 #include "esp_http_server.h"
+#include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -80,6 +81,34 @@ static void appendPort(char *out, size_t out_size)
     }
 }
 
+// ESP32-P4 không có Wi-Fi trong chip (Wi-Fi qua C6/esp_hosted) nên mDNS không có sẵn
+// interface Wi-Fi STA: phải tự đăng ký netif và bật/announce IPv4 mỗi khi có IP.
+static esp_netif_t *s_mdns_netif = nullptr;
+
+static void mdnsEnableOn(esp_netif_t *netif)
+{
+    if (netif == nullptr) return;
+    if (s_mdns_netif != netif) {
+        esp_err_t err = mdns_register_netif(netif);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {  // INVALID_STATE = đã đăng ký
+            ESP_LOGW(TAG, "mdns_register_netif failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_mdns_netif = netif;
+    }
+    esp_err_t err = mdns_netif_action(netif, (mdns_event_actions_t)(MDNS_EVENT_ENABLE_IP4 | MDNS_EVENT_ANNOUNCE_IP4));
+    ESP_LOGI(TAG, "mDNS on Wi-Fi: %s", esp_err_to_name(err));
+}
+
+static void onIpEvent(void *, esp_event_base_t, int32_t id, void *data)
+{
+    if (id == IP_EVENT_STA_GOT_IP) {
+        mdnsEnableOn(static_cast<ip_event_got_ip_t *>(data)->esp_netif);
+    } else if (id == IP_EVENT_STA_LOST_IP && s_mdns_netif) {
+        mdns_netif_action(s_mdns_netif, MDNS_EVENT_DISABLE_IP4);
+    }
+}
+
 // Khởi tạo mDNS để truy cập qua http://hccpanic.local:<port>
 static void startMdns(uint16_t port)
 {
@@ -92,6 +121,14 @@ static void startMdns(uint16_t port)
     mdns_instance_name_set("HCC INSIGHT Panic");
     mdns_service_add(nullptr, "_http", "_tcp", port, nullptr, 0);
     s_mdns_started = true;
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, onIpEvent, nullptr);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, onIpEvent, nullptr);
+    // Wi-Fi thường đã có IP trước khi mở màn PANIC: bật mDNS ngay trên netif đó.
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip = {};
+    if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr != 0) {
+        mdnsEnableOn(sta);
+    }
     ESP_LOGI(TAG, "mDNS started: http://%s.local:%u", MDNS_HOST, port);
 }
 
