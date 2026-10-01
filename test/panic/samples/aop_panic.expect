@@ -1,0 +1,2 @@
+has: primary_kind: aop
+has: code: code raw=0x2c hex=0x2C dec=44 bits=[2,3,5] ctx=aop

@@ -39,7 +39,12 @@ std::string findKey(const cJSON *node, const char *key)
             if (cJSON_IsString(c) && c->valuestring && c->valuestring[0]) return c->valuestring;
             if (cJSON_IsNumber(c)) {
                 char buf[32];
-                snprintf(buf, sizeof(buf), "%g", c->valuedouble);
+                // Số nguyên (vd panicFlags) in đủ chữ số; "%g" làm tròn số lớn.
+                if (c->valuedouble == (double)(long long)c->valuedouble) {
+                    snprintf(buf, sizeof(buf), "%lld", (long long)c->valuedouble);
+                } else {
+                    snprintf(buf, sizeof(buf), "%g", c->valuedouble);
+                }
                 return buf;
             }
         }
@@ -167,6 +172,20 @@ std::string normalizeModel(const std::string &value, const std::string &raw)
     return m;
 }
 
+// Gắn Panic Parser v2 vào kết quả cũ. error_codes (CODE HEX gợi ý + dữ liệu cho AI) lấy từ
+// fact: không còn địa chỉ kernel, địa chỉ caller, thanh ghi hay trạng thái (x,y) của IOService.
+void attachFacts(ParsedPanic &out, const HCCPanicFacts::FileFields &ff)
+{
+    out.facts = HCCPanicFacts::extract(out.panic_string, ff);
+    out.error_codes.clear();
+    for (const auto &c : out.facts.codes) {
+        if (!c.in_message || c.value == 0 || out.error_codes.size() >= 8) continue;
+        std::string s = (c.base == 16) ? c.raw + " (dec " + c.dec + ")" : c.raw + " (" + c.hex + ")";
+        if (std::find(out.error_codes.begin(), out.error_codes.end(), s) == out.error_codes.end())
+            out.error_codes.push_back(s);
+    }
+}
+
 void pushUnique(std::vector<std::string> &v, const std::string &s, size_t cap)
 {
     if (s.empty() || v.size() >= cap) return;
@@ -222,6 +241,35 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
         return v;
     };
 
+    // Trường file cho PanicFacts, mỗi trường ghi rõ lấy từ header hay payload.
+    HCCPanicFacts::FileFields ff;
+    ff.format = payload && payload != header ? "ips_json" : "ips_text";
+    auto field = [&](const char *key, std::string &dst) {
+        std::string v = findKey(header, key);
+        const char *where = "header.";
+        if (v.empty()) {
+            v = findKey(payload, key);
+            where = "payload.";
+        }
+        if (v.empty()) {
+            v = escapedValue(raw, key);
+            where = "text.";
+        }
+        if (v.empty()) return;
+        dst = v;
+        PanicEvidence e;
+        e.field = std::string(where) + key;
+        e.excerpt = v.substr(0, 240);
+        ff.evidence.push_back(e);
+    };
+    field("bug_type", ff.bug_type);
+    field("os_version", ff.os_version);
+    field("timestamp", ff.timestamp);
+    field("incident_id", ff.incident_id);
+    field("build", ff.build);
+    field("socId", ff.soc_id);
+    field("panicFlags", ff.panic_flags);
+
     out.model = normalizeModel(firstNonEmpty({lookup("product"), lookup("modelCode"),
                                               lookup("hardware_model"), lookup("model")}), raw);
     out.os_version = firstNonEmpty({lookup("os_version"), lookup("build"),
@@ -257,6 +305,15 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
     out.raw_excerpt = out.panic_string.substr(0, 400);
     buildSignature(out);
     out.valid = true;
+
+    ff.product = findProductType(out.model);
+    if (!ff.product.empty()) {
+        PanicEvidence e;
+        e.field = lookup("product").empty() ? "text.product" : "product";
+        e.excerpt = ff.product;
+        ff.evidence.push_back(e);
+    }
+    attachFacts(out, ff);
 
     if (header) cJSON_Delete(header);
     if (payload) cJSON_Delete(payload);
@@ -296,6 +353,22 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
     out.raw_excerpt = trim(raw).substr(0, 400);
     buildSignature(out);
     out.valid = true;
+
+    HCCPanicFacts::FileFields ff;
+    ff.format = "text";
+    auto textField = [&](const char *name, const std::string &v, std::string &dst) {
+        if (v.empty()) return;
+        dst = v;
+        PanicEvidence e;
+        e.field = std::string("text.") + name;
+        e.excerpt = v.substr(0, 240);
+        ff.evidence.push_back(e);
+    };
+    textField("bug_type", out.panic_type, ff.bug_type);
+    textField("os_version", out.os_version, ff.os_version);
+    textField("product", findProductType(out.model), ff.product);
+    textField("panicFlags", quotedValue(raw, "panicFlags"), ff.panic_flags);
+    attachFacts(out, ff);
     return out;
 }
 

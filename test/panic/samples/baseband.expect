@@ -1,0 +1,3 @@
+has: primary_kind: baseband
+has: driver: AppleBasebandPCI role=mentioned tag=baseband  <- L1
+has: code: reason raw=0x14 hex=0x14 dec=20 bits=[2,4] ctx=baseband

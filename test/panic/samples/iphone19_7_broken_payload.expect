@@ -1,0 +1,6 @@
+# payload hỏng: product/panicString vẫn lấy được từ text
+has: format: ips_text
+has: product: iPhone19,7
+has: primary_kind: userspace_watchdog
+has: sensor: TG0B ctx=missing_sensor  <- L2
+has: signature: v1|iPhone19,7|210|userspace_watchdog|k=userspace_watchdog|d=-|s=tg0b|c=-|w=thermalmonitord|x=-

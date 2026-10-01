@@ -1,0 +1,4 @@
+# khác cpu / caller / loops / số giây / trạng thái / thời điểm / thứ tự entry -> cùng signature
+same_signature: busy_timeout_usbc
+has: timeout: busy_timeout seconds=180 loops=2
+has: panic_cpu: 5

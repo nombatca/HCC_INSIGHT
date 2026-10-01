@@ -1,0 +1,5 @@
+has: format: text
+has: product: iPhone13,2
+has: bug_type: 210
+has: primary_kind: i2c
+has: i2c_bus: 0

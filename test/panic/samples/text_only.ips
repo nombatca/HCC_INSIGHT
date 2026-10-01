@@ -1,0 +1,5 @@
+bug_type: 210
+product: iPhone13,2
+OS Version: iPhone OS 16.7.2 (20H115)
+panic(cpu 0 caller 0xfffffff0123abc10): i2c0::_checkBusStatus SDA stuck low
+Debugger message: panic

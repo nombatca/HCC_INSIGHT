@@ -1,0 +1,5 @@
+has: primary_kind: ans_nvme
+has: code: status raw=0x7 hex=0x7 dec=7 bits=[0,1,2] ctx=ans
+# số âm 32-bit (IOReturn) -> giá trị không dấu
+has: code: error raw=-536870212 hex=0xE00002BC dec=3758097084 bits=[2,3,4,5,7,9,29,30,31] ctx=ans
+has: source_location: @AppleANS3NVMeController.cpp:1234

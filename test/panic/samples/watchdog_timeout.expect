@@ -1,0 +1,4 @@
+has: primary_kind: watchdog_timeout
+has: timeout: watchdog seconds=90 subject=watchdogd
+lacks: kind: userspace_watchdog
+has: signature: v1|iPhone12,1|210|watchdog_timeout|k=watchdog_timeout|d=-|s=-|c=-|w=watchdogd|x=-

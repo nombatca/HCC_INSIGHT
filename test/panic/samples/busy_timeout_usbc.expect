@@ -1,0 +1,14 @@
+# busy timeout nhiều entry (xnu IOService.cpp): driver lấy từ 'name', (x,y) là trạng thái
+has: primary_kind: busy_timeout
+has: kind: usb_phy  <- L1
+has: driver: atc0-dpphy role=busy_entry state=(2d,0) tag=usb_phy  <- L1
+has: driver: atc-dpphy0 role=busy_entry state=(13,0) tag=usb_phy  <- L1
+has: driver: usb-drd0 role=busy_entry state=(1,1) tag=usb_phy  <- L1
+has: timeout: busy_timeout seconds=60 loops=0
+has: ignored: (2d,0) (ioservice_state)
+has: ignored: 0xfffffff02a5f3c10 (caller_address)
+has: source_location: @IOService.cpp:6050
+has: panicked_task: kernel_task
+lacks: code: 2d
+lacks: raw=0xfffffff
+has: signature: v1|iPhone15,4|210|busy_timeout|k=busy_timeout,usb_phy|d=atc-dpphy0,atc0-dpphy,usb-drd0|s=-|c=-|w=-|x=-

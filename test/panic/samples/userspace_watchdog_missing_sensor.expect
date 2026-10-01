@@ -1,0 +1,9 @@
+has: primary_kind: userspace_watchdog
+has: driver: thermalmonitord role=watchdog_daemon  <- L1
+has: sensor: mic1 ctx=missing_sensor  <- L3
+has: sensor: PRS0 ctx=missing_sensor  <- L3
+has: timeout: userspace_watchdog seconds=180 subject=thermalmonitord
+has: note: Vị trí/linh kiện của sensor: NEEDS VERIFICATION - cần Knowledge Base theo model
+# số đếm/giây trong dòng "service:" không phải mã lỗi
+lacks: code: total
+has: signature: v1|iPhone10,3|210|userspace_watchdog|k=userspace_watchdog|d=-|s=mic1,prs0|c=-|w=thermalmonitord|x=-

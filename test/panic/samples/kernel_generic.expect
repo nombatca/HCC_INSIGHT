@@ -1,0 +1,4 @@
+has: primary_kind: kernel_generic
+has: kind: kernel_generic  <- L1
+lacks: Loại panic: UNKNOWN
+has: source_location: @zalloc.c:4471

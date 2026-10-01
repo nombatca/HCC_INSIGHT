@@ -1,0 +1,9 @@
+has: primary_kind: smc
+has: sensor: S.sensor[3] ctx=indexed_sensor  <- L1
+has: code: status raw=0x41 hex=0x41 dec=65 bits=[0,6] ctx=smc
+has: code: mask raw=0x00000A05 hex=0xA05 dec=2565 bits=[0,2,9,11] ctx=smc bitmask
+has: note: Ý nghĩa S.sensor[3]: UNKNOWN - định dạng S.sensor[N] chưa có tài liệu
+has: note: Ý nghĩa từng bit của mask 0xA05: UNKNOWN - chưa có bảng bit đã kiểm chứng
+# tên file nguồn không phải driver
+lacks: driver: smc_sensor
+has: signature: v1|iPhone15,2|210|smc|k=smc|d=smc|s=s.sensor[3]|c=0x41,0xa05|w=-|x=-

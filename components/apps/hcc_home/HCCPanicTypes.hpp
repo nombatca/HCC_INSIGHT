@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "HCCPanicFacts.hpp"
+
 // Kết quả parse RAW panic log thành cấu trúc chuẩn hoá.
 struct ParsedPanic {
     std::string model;          // product / model code (vd iPhone14,2)
@@ -16,6 +18,8 @@ struct ParsedPanic {
     std::string signature;      // chữ ký để tra Knowledge Base
     std::string raw_excerpt;    // trích đoạn ngắn để hiển thị
     bool valid = false;
+    // Panic Parser v2: fact có cấu trúc + evidence + signature chuẩn hoá (xem HCCPanicFacts.hpp).
+    PanicFacts facts;
 };
 
 // Một CASE sửa chữa thực tế do kỹ thuật viên nhập, liên kết với file panic.

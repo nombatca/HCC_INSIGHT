@@ -1,0 +1,16 @@
+ans_nvme: TONG HOP
+aop_panic: TONG HOP
+baseband: TONG HOP
+busy_timeout_single: xnu IOService.cpp (nhanh mot entry)
+busy_timeout_usbc: xnu IOService.cpp + vi du trong HCCPanicAI.cpp
+busy_timeout_usbc_variant: bien the cua #1 (kiem tra signature on dinh)
+i2c_bus: TONG HOP
+iphone19_7_broken_payload: header tu anh chup nguoi dung; panic TONG HOP
+kernel_data_abort: xnu arm64/sleh.c
+kernel_generic: TONG HOP
+pmu: TONG HOP
+sep_panic: TONG HOP
+smc_panic_assert: TONG HOP - dinh dang chua co tai lieu
+text_only: TONG HOP - dang chu chep tu anh
+userspace_watchdog_missing_sensor: quan sat: iFixit Answers / Apple Community
+watchdog_timeout: quan sat: Apple Community
