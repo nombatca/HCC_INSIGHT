@@ -11,6 +11,8 @@
 #include "HCCPanicKB.hpp"
 #include "HCCPanicAI.hpp"
 #include "HCCPanicServer.hpp"
+#include "HCCPanicKBStore.hpp"
+#include "HCCPanicKBView.hpp"
 #include "HCCViText.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
@@ -678,9 +680,6 @@ HCCHome::HCCHome()
       _repair_kb(nullptr),
       _repair_model(nullptr),
       _repair_sig(nullptr),
-      _repair_code(nullptr),
-      _repair_source(nullptr),
-      _repair_hw(nullptr),
       _repair_action(nullptr),
       _repair_note(nullptr),
       _pi_list(nullptr),
@@ -774,9 +773,6 @@ void HCCHome::showHome()
     _repair_kb = nullptr;
     _repair_model = nullptr;
     _repair_sig = nullptr;
-    _repair_code = nullptr;
-    _repair_source = nullptr;
-    _repair_hw = nullptr;
     _repair_action = nullptr;
     _repair_note = nullptr;
     _pi_list = nullptr;
@@ -792,6 +788,7 @@ void HCCHome::showHome()
     _pi_check = nullptr;
     _pi_kb = nullptr;
     _pi_conclusion = nullptr;
+    _pi_ai = nullptr;
     _pi_detail = nullptr;
     lv_obj_clean(_screen);
 
@@ -2611,9 +2608,6 @@ bool HCCHome::close(void)
     _repair_kb = nullptr;
     _repair_model = nullptr;
     _repair_sig = nullptr;
-    _repair_code = nullptr;
-    _repair_source = nullptr;
-    _repair_hw = nullptr;
     _repair_action = nullptr;
     _repair_note = nullptr;
     _pi_list = nullptr;
@@ -2629,6 +2623,7 @@ bool HCCHome::close(void)
     _pi_check = nullptr;
     _pi_kb = nullptr;
     _pi_conclusion = nullptr;
+    _pi_ai = nullptr;
     _pi_detail = nullptr;
 
     // Dừng HTTP server nhận panic khi đóng app.
@@ -3903,6 +3898,7 @@ void HCCHome::performPanicAnalyze()
             _panic_result = PanicResult();
             _panic_result.ok = false;
             _panic_result.message = "Không lấy được ảnh panic";
+            _kv_ai = _panic_result.message;
             snprintf(_panic_status, sizeof(_panic_status), "Lỗi đọc ảnh");
             return;
         }
@@ -3911,6 +3907,7 @@ void HCCHome::performPanicAnalyze()
             _panic_result = PanicResult();
             _panic_result.ok = false;
             _panic_result.message = err;
+            _kv_ai = "#FF6B6B AI đọc ảnh lỗi:# " + HCCKB::noRecolor(err);
             snprintf(_panic_status, sizeof(_panic_status), "AI đọc ảnh lỗi");
             return;
         }
@@ -3918,6 +3915,7 @@ void HCCHome::performPanicAnalyze()
         _panic_result = PanicResult();
         _panic_result.ok = false;
         _panic_result.message = "Không đọc được panic đang chọn";
+        _kv_ai = _panic_result.message;
         snprintf(_panic_status, sizeof(_panic_status), "Lỗi đọc panic");
         return;
     }
@@ -3927,28 +3925,33 @@ void HCCHome::performPanicAnalyze()
         // Ảnh: model/iOS chỉ biết sau khi AI chép chữ; applyPanicResult hiện lên ô thiết bị.
         _panic_img_parsed = parsed;
         _panic_img_parsed_ready = true;
+        _panic_img_parsed_file = _panic_file;
     }
 
-    // 1) Tra Knowledge Base (VERIFIED > REPAIR_CONFIRMED > AI_INFERENCE).
-    HCCPanicKB::ensureLayout();
-    PanicResult kb = HCCPanicKB::lookup(parsed);
-    if (kb.ok) {
-        _panic_result = kb;
-        snprintf(_panic_status, sizeof(_panic_status), "Khớp KB: %s%s", kb.source_tier.c_str(),
+    // 1) KB V1: chuỗi phân tích + đối chiếu case (VERIFIED cùng model + signature ưu tiên cao nhất).
+    //    Case cũ (kb/verified, kb/repair_confirmed) đã được migrate khi nạp KB.
+    PanicResult cr;
+    if (computeKbView(parsed, &cr)) {
+        _panic_result = cr;
+        _kv_ai = "#8A97A3 Không gọi AI: đã có case " + cr.source_tier + " khớp (độ tin cậy " + cr.confidence + ").#";
+        snprintf(_panic_status, sizeof(_panic_status), "Khớp case %s%s", cr.source_tier.c_str(),
                  is_img ? " (từ ảnh)" : "");
         return;
     }
 
-    // 2) Không có KB -> gọi AI.
+    // 2) Chưa có case đủ tin cậy -> AI (module AI không đổi), hiện riêng ở ô AI.
     PanicResult ai = HCCPanicAI::analyze(parsed);
+    _panic_result = ai;
     if (ai.ok) {
         // Lưu cache vào tầng AI_INFERENCE (không bao giờ tự thành VERIFIED).
         HCCPanicKB::saveAiResult(parsed, ai);
-        _panic_result = ai;
+        _kv_ai = "#B48CFF [AI_INFERENCE - chưa kiểm chứng]#\nLỖI: " + HCCKB::noRecolor(ai.error) + "\n\n" +
+                 HCCKB::noRecolor(ai.cause) + "\n\nKIỂM TRA:\n" + HCCKB::noRecolor(ai.repair) +
+                 "\n\nAI tự đánh giá: " + HCCKB::noRecolor(ai.confidence);
         snprintf(_panic_status, sizeof(_panic_status), is_img ? "Phân tích AI xong (từ ảnh)" : "Phân tích AI xong");
     } else {
-        _panic_result = ai;
-        snprintf(_panic_status, sizeof(_panic_status), "AI lỗi");
+        _kv_ai = "#FF6B6B AI lỗi:# " + HCCKB::noRecolor(ai.message);
+        snprintf(_panic_status, sizeof(_panic_status), "KB xong; AI lỗi");
     }
 }
 
@@ -3963,36 +3966,12 @@ void HCCHome::applyPanicResult(void *arg)
         lv_label_set_text(app->_panic_status_label, app->_panic_status);
     }
 
-    const PanicResult &r = app->_panic_result;
-    auto setL = [](lv_obj_t *o, const std::string &s) {
-        if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
-    };
     if (app->_panic_img_parsed_ready) {
         app->_panic_img_parsed_ready = false;
         app->showPanicDeviceInfo(app->_panic_img_parsed);
     }
-    if (r.ok) {
-        setL(app->_pi_cause, r.cause);
-        setL(app->_pi_check, r.repair);
-        if (app->_pi_kb) {
-            std::string kb = "Nguồn: " + r.source_tier + "\nĐộ tin cậy: " +
-                             (r.confidence.empty() ? std::string("-") : r.confidence);
-            lv_label_set_text(app->_pi_kb, kb.c_str());
-            lv_color_t col = lv_color_hex(0x2E86FF);
-            if (r.source_tier == "VERIFIED") col = lv_color_hex(0x3DD66E);
-            else if (r.source_tier == "REPAIR_CONFIRMED") col = lv_color_hex(0xF2C94C);
-            lv_obj_set_style_text_color(app->_pi_kb, col, 0);
-        }
-        setL(app->_pi_conclusion, r.error);
-    } else {
-        setL(app->_pi_cause, "-");
-        setL(app->_pi_check, "-");
-        if (app->_pi_kb) {
-            lv_label_set_text(app->_pi_kb, "Chưa có KB khớp");
-            lv_obj_set_style_text_color(app->_pi_kb, lv_color_hex(0xB03030), 0);
-        }
-        setL(app->_pi_conclusion, r.message.empty() ? "Phân tích thất bại" : r.message);
-    }
+    // KB V1 (chuỗi phân tích, đo kiểm, đối chiếu case, kết luận) + ô AI riêng.
+    app->showKbView();
 
     if (app->_panic_analyze_button != nullptr) {
         lv_obj_clear_state(app->_panic_analyze_button, LV_STATE_DISABLED);
@@ -4257,9 +4236,6 @@ void HCCHome::showPanic()
     _repair_kb = nullptr;
     _repair_model = nullptr;
     _repair_sig = nullptr;
-    _repair_code = nullptr;
-    _repair_source = nullptr;
-    _repair_hw = nullptr;
     _repair_action = nullptr;
     _repair_note = nullptr;
     _pi_list = nullptr;
@@ -4275,6 +4251,7 @@ void HCCHome::showPanic()
     _pi_check = nullptr;
     _pi_kb = nullptr;
     _pi_conclusion = nullptr;
+    _pi_ai = nullptr;
     _pi_detail = nullptr;
     _panic_busy = false;
 
@@ -4391,29 +4368,38 @@ void HCCHome::showPanic()
     mkCardTitle(cardKey, LV_SYMBOL_WARNING, "LỖI CHÍNH (KEY PANIC STRING)", lv_color_hex(0xFF6B6B));
     _pi_keystr = mkVal(cardKey, f16, lv_color_hex(0xFF8A8A));
 
-    /* Hàng 3: Nguyên nhân AI | Hướng kiểm tra */
-    lv_obj_t *row3 = mkRow(_pi_detail);
-    lv_obj_t *cardCause = mkCard(row3);
-    lv_obj_set_flex_grow(cardCause, 1);
-    mkCardTitle(cardCause, LV_SYMBOL_SETTINGS, "NGUYÊN NHÂN DỰ ĐOÁN (AI)", cyan);
+    /* Hàng 3: Chuỗi phân tích KB V1 (panic -> driver/sensor/mã -> subsystem -> phần cứng -> bus/rail) */
+    lv_obj_t *cardCause = mkCard(_pi_detail);
+    lv_obj_set_width(cardCause, lv_pct(100));
+    mkCardTitle(cardCause, LV_SYMBOL_SETTINGS, "CHUỖI PHÂN TÍCH (KB)", cyan);
     _pi_cause = mkVal(cardCause, f16, white);
-    lv_obj_t *cardCheck = mkCard(row3);
-    lv_obj_set_flex_grow(cardCheck, 1);
-    mkCardTitle(cardCheck, LV_SYMBOL_EDIT, "HƯỚNG KIỂM TRA / ĐỀ XUẤT", green);
-    _pi_check = mkVal(cardCheck, f16, green);
 
-    /* Hàng 4: Tham khảo KB | Kết luận */
+    /* Hàng 4: Đo kiểm | Kết luận */
     lv_obj_t *row4 = mkRow(_pi_detail);
-    lv_obj_t *cardKb = mkCard(row4);
-    lv_obj_set_flex_grow(cardKb, 1);
-    mkCardTitle(cardKb, LV_SYMBOL_LIST, "THAM KHẢO KB", cyan);
-    _pi_kb = mkVal(cardKb, f16, cyan);
+    lv_obj_t *cardCheck = mkCard(row4);
+    lv_obj_set_flex_grow(cardCheck, 1);
+    mkCardTitle(cardCheck, LV_SYMBOL_EDIT, "ĐO KIỂM / KIỂM TRA", green);
+    _pi_check = mkVal(cardCheck, f16, green);
     lv_obj_t *cardConc = mkCard(row4);
     lv_obj_set_flex_grow(cardConc, 1);
     mkCardTitle(cardConc, LV_SYMBOL_OK, "KẾT LUẬN", green);
     _pi_conclusion = mkVal(cardConc, f16, green);
 
+    /* Hàng 5: Đối chiếu VERIFIED case / KB + các mục UNKNOWN */
+    lv_obj_t *cardKb = mkCard(_pi_detail);
+    lv_obj_set_width(cardKb, lv_pct(100));
+    mkCardTitle(cardKb, LV_SYMBOL_LIST, "ĐỐI CHIẾU VERIFIED / KB", cyan);
+    _pi_kb = mkVal(cardKb, f16, cyan);
+
+    /* Hàng 6: AI - chỉ tham khảo, tách riêng khỏi KB */
+    lv_obj_t *cardAi = mkCard(_pi_detail);
+    lv_obj_set_width(cardAi, lv_pct(100));
+    mkCardTitle(cardAi, LV_SYMBOL_EYE_OPEN, "PHÂN TÍCH AI (AI_INFERENCE - tham khảo)", lv_color_hex(0xB48CFF));
+    _pi_ai = mkVal(cardAi, f16, lv_color_hex(0xD8C8FF));
+    for (lv_obj_t *l : {_pi_cause, _pi_check, _pi_conclusion, _pi_kb, _pi_ai}) lv_label_set_recolor(l, true);
+
     /* ===== Danh sách + chi tiết ban đầu ===== */
+    ensureKbLoaded();
     _panic_seen_serial = HCCPanicServer::receivedSerial();
     populatePanicFileList();
 
@@ -4460,6 +4446,55 @@ void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
     setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
 }
 
+// ---- Knowledge Base V1 ----
+
+void HCCHome::ensureKbLoaded(bool force)
+{
+    if (_kb_loaded && !force) return;
+    HCCPanicKBStore::LoadReport rep;
+    _kb_loaded = HCCPanicKBStore::load(_kb, _kb_cases, rep);
+    for (const auto &m : rep.messages) printf("[HCC KB] %s\n", m.c_str());
+}
+
+bool HCCHome::computeKbView(const ParsedPanic &parsed, PanicResult *case_result)
+{
+    if (!_kb_loaded) {
+        _kv_chain = _kv_checks = _kv_match = _kv_conclusion = "KB chưa nạp được (firmware/SD)";
+        return false;
+    }
+    const HCCKB::Analysis a = HCCKB::analyze(parsed.facts, _kb, _kb_cases);
+    const HCCKB::KbView v = HCCKB::renderView(parsed.facts, a);
+    _kv_chain = v.chain;
+    _kv_checks = v.checks;
+    _kv_match = v.match;
+    _kv_conclusion = v.conclusion;
+    if (!v.top_case || a.cases[0].confidence < HCCKB::Confidence::Medium) return false;
+    if (case_result) {
+        const HCCKB::CaseRecord &c = *v.top_case;
+        PanicResult r;
+        r.ok = true;
+        r.source_tier = c.status;
+        r.confidence = HCCKB::confidenceName(a.cases[0].confidence);
+        r.error = c.hardware_area;
+        r.cause = a.cases[0].reason;
+        r.repair = c.repair_action;
+        *case_result = r;
+    }
+    return true;
+}
+
+void HCCHome::showKbView()
+{
+    auto set = [](lv_obj_t *o, const std::string &s) {
+        if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
+    };
+    set(_pi_cause, _kv_chain);
+    set(_pi_check, _kv_checks);
+    set(_pi_kb, _kv_match);
+    set(_pi_conclusion, _kv_conclusion);
+    set(_pi_ai, _kv_ai);
+}
+
 void HCCHome::refreshPanicDetail()
 {
     auto setL = [](lv_obj_t *o, const std::string &s) {
@@ -4479,6 +4514,11 @@ void HCCHome::refreshPanicDetail()
         if (_pi_sev) { lv_label_set_text(_pi_sev, "ẢNH"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0x00D9FF), 0); }
         setL(_pi_sevsub, "Ảnh chụp panic - dùng ANALYZE để AI đọc");
         setL(_pi_keystr, "(Ảnh panic)");
+        if (!_panic_busy) {
+            _kv_chain = _kv_checks = _kv_match = _kv_conclusion = "Ảnh panic: bấm ANALYZE để AI chép chữ rồi phân tích";
+            _kv_ai = "-";
+            showKbView();
+        }
         if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
         return;
     }
@@ -4491,6 +4531,10 @@ void HCCHome::refreshPanicDetail()
         if (_pi_sev) { lv_label_set_text(_pi_sev, "-"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xB8C5CF), 0); }
         setL(_pi_sevsub, "-");
         setL(_pi_keystr, "(chọn panic để xem)");
+        if (!_panic_busy) {
+            _kv_chain = _kv_checks = _kv_match = _kv_conclusion = _kv_ai = "-";
+            showKbView();
+        }
         if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
         return;
     }
@@ -4513,8 +4557,17 @@ void HCCHome::refreshPanicDetail()
     setL(_pi_sevsub, severe ? "Kernel Panic (Panic Full) - tự động khởi động lại"
                             : "Panic - kiểm tra chi tiết");
 
-    // Key panic string (rút gọn).
-    std::string ks = _pi_parsed.panic_string.substr(0, 500);
+    // KB V1 hiện ngay khi chọn panic (không cần mạng); AI chỉ chạy khi bấm ANALYZE.
+    // Đang ANALYZE thì không dựng lại (task đang ghi các chuỗi _kv_*).
+    if (!_panic_busy) {
+        computeKbView(_pi_parsed);
+        _kv_ai = "#8A97A3 Chưa gọi AI - bấm ANALYZE nếu chưa có case khớp.#";
+        showKbView();
+    }
+
+    // Key panic string: thông điệp panic (Parser v2), không có metadata / dump.
+    const std::string &msg = _pi_parsed.facts.message.empty() ? _pi_parsed.panic_string : _pi_parsed.facts.message;
+    std::string ks = msg.substr(0, 500);
     setL(_pi_keystr, ks.empty() ? "-" : ks);
     if (_pi_detail) lv_obj_scroll_to_y(_pi_detail, 0, LV_ANIM_OFF);
 }
@@ -4638,19 +4691,40 @@ static lv_obj_t *repairField(lv_obj_t *parent, const char *label, const char *pr
     return ta;
 }
 
+static const char *kRepairActions[] = {"replaced", "repaired", "reworked", "cleaned", "other"};
+static const char *kMeasureTypes[] = {"voltage", "diode", "resistance", "current", "other"};
+
+static lv_obj_t *repairDropdown(lv_obj_t *parent, const char *label, const char *options)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, label);
+    lv_obj_set_style_text_color(l, lv_color_hex(0x7F96A8), 0);
+    lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+    lv_obj_t *dd = lv_dropdown_create(parent);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_dropdown_set_options(dd, options);
+    lv_obj_set_style_text_font(dd, &lv_font_be_vietnam_16, 0);
+    return dd;
+}
+
 void HCCHome::onConfirmRepairClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr || app->_repair_dialog != nullptr) {
         return;
     }
+    if (app->_panic_busy) {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Đang phân tích, chờ xong");
+        return;
+    }
     if (app->_panic_file[0] == '\0' || app->_panic_file[0] == '(') {
         if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Chưa chọn file panic");
         return;
     }
-    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(nullptr)) {
+    if (strncmp(app->_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(nullptr) &&
+        app->_panic_img_parsed_file != app->_panic_file) {
         if (app->_panic_status_label)
-            lv_label_set_text(app->_panic_status_label, "CONFIRM REPAIR chưa hỗ trợ ảnh");
+            lv_label_set_text(app->_panic_status_label, "Ảnh panic: bấm ANALYZE trước để AI chép chữ");
         return;
     }
     app->openConfirmRepair();
@@ -4667,13 +4741,18 @@ void HCCHome::onRepairFieldFocused(lv_event_t *event)
 
 void HCCHome::openConfirmRepair()
 {
-    // Đọc + parse panic đang chọn (RAM hoặc SD) để tự điền các trường.
-    std::string raw;
-    if (!loadSelectedRaw(raw)) {
-        if (_panic_status_label) lv_label_set_text(_panic_status_label, "Không đọc được panic đang chọn");
-        return;
+    // Panic đang chọn (RAM/SD), hoặc chữ AI đã chép từ ảnh panic.
+    if (strncmp(_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(nullptr)) {
+        _repair_parsed = _panic_img_parsed;
+    } else {
+        std::string raw;
+        if (!loadSelectedRaw(raw)) {
+            if (_panic_status_label) lv_label_set_text(_panic_status_label, "Không đọc được panic đang chọn");
+            return;
+        }
+        _repair_parsed = HCCPanicParser::parse(raw);
     }
-    _repair_parsed = HCCPanicParser::parse(raw);
+    const PanicFacts &f = _repair_parsed.facts;
 
     // Overlay mờ.
     _repair_dialog = lv_obj_create(_screen);
@@ -4693,37 +4772,21 @@ void HCCHome::openConfirmRepair()
     lv_obj_set_style_radius(panel, 12, 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Thanh nút trên cùng: SAVE / VERIFY / ĐÓNG.
-    lv_obj_t *save_btn = lv_btn_create(panel);
-    lv_obj_set_size(save_btn, 190, 44);
-    lv_obj_align(save_btn, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(save_btn, lv_color_hex(0xF2C94C), 0);
-    lv_obj_add_event_cb(save_btn, onRepairSaveClicked, LV_EVENT_CLICKED, this);
-    lv_obj_t *sl = lv_label_create(save_btn);
-    lv_label_set_text(sl, "SAVE (REPAIR)");
-    lv_obj_center(sl);
-    lv_obj_set_style_text_color(sl, lv_color_hex(0x0B141C), 0);
-    lv_obj_set_style_text_font(sl, &lv_font_be_vietnam_16, 0);
-
-    lv_obj_t *verify_btn = lv_btn_create(panel);
-    lv_obj_set_size(verify_btn, 150, 44);
-    lv_obj_align(verify_btn, LV_ALIGN_TOP_LEFT, 200, 0);
-    lv_obj_set_style_bg_color(verify_btn, lv_color_hex(0x3DD66E), 0);
-    lv_obj_add_event_cb(verify_btn, onRepairVerifyClicked, LV_EVENT_CLICKED, this);
-    lv_obj_t *vl = lv_label_create(verify_btn);
-    lv_label_set_text(vl, "VERIFY");
-    lv_obj_center(vl);
-    lv_obj_set_style_text_color(vl, lv_color_hex(0x0B141C), 0);
-    lv_obj_set_style_text_font(vl, &lv_font_be_vietnam_16, 0);
-
-    lv_obj_t *close_btn = lv_btn_create(panel);
-    lv_obj_set_size(close_btn, 120, 44);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_add_event_cb(close_btn, onRepairCloseClicked, LV_EVENT_CLICKED, this);
-    lv_obj_t *cl = lv_label_create(close_btn);
-    lv_label_set_text(cl, "ĐÓNG");
-    lv_obj_center(cl);
-    lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+    auto button = [&](const char *txt, lv_coord_t x, lv_coord_t w, uint32_t bg, lv_event_cb_t cb, bool dark) {
+        lv_obj_t *b = lv_btn_create(panel);
+        lv_obj_set_size(b, w, 44);
+        lv_obj_align(b, x >= 0 ? LV_ALIGN_TOP_LEFT : LV_ALIGN_TOP_RIGHT, x >= 0 ? x : 0, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
+        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, this);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, txt);
+        lv_obj_center(l);
+        if (dark) lv_obj_set_style_text_color(l, lv_color_hex(0x0B141C), 0);
+        lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+    };
+    button("LƯU (CHƯA XÁC NHẬN)", 0, 240, 0xF2C94C, onRepairSaveClicked, true);
+    button("XÁC NHẬN VERIFIED", 250, 220, 0x3DD66E, onRepairVerifyClicked, true);
+    button("ĐÓNG", -1, 120, 0x1F3242, onRepairCloseClicked, false);
 
     // Vùng cuộn chứa các trường.
     lv_obj_t *form = lv_obj_create(panel);
@@ -4735,20 +4798,51 @@ void HCCHome::openConfirmRepair()
     lv_obj_set_flex_flow(form, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(form, LV_DIR_VER);
 
-    std::string code0 = _repair_parsed.error_codes.empty() ? std::string() : _repair_parsed.error_codes[0];
+    // Dữ kiện tự lấy từ panic (Parser v2) - không sửa tay để signature luôn khớp.
+    std::string info = "Loại: " + std::string(panicKindName(f.primary_kind)) + "   bug_type: " +
+                       (f.bug_type.empty() ? "-" : f.bug_type) + "   iOS: " +
+                       (f.os_version.empty() ? (f.build.empty() ? "-" : f.build) : f.os_version) +
+                       "\nSignature: " + f.signature;
+    HCCKB::CaseRecord pre = HCCKB::caseFromFacts(f);
+    auto joinv = [](const std::vector<std::string> &v) {
+        std::string o;
+        for (size_t i = 0; i < v.size() && i < 8; ++i) o += (i ? ", " : "") + v[i];
+        return o.empty() ? std::string("-") : o;
+    };
+    info += "\nDriver: " + joinv(pre.drivers) + "\nSensor: " + joinv(pre.sensors) + "\nMã: " + joinv(pre.codes);
+    _repair_sig = lv_label_create(form);
+    lv_label_set_long_mode(_repair_sig, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_repair_sig, lv_pct(100));
+    lv_label_set_text(_repair_sig, info.c_str());
+    lv_obj_set_style_text_color(_repair_sig, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(_repair_sig, &lv_font_be_vietnam_16, 0);
 
-    _repair_model  = repairField(form, "MODEL", _repair_parsed.model.c_str(), onRepairFieldFocused, this);
-    _repair_sig    = repairField(form, "PANIC / SIGNATURE", _repair_parsed.signature.c_str(), onRepairFieldFocused, this);
-    _repair_code   = repairField(form, "CODE HEX", code0.c_str(), onRepairFieldFocused, this);
-    _repair_source = repairField(form, "SOURCE (vd S.sensor[1])", _repair_parsed.source.c_str(), onRepairFieldFocused, this);
-    _repair_hw     = repairField(form, "HARDWARE / LỖI THỰC TẾ", "", onRepairFieldFocused, this);
-    _repair_action = repairField(form, "REPAIR ACTION", "", onRepairFieldFocused, this);
-    _repair_note   = repairField(form, "NOTE (tuỳ chọn)", "", onRepairFieldFocused, this);
+    _repair_model = repairField(form, "MODEL (iPhoneN,M)", f.product.c_str(), onRepairFieldFocused, this);
+    _rp_hw = repairField(form, "KHU VỰC PHẦN CỨNG (thực tế)", "", onRepairFieldFocused, this);
+    _rp_comp = repairField(form, "LINH KIỆN / CÁP ĐÃ THAY HOẶC SỬA", "", onRepairFieldFocused, this);
+    _rp_ref = repairField(form, "KÝ HIỆU TRÊN MAIN / MÃ LINH KIỆN (vd U3300)", "", onRepairFieldFocused, this);
+    _rp_comp_action = repairDropdown(form, "HÀNH ĐỘNG VỚI LINH KIỆN",
+                                     "replaced - thay mới\nrepaired - sửa\nreworked - làm lại / đóng lại\n"
+                                     "cleaned - vệ sinh\nother - khác");
+    _rp_busrail = repairField(form, "BUS / RAIL LIÊN QUAN (cách nhau dấu ;)", "", onRepairFieldFocused, this);
+    _rp_m_point = repairField(form, "ĐIỂM ĐO (net / chân)", "", onRepairFieldFocused, this);
+    _rp_m_type = repairDropdown(form, "LOẠI ĐO",
+                                "voltage - điện áp\ndiode - đo diode\nresistance - điện trở\ncurrent - dòng\n"
+                                "other - khác");
+    _rp_m_before = repairField(form, "GIÁ TRỊ TRƯỚC KHI SỬA", "", onRepairFieldFocused, this);
+    _rp_m_after = repairField(form, "GIÁ TRỊ SAU KHI SỬA", "", onRepairFieldFocused, this);
+    _rp_m_unit = repairField(form, "ĐƠN VỊ (V, mA, ohm...)", "", onRepairFieldFocused, this);
+    _repair_action = repairField(form, "CÁCH SỬA (repair action)", "", onRepairFieldFocused, this);
+    _rp_resolved = lv_checkbox_create(form);
+    lv_checkbox_set_text(_rp_resolved, "Đã hết panic sau khi sửa (bắt buộc để VERIFIED)");
+    lv_obj_set_style_text_font(_rp_resolved, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_color(_rp_resolved, lv_color_hex(0xFFFFFF), 0);
+    _rp_days = repairField(form, "SỐ NGÀY THEO DÕI SAU SỬA", "", onRepairFieldFocused, this);
+    lv_textarea_set_accepted_chars(_rp_days, "0123456789");
+    _repair_note = repairField(form, "GHI CHÚ", "", onRepairFieldFocused, this);
 
-    // Bật gõ tiếng Việt cho các ô mô tả (không bật cho MODEL/CODE/SOURCE là ASCII).
-    HCCViText::markVietnamese(_repair_hw);
-    HCCViText::markVietnamese(_repair_action);
-    HCCViText::markVietnamese(_repair_note);
+    // Gõ tiếng Việt cho các ô mô tả (MODEL / ký hiệu / số đo là ASCII).
+    for (lv_obj_t *ta : {_rp_hw, _rp_comp, _rp_busrail, _repair_action, _repair_note}) HCCViText::markVietnamese(ta);
 
     // Bàn phím lớn + Telex (ẩn cho tới khi focus 1 ô).
     _repair_kb = HCCViText::createKeyboard(_repair_dialog, nullptr);
@@ -4758,37 +4852,83 @@ void HCCHome::openConfirmRepair()
 bool HCCHome::submitRepairCase(bool verified)
 {
     if (_repair_model == nullptr) return false;
+    const PanicFacts &f = _repair_parsed.facts;
+    auto txt = [](lv_obj_t *ta) { return std::string(ta ? lv_textarea_get_text(ta) : ""); };
+    auto setStatus = [&](const char *m) {
+        if (_panic_status_label) lv_label_set_text(_panic_status_label, m);
+    };
 
-    RepairCase c;
-    // Bỏ tiền tố "[RAM] " để tên case/liên kết dùng tên panic thật.
-    c.panic_file = _panic_file;
-    if (c.panic_file.rfind("[RAM] ", 0) == 0) c.panic_file = c.panic_file.substr(6);
-    c.panic_type = _repair_parsed.panic_type;
-    c.model = lv_textarea_get_text(_repair_model);
-    c.signature = lv_textarea_get_text(_repair_sig);
-    c.code_hex = lv_textarea_get_text(_repair_code);
-    c.source = lv_textarea_get_text(_repair_source);
-    c.hardware = lv_textarea_get_text(_repair_hw);
-    c.repair_action = lv_textarea_get_text(_repair_action);
-    c.note = lv_textarea_get_text(_repair_note);
+    HCCKB::CaseRecord c = HCCKB::caseFromFacts(f);
+    const std::string model = txt(_repair_model);
+    if (model != f.product) {
+        // Model nhập tay (log không có / sai): dựng lại signature cho model đó.
+        c.model = model;
+        c.signature = model.empty() ? std::string() : "v1|" + model + f.signature_generic.substr(4);
+    }
+    c.hardware_area = txt(_rp_hw);
+    if (!txt(_rp_comp).empty() || !txt(_rp_ref).empty()) {
+        HCCKB::Component cp;
+        cp.name = txt(_rp_comp);
+        cp.ref = txt(_rp_ref);
+        cp.action = kRepairActions[std::min<uint16_t>(lv_dropdown_get_selected(_rp_comp_action), 4)];
+        c.components.push_back(cp);
+    }
+    {
+        std::string br = txt(_rp_busrail), cur;
+        for (char ch : br + ";") {
+            if (ch == ';' || ch == ',') {
+                size_t a = cur.find_first_not_of(' '), b = cur.find_last_not_of(' ');
+                if (a != std::string::npos) c.bus_rail.push_back(cur.substr(a, b - a + 1));
+                cur.clear();
+            } else {
+                cur += ch;
+            }
+        }
+    }
+    if (!txt(_rp_m_point).empty()) {
+        HCCKB::Measurement m;
+        m.point = txt(_rp_m_point);
+        m.type = kMeasureTypes[std::min<uint16_t>(lv_dropdown_get_selected(_rp_m_type), 4)];
+        m.before = txt(_rp_m_before);
+        m.after = txt(_rp_m_after);
+        m.unit = txt(_rp_m_unit);
+        c.measurements.push_back(m);
+    }
+    c.repair_action = txt(_repair_action);
+    c.result.panic_resolved = lv_obj_has_state(_rp_resolved, LV_STATE_CHECKED);
+    c.result.observed_days = txt(_rp_days).empty() ? -1 : atoi(txt(_rp_days).c_str());
+    c.notes = txt(_repair_note);
+
+    if (verified) {
+        // Chặn trước khi lưu (store cũng tự hạ, nhưng báo rõ cho kỹ thuật viên).
+        if (c.model.empty() || c.signature.empty()) { setStatus("VERIFIED cần MODEL + signature"); return false; }
+        if (c.repair_action.empty()) { setStatus("VERIFIED cần ghi CÁCH SỬA"); return false; }
+        if (!c.result.panic_resolved) { setStatus("VERIFIED cần tick 'Đã hết panic sau khi sửa'"); return false; }
+    }
+    c.status = verified ? "VERIFIED" : "REPAIR_CONFIRMED";
 
     time_t now = time(nullptr);
     struct tm tmv;
     localtime_r(&now, &tmv);
-    char ts[32];
+    char ts[32], idts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
-    c.created_at = ts;
+    strftime(idts, sizeof(idts), "%Y%m%d_%H%M%S", &tmv);
+    c.date = ts;
+    std::string mid;
+    for (char ch : c.model) mid += isalnum((unsigned char)ch) ? (char)tolower((unsigned char)ch) : '_';
+    c.id = std::string("case_") + idts + "_" + (mid.empty() ? "unknown" : mid);
+    c.evidence_panic_file = _panic_file;
+    if (c.evidence_panic_file.rfind("[RAM] ", 0) == 0) c.evidence_panic_file = c.evidence_panic_file.substr(6);
 
-    bool ok = HCCPanicKB::saveCase(c, verified);
-    if (_panic_status_label) {
-        if (ok) {
-            lv_label_set_text(_panic_status_label,
-                              verified ? "Đã VERIFY -> Verified KB" : "Đã lưu REPAIR_CONFIRMED");
-        } else {
-            lv_label_set_text(_panic_status_label, "Lưu case thất bại (thẻ SD?)");
-        }
+    std::string err;
+    if (!HCCPanicKBStore::saveCase(c, err)) {
+        printf("[HCC KB] lưu case lỗi: %s\n", err.c_str());
+        setStatus("Lưu case thất bại (thẻ SD?)");
+        return false;
     }
-    return ok;
+    ensureKbLoaded(true);
+    setStatus(verified ? "Đã lưu VERIFIED case" : "Đã lưu REPAIR_CONFIRMED case");
+    return true;
 }
 
 void HCCHome::onRepairSaveClicked(lv_event_t *event)
@@ -4797,6 +4937,7 @@ void HCCHome::onRepairSaveClicked(lv_event_t *event)
     if (app == nullptr) return;
     if (app->submitRepairCase(false)) {
         onRepairCloseClicked(event);
+        app->refreshPanicDetail();
     }
 }
 
@@ -4806,6 +4947,7 @@ void HCCHome::onRepairVerifyClicked(lv_event_t *event)
     if (app == nullptr) return;
     if (app->submitRepairCase(true)) {
         onRepairCloseClicked(event);
+        app->refreshPanicDetail();
     }
 }
 
@@ -4818,11 +4960,13 @@ void HCCHome::onRepairCloseClicked(lv_event_t *event)
     app->_repair_kb = nullptr;
     app->_repair_model = nullptr;
     app->_repair_sig = nullptr;
-    app->_repair_code = nullptr;
-    app->_repair_source = nullptr;
-    app->_repair_hw = nullptr;
     app->_repair_action = nullptr;
     app->_repair_note = nullptr;
+    for (lv_obj_t **o : {&app->_rp_hw, &app->_rp_comp, &app->_rp_ref, &app->_rp_comp_action, &app->_rp_busrail,
+                         &app->_rp_m_point, &app->_rp_m_type, &app->_rp_m_before, &app->_rp_m_after,
+                         &app->_rp_m_unit, &app->_rp_resolved, &app->_rp_days}) {
+        *o = nullptr;
+    }
 }
 
 // ==================== XEM PANIC (raw viewer) ====================

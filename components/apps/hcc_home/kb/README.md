@@ -1,7 +1,8 @@
 # Knowledge Base V1: phân tích panic iPhone
 
 Code: `HCCPanicKBv1.hpp/.cpp` (schema, validator, matcher, migrate) và `HCCPanicKBStore.hpp/.cpp`
-(đọc flash/SD). V1 **chưa nối vào giao diện / ANALYZE**: đó là việc của BƯỚC 3.
+(đọc flash/SD). Từ BƯỚC 3, màn PANIC dùng KB này: chuỗi phân tích hiện ngay khi chọn panic
+(`HCCPanicKBView`), ANALYZE ưu tiên case khớp, và form XÁC NHẬN ĐÃ SỬA ghi case vào `kb/v1/cases`.
 
 ## Nơi lưu
 
@@ -44,7 +45,7 @@ Mỗi field (`mechanism`, `subsystem`, ...) có dạng `{"value", "level", "sour
 2. Lấy `model`, `ios`, `panic_type`, `primary_kind`, `signature`, `signature_generic`, `drivers`,
    `sensors`, `codes` từ panic của máy đó. Có hai cách:
    - `test/panic/run_tests.sh --dump <file.ips>` (dòng `signature:` / `signature_generic:`);
-   - hoặc dùng `HCCKB::caseFromFacts()` (BƯỚC 3 sẽ có nút tạo sẵn).
+   - hoặc trên board: chọn panic, bấm **XÁC NHẬN ĐÃ SỬA**. Form tự điền các trường này từ panic.
 3. Điền phần sửa chữa: `hardware_area`, `components[]` (`name`, `ref`, `action`:
    replaced/repaired/reworked/cleaned/other), `bus_rail[]`, `measurements[]` (`point`, `type`,
    `before`, `after`, `unit`), `repair_action`, `result` (`panic_resolved`, `observed_days`), `notes`,

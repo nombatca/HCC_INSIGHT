@@ -21,7 +21,7 @@ if [ "$1" = "--dump" ]; then
 fi
 KBBIN="${TMPDIR:-/tmp}/hcc_panic_kb_test"
 g++ -std=gnu++17 -O1 -Wall -Wextra -I"$HERE/stub" -I"$CJSON" -I"$SRC" \
-    "$HERE/kb_test.cpp" "$SRC/HCCPanicKBv1.cpp" "$SRC/HCCPanicParser.cpp" "$SRC/HCCPanicFacts.cpp" "$CJSON/cJSON.c" \
+    "$HERE/kb_test.cpp" "$SRC/HCCPanicKBv1.cpp" "$SRC/HCCPanicKBView.cpp" "$SRC/HCCPanicParser.cpp" "$SRC/HCCPanicFacts.cpp" "$CJSON/cJSON.c" \
     -o "$KBBIN"
 if [ "$1" = "--kb-dump" ]; then
     exec "$KBBIN" "$HERE" --dump "$2"

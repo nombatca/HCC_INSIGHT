@@ -14,6 +14,7 @@
 #include "HCCFastbootClient.hpp"
 #include "HCCEeprom.hpp"
 #include "HCCPanicTypes.hpp"
+#include "HCCPanicKBv1.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
 #include "HCCAndroidDiagnostics.hpp"
 class HCCHome : public ESP_Brookesia_PhoneApp {
@@ -349,9 +350,6 @@ private:
     lv_obj_t *_repair_kb;
     lv_obj_t *_repair_model;
     lv_obj_t *_repair_sig;
-    lv_obj_t *_repair_code;
-    lv_obj_t *_repair_source;
-    lv_obj_t *_repair_hw;
     lv_obj_t *_repair_action;
     lv_obj_t *_repair_note;
     ParsedPanic _repair_parsed;
@@ -365,10 +363,11 @@ private:
     lv_obj_t *_pi_sev;
     lv_obj_t *_pi_sevsub;
     lv_obj_t *_pi_keystr;
-    lv_obj_t *_pi_cause;        // NGUYÊN NHÂN DỰ ĐOÁN (AI)
-    lv_obj_t *_pi_check;        // HƯỚNG KIỂM TRA / ĐỀ XUẤT
-    lv_obj_t *_pi_kb;           // THAM KHẢO KB
+    lv_obj_t *_pi_cause;        // CHUỖI PHÂN TÍCH (KB V1)
+    lv_obj_t *_pi_check;        // ĐO KIỂM / KIỂM TRA
+    lv_obj_t *_pi_kb;           // ĐỐI CHIẾU VERIFIED / KB
     lv_obj_t *_pi_conclusion;   // KẾT LUẬN
+    lv_obj_t *_pi_ai = nullptr; // PHÂN TÍCH AI (AI_INFERENCE, tham khảo)
     lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;
@@ -376,6 +375,25 @@ private:
     // Parse của chữ AI chép từ ảnh panic (ghi ở task ANALYZE, đọc ở applyPanicResult).
     ParsedPanic _panic_img_parsed;
     bool _panic_img_parsed_ready = false;
+    std::string _panic_img_parsed_file;  // panic ảnh đã được AI chép chữ (cho XÁC NHẬN ĐÃ SỬA)
+
+    // ---- Knowledge Base V1 (BƯỚC 3) ----
+    // Nạp ở luồng LVGL (showPanic / sau khi lưu case); task ANALYZE chỉ đọc.
+    HCCKB::KnowledgeBase _kb;
+    std::vector<HCCKB::CaseRecord> _kb_cases;
+    bool _kb_loaded = false;
+    // Chữ đã dựng cho các ô (task ANALYZE ghi, applyPanicResult hiện).
+    std::string _kv_chain, _kv_checks, _kv_match, _kv_conclusion, _kv_ai;
+    void ensureKbLoaded(bool force = false);
+    // Dựng chữ các ô KB cho panic đã parse. Trả true (và điền case_result) nếu có case khớp
+    // MEDIUM trở lên -> không cần gọi AI.
+    bool computeKbView(const ParsedPanic &parsed, PanicResult *case_result = nullptr);
+    void showKbView();
+
+    // Form XÁC NHẬN ĐÃ SỬA (hcc.case.v1).
+    lv_obj_t *_rp_hw = nullptr, *_rp_comp = nullptr, *_rp_ref = nullptr, *_rp_comp_action = nullptr;
+    lv_obj_t *_rp_busrail = nullptr, *_rp_m_point = nullptr, *_rp_m_type = nullptr, *_rp_m_before = nullptr;
+    lv_obj_t *_rp_m_after = nullptr, *_rp_m_unit = nullptr, *_rp_resolved = nullptr, *_rp_days = nullptr;
     uint32_t _panic_seen_serial = 0;
     bool _panic_url_has_ip = false;
     char _panic_file[96];

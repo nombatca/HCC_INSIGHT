@@ -218,6 +218,7 @@ CaseRecord caseFromFacts(const PanicFacts &f);
 bool migrateLegacyCase(const std::string &legacy_json, const char *legacy_dir, const std::string &raw_panic,
                        CaseRecord &out);
 
+// Analysis giữ con trỏ vào kb và cases: hai đối tượng đó phải sống lâu hơn Analysis.
 Analysis analyze(const PanicFacts &facts, const KnowledgeBase &kb, const std::vector<CaseRecord> &cases);
 
 // Văn bản đọc được (log / test).

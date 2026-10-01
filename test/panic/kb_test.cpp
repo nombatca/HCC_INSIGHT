@@ -1,6 +1,7 @@
 // Test host cho Knowledge Base V1 (HCCPanicKBv1): validator, matcher, case, migrate.
 //   kb_test <root test/panic> [--dump <file.ips>]
 #include "HCCPanicKBv1.hpp"
+#include "HCCPanicKBView.hpp"
 #include "HCCPanicParser.hpp"
 
 #include <cstdio>
@@ -260,6 +261,43 @@ int main(int argc, char **argv)
         CaseRecord c = caseFromFacts(f);
         check(c.status == "DRAFT", "case tạo từ panic mặc định DRAFT");
         check(c.model == "iPhone13,4" && c.signature == f.signature && c.drivers.size() == 6, "DRAFT điền sẵn từ facts");
+    }
+
+    // ---- 8. Chữ hiển thị trên màn PANIC (BƯỚC 3) ----
+    printf("[8] KbView\n");
+    {
+        PanicFacts f = factsOf(root + "/samples/real/busy_timeout_smc_charger_iphone13_4.ips");
+        KbView v = renderView(f, analyze(f, kb, {}));
+        printf("---- chain ----\n%s\n---- conclusion ----\n%s\n", v.chain.c_str(), v.conclusion.c_str());
+        check(v.chain.find("- Driver smc-charger (giữ busy) -> nhóm SMC_SENSOR #F2C94C [INFERRED]# (theo tên)") !=
+                  std::string::npos,
+              "view 13,4: smc-charger chỉ INFERRED theo tên");
+        check(v.chain.find("chức năng / phần cứng: #8A97A3 [UNKNOWN]#") != std::string::npos, "view 13,4: chức năng UNKNOWN");
+        check(v.conclusion.find("Linh kiện cụ thể: #8A97A3 [UNKNOWN]#") != std::string::npos, "view 13,4: linh kiện UNKNOWN");
+        check(v.top_case == nullptr, "view 13,4: không có case");
+    }
+    {
+        PanicFacts f = factsOf(root + "/samples/real/smc_bsc_failure_fragment.ips");
+        KbView v = renderView(f, analyze(f, kb, {}));
+        check(v.chain.find("- Mã S.sensor[1] = 1572864 = 0x180000 (bit 19,20) -> #8A97A3 [UNKNOWN]#") != std::string::npos,
+              "view SMC: S.sensor[1] dec -> hex -> bit -> UNKNOWN");
+        check(v.chain.find("ASSERT: SMC BSC failure @ target/d47/target.cpp:194 #8A97A3 [UNKNOWN]#") != std::string::npos,
+              "view SMC: ASSERT UNKNOWN");
+    }
+    {
+        KbView v = renderView(usb, analyze(usb, kb, cases));
+        check(v.top_case && v.top_case->id == verified.id, "view USB: case VERIFIED đứng đầu");
+        check(v.conclusion.find("Theo case VERIFIED #3DD66E [VERIFIED]# (exact)") == 0, "view USB: kết luận theo VERIFIED");
+        check(v.conclusion.find("VÍ DỤ: cụm cáp chân sạc") != std::string::npos, "view USB: linh kiện từ case");
+        check(v.checks.find("VÍ DỤ: chân VBUS (voltage): trước 0 / sau 5.0 V") != std::string::npos, "view USB: phép đo trước/sau");
+        const std::vector<CaseRecord> only_other = {other};  // Analysis giữ con trỏ vào vector này
+        Analysis other_only = analyze(usb, kb, only_other);
+        KbView v2 = renderView(usb, other_only);
+        check(v2.conclusion.find("Lưu ý: không phải khớp chính xác") != std::string::npos, "view: case khác model có cảnh báo");
+    }
+    {
+        // '#' trong chữ tự do không phá recolor.
+        check(noRecolor("a#b") == "a b", "noRecolor bỏ '#'");
     }
 
     printf("\nKB: %d kiểm tra, %d lỗi\n", g_checks, g_fail);
