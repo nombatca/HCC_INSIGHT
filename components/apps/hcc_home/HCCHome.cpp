@@ -13,6 +13,9 @@
 #include "HCCPanicServer.hpp"
 #include "HCCPanicKBStore.hpp"
 #include "HCCPanicKBView.hpp"
+
+// HCCMemory.cpp: operator new dùng PSRAM cho khối lớn; in RAM còn trống.
+void hccMemoryReport(const char *where);
 #include "HCCViText.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
@@ -3878,7 +3881,9 @@ void HCCHome::panicAnalyzeTask(void *arg)
 {
     HCCHome *app = static_cast<HCCHome *>(arg);
     if (app != nullptr) {
+        hccMemoryReport("ANALYZE bắt đầu");
         app->performPanicAnalyze();
+        hccMemoryReport("ANALYZE xong");
         lv_async_call(applyPanicResult, app);
     }
     vTaskDelete(nullptr);
@@ -4400,6 +4405,7 @@ void HCCHome::showPanic()
 
     /* ===== Danh sách + chi tiết ban đầu ===== */
     ensureKbLoaded();
+    hccMemoryReport("PANIC sau khi nạp KB");
     _panic_seen_serial = HCCPanicServer::receivedSerial();
     populatePanicFileList();
 
