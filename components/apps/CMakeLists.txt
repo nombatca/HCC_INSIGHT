@@ -30,5 +30,6 @@ target_compile_options(
         -Wno-write-strings
     >
     -DLV_LVGL_H_INCLUDE_SIMPLE
-    "-include${CMAKE_CURRENT_LIST_DIR}/../vn_fonts/include/vn_fonts.h"
+    # Chỉ C/C++: EMBED_TXTFILES sinh file assembly (.S), không được -include header C.
+    "$<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_CURRENT_LIST_DIR}/../vn_fonts/include/vn_fonts.h>"
 )
