@@ -367,7 +367,11 @@ private:
     lv_obj_t *_pi_check;        // ĐO KIỂM / KIỂM TRA
     lv_obj_t *_pi_kb;           // ĐỐI CHIẾU VERIFIED / KB
     lv_obj_t *_pi_conclusion;   // KẾT LUẬN
-    lv_obj_t *_pi_ai = nullptr; // PHÂN TÍCH AI (AI_INFERENCE, tham khảo)
+    lv_obj_t *_pi_ai = nullptr; // (không còn trên màn chính: AI nằm trong chi tiết)
+    lv_obj_t *_pi_conf = nullptr; // CONFIDENCE (khung kết luận)
+    lv_obj_t *_panic_detail_dialog = nullptr; // XEM PHÂN TÍCH CHI TIẾT
+    static void onPanicDetailClicked(lv_event_t *event);
+    static void onPanicDetailCloseClicked(lv_event_t *event);
     lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;
@@ -383,7 +387,11 @@ private:
     std::vector<HCCKB::CaseRecord> _kb_cases;
     bool _kb_loaded = false;
     // Chữ đã dựng cho các ô (task ANALYZE ghi, applyPanicResult hiện).
-    std::string _kv_chain, _kv_checks, _kv_match, _kv_conclusion, _kv_ai;
+    // Basic Result (màn chính) + Technical Detail (nút XEM PHÂN TÍCH CHI TIẾT).
+    std::string _kv_error, _kv_sig, _kv_hw, _kv_conf, _kv_steps, _kv_case, _kv_detail, _kv_ai;
+    bool _kv_hw_confirmed = false, _kv_hw_known = false;
+    HCCKB::Confidence _kv_conf_level = HCCKB::Confidence::None;
+    void setKbPlaceholder(const char *text);
     void ensureKbLoaded(bool force = false);
     // Dựng chữ các ô KB cho panic đã parse. Trả true (và điền case_result) nếu có case khớp
     // MEDIUM trở lên -> không cần gọi AI.

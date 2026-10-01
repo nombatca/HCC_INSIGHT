@@ -1,0 +1,3 @@
+# Khác HEX -> khác signature (không được khớp exact với #17)
+has: code: S.sensor[1] raw=1572864 hex=0x180000 dec=1572864 bits=[19,20] ctx=smc
+lacks: c=0x300000

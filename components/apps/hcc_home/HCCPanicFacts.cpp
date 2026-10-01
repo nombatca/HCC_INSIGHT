@@ -285,6 +285,7 @@ public:
         readWatchdogs();
         readSensors();
         readSmcDetails();
+        if (std::find(f.kinds.begin(), f.kinds.end(), PanicKind::SmcPanic) != f.kinds.end()) readAssertTags();
         readKernelTarget();
         readDriversMentioned();
         readNumbers();
@@ -747,6 +748,12 @@ private:
                 size_t c2 = (c1 == std::string::npos) ? c1 : rest.find(':', c1 + 1);
                 if (c2 != std::string::npos && isdigit((unsigned char)rest[c1 + 1])) {
                     f.assert_location = rest.substr(0, c2);
+                    // "target/d47/target.cpp" -> "d47"
+                    size_t tp = f.assert_location.find("target/");
+                    if (tp != std::string::npos) {
+                        size_t te = f.assert_location.find('/', tp + 7);
+                        if (te != std::string::npos && te > tp + 7) f.smc_target = f.assert_location.substr(tp + 7, te - tp - 7);
+                    }
                     std::string after = rest.substr(c2 + 1);
                     size_t comma = after.find(',');
                     if (comma != std::string::npos) {
@@ -806,6 +813,43 @@ private:
                     f.sensors.push_back(sf);
                 }
             }
+        }
+    }
+
+    // Mã 4 ký tự in hoa (vd TAOP, TAOC) trên các dòng ASSERT / SMC trong thông điệp. Định dạng chưa
+    // có tài liệu: chỉ ghi nhận để so khớp case, không gán ý nghĩa.
+    void readAssertTags()
+    {
+        PanicFacts &f = *_f;
+        static const char *stop[] = {"FAIL", "NULL", "TRUE", "DONE", "BUSY", "INIT", "READ", "SEND", "WAIT"};
+        for (size_t i = _msg_first; i < _msg_end; ++i) {
+            const std::string t = msgText(i);
+            const std::string low = toLower(t);
+            if (low.find("assert") == std::string::npos && low.find("smc") == std::string::npos) continue;
+            size_t k = 0;
+            while (k < t.size()) {
+                while (k < t.size() && !isalnum((unsigned char)t[k])) k++;
+                size_t a = k;
+                while (k < t.size() && (isalnum((unsigned char)t[k]) || t[k] == '_')) k++;
+                if (k - a != 4) continue;
+                std::string tok = t.substr(a, 4);
+                int letters = 0;
+                bool ok = true;
+                for (char c : tok) {
+                    if (isupper((unsigned char)c)) letters++;
+                    else if (!isdigit((unsigned char)c)) ok = false;
+                }
+                // Bỏ phần đường dẫn / tên file (vd "d47/target.cpp") và từ thông dụng.
+                if (!ok || letters < 2 || (a > 0 && (t[a - 1] == '/' || t[a - 1] == '.'))) continue;
+                bool stopword = false;
+                for (const char *w : stop) stopword = stopword || tok == w;
+                if (stopword) continue;
+                if (std::find(f.assert_tags.begin(), f.assert_tags.end(), tok) == f.assert_tags.end())
+                    f.assert_tags.push_back(tok);
+            }
+        }
+        if (!f.assert_tags.empty()) {
+            f.notes.push_back("ASSERT tag (mã 4 ký tự) là QUAN SÁT, ý nghĩa UNKNOWN - chỉ dùng để so khớp case");
         }
     }
 
@@ -1137,8 +1181,17 @@ void HCCPanicFacts::buildSignature(PanicFacts &f)
                              "|d=" + joinSorted(drivers, 8) + "|s=" + joinSorted(sensors, 12) +
                              "|c=" + joinSorted(codes, 6) + "|w=" + joinSorted(daemons, 4) + "|x=" + esr +
                              "|a=" + (f.assert_text.empty() ? std::string("-") : toLower(squeeze(f.assert_text)));
-    f.signature = "v1|" + (f.product.empty() ? std::string("UNKNOWN") : f.product) + rest;
-    f.signature_generic = "v1|*" + rest;
+    std::string extra;
+    if (!f.smc_target.empty()) extra += "|t=" + toLower(f.smc_target);
+    if (!f.assert_tags.empty()) {
+        std::vector<std::string> tags = f.assert_tags;
+        std::sort(tags.begin(), tags.end());  // giữ chữ hoa: là mã
+        std::string g;
+        for (size_t i = 0; i < tags.size(); ++i) g += (i ? "," : "") + tags[i];
+        extra += "|g=" + g;
+    }
+    f.signature = "v1|" + (f.product.empty() ? std::string("UNKNOWN") : f.product) + rest + extra;
+    f.signature_generic = "v1|*" + rest + extra;
 }
 
 std::string HCCPanicFacts::describe(const PanicFacts &f)
@@ -1162,6 +1215,12 @@ std::string HCCPanicFacts::describe(const PanicFacts &f)
     line("iboot_version", f.iboot_version);
     line("assert_location", f.assert_location);
     line("assert_text", f.assert_text);
+    line("smc_target", f.smc_target);
+    if (!f.assert_tags.empty()) {
+        std::string g;
+        for (size_t i = 0; i < f.assert_tags.size(); ++i) g += (i ? "," : "") + f.assert_tags[i];
+        line("assert_tags", g);
+    }
     line("firmware_rtkit", f.firmware_rtkit);
     line("firmware_client", f.firmware_client);
     line("primary_kind", panicKindName(f.primary_kind));

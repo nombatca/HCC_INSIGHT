@@ -300,6 +300,95 @@ int main(int argc, char **argv)
         check(noRecolor("a#b") == "a b", "noRecolor bỏ '#'");
     }
 
+    // ---- 9. Matcher: không exact chỉ vì cùng model; SMC theo model+target+sensor+HEX+tag ----
+    printf("[9] Matcher SMC / dữ kiện phân biệt\n");
+    {
+        PanicFacts smc = factsOf(root + "/samples/smc_d94_taop_taoc.ips");
+        PanicFacts smc_var = factsOf(root + "/samples/smc_d94_taop_taoc_variant.ips");
+        PanicFacts smc_hex = factsOf(root + "/samples/smc_d94_other_hex.ips");
+        CaseRecord c = caseFromFacts(smc);
+        c.id = "test_smc_d94";
+        c.status = "VERIFIED";
+        c.repair_action = "TEST";
+        c.result.panic_resolved = true;
+        check(c.smc_target == "d94" && c.assert_tags.size() == 2, "case lưu target + ASSERT tag");
+        CaseRecord rt;
+        check(parseCase(caseToJson(c), rt) && rt.smc_target == "d94" && rt.assert_tags == c.assert_tags,
+              "case JSON giữ smc_target / assert_tags");
+        const std::vector<CaseRecord> cs = {c};
+        Analysis a1 = analyze(smc_var, kb, cs);
+        check(!a1.cases.empty() && a1.cases[0].match_type == "exact" && a1.cases[0].confidence == Confidence::High,
+              "SMC cùng model+target+sensor+HEX+tag -> exact HIGH");
+        check(!a1.cases.empty() &&
+                  a1.cases[0].reason.find("SMC: iPhone17,2+d94+S.sensor[1]+0x300000+TAOP+TAOC") != std::string::npos,
+              "lý do exact nêu đủ khoá SMC");
+        Analysis a2 = analyze(smc_hex, kb, cs);
+        bool exact2 = false;
+        for (const auto &m : a2.cases) exact2 = exact2 || m.match_type == "exact";
+        check(!exact2, "SMC khác HEX -> không exact");
+        check(a2.confidence <= Confidence::Low, "SMC khác HEX -> confidence tối đa LOW");
+
+        // SMC chỉ có model + loại (không sensor / HEX / tag): không bao giờ exact.
+        const std::string bare = "{\"bug_type\":\"210\",\"os_version\":\"iPhone OS 18.0\"}\n"
+                                 "{\"product\":\"iPhone17,2\",\"panicString\":\"panic(cpu 0 caller 0xfffffff012345678): "
+                                 "SMC PANIC - firmware crashed\\nDebugger message: panic\"}";
+        PanicFacts b = HCCPanicParser::parse(bare).facts;
+        CaseRecord cb = caseFromFacts(b);
+        cb.id = "test_smc_bare";
+        cb.status = "VERIFIED";
+        cb.repair_action = "TEST";
+        cb.result.panic_resolved = true;
+        const std::vector<CaseRecord> csb = {cb};
+        Analysis a3 = analyze(b, kb, csb);
+        check(!a3.cases.empty() && a3.cases[0].match_type == "signature_no_discriminator" &&
+                  a3.cases[0].confidence == Confidence::Low,
+              "SMC chỉ cùng model + loại -> signature_no_discriminator, LOW");
+
+        // Cùng model, khác loại panic: không khớp.
+        PanicFacts other_kind = factsOf(root + "/samples/busy_timeout_usbc.ips");
+        other_kind.product = "iPhone17,2";
+        HCCPanicFacts::buildSignature(other_kind);
+        Analysis a4 = analyze(other_kind, kb, cs);
+        check(a4.cases.empty(), "cùng model khác loại -> không khớp");
+    }
+
+    // ---- 10. Basic Result: sạch, kết luận phần cứng có ngay; Detail giữ đủ dữ liệu ----
+    printf("[10] Basic / Detail\n");
+    {
+        const char *names[] = {"samples/real/busy_timeout_smc_charger_iphone13_4.ips", "samples/real/smc_bsc_failure_fragment.ips",
+                               "samples/smc_d94_taop_taoc.ips", "samples/userspace_watchdog_missing_sensor.ips",
+                               "samples/kernel_data_abort.ips", "samples/sep_panic.ips", "samples/i2c_bus.ips",
+                               "samples/busy_timeout_usbc.ips"};
+        for (const char *n : names) {
+            PanicFacts f = factsOf(root + "/" + n);
+            Analysis a = analyze(f, kb, {});
+            BasicView b = renderBasic(f, a);
+            const std::string all = b.error + "\n" + b.signature + "\n" + b.hardware + "\n" + b.steps + "\n" + b.case_match;
+            for (const char *bad : {"UNKNOWN", "INFERRED", "DOCUMENTED", "mailbox", "RTKit", "bit ", "bits", "#"}) {
+                check(all.find(bad) == std::string::npos, std::string("basic ") + n + " không chứa '" + bad + "'");
+            }
+            check(!b.hardware.empty() && !b.error.empty() && !b.steps.empty(), std::string("basic ") + n + " đủ mục");
+            const std::string d = renderDetail(f, a);
+            check(d.find("signature: ") != std::string::npos, std::string("detail ") + n + " có facts parser");
+        }
+        PanicFacts smc = factsOf(root + "/samples/real/smc_bsc_failure_fragment.ips");
+        Analysis as = analyze(smc, kb, {});
+        BasicView bs = renderBasic(smc, as);
+        printf("---- basic SMC ----\nLỖI: %s\nSIG: %s\nHW: %s\nCONF: %s\nSTEPS:\n%s\nCASE: %s\n", bs.error.c_str(),
+               bs.signature.c_str(), bs.hardware.c_str(), bs.confidence_text.c_str(), bs.steps.c_str(), bs.case_match.c_str());
+        check(bs.error == "SMC PANIC - ASSERT: SMC BSC failure", "basic SMC: lỗi");
+        check(bs.signature.find("HEX: S.sensor[1] = 0x180000") == 0, "basic SMC: HEX đầu tiên");
+        check(bs.hardware.find("SMC: S.sensor[1]") != std::string::npos && !bs.hardware_confirmed, "basic SMC: nghi ngờ, chưa xác nhận");
+        const std::string ds = renderDetail(smc, as);
+        check(ds.find("mailbox: TX 0x5447304200001013 ascii=TG0B") != std::string::npos, "detail SMC: giữ mailbox");
+        check(ds.find("[UNKNOWN]") != std::string::npos, "detail SMC: giữ nhãn UNKNOWN");
+
+        BasicView bu = renderBasic(usb, analyze(usb, kb, cases));
+        check(bu.hardware_confirmed && bu.hardware.find("VÍ DỤ MẪU") == 0, "basic USB: kết luận theo VERIFIED exact");
+        check(bu.confidence_text == "CAO", "basic USB: confidence CAO");
+        check(bu.steps.find("1. Đo VÍ DỤ: chân VBUS: trước 0 -> sau 5.0 V (theo case)") == 0, "basic USB: bước đo từ case trước");
+    }
+
     printf("\nKB: %d kiểm tra, %d lỗi\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

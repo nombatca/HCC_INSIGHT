@@ -1,0 +1,5 @@
+# SMC: model + target + sensor index + HEX + ASSERT tag nằm trong signature
+has: smc_target: d94
+has: assert_tags: TAOP,TAOC
+has: code: S.sensor[1] raw=3145728 hex=0x300000 dec=3145728 bits=[20,21] ctx=smc
+has: signature: v1|iPhone17,2|210|smc|k=smc|d=smc|s=s.sensor[1]|c=0x300000|w=-|x=-|a=taop taoc out of range|t=d94|g=TAOC,TAOP

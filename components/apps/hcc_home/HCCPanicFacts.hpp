@@ -152,6 +152,8 @@ struct PanicFacts {
     // ---- ASSERT trong thông điệp ("ASSERT: <file>:<line>: <giá trị>, <chữ>, ...") ----
     std::string assert_location;   // "target/d47/target.cpp:194"
     std::string assert_text;       // "SMC BSC failure"
+    std::string smc_target;        // "d47" từ "target/d47/..." trong ASSERT (nguyên văn, chưa map sang model)
+    std::vector<std::string> assert_tags; // mã 4 ký tự in hoa trong thông điệp SMC (vd TAOP, TAOC); QUAN SÁT
 
     // ---- Dump firmware coprocessor (RTKit) sau thông điệp ----
     std::string firmware_rtkit;    // "RTKit-2758.40.19.release"
@@ -197,6 +199,7 @@ public:
     // Signature v1:
     //   v1|<product|UNKNOWN>|<bug_type|UNKNOWN>|<primary kind>|k=<kinds>|d=<drivers>|
     //   s=<sensors>|c=<codes trong thông điệp>|w=<daemon watchdog>|x=<ESR.EC>|a=<assert text>
+    //   [|t=<smc target>][|g=<assert tags>]   (chỉ thêm khi có, để signature loại khác không đổi)
     // Mọi danh sách: chữ thường, khử trùng, sắp xếp. Không chứa địa chỉ, số cpu, thời gian,
     // số giây timeout, trạng thái (x,y), số dòng -> ổn định giữa các lần panic cùng lỗi.
     static void buildSignature(PanicFacts &facts);

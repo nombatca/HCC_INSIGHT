@@ -141,6 +141,18 @@ def main():
            panic_string="panic(cpu 1 caller 0xfffffff0233a8e14): zalloc: zone map exhausted while "
            "allocating from zone [data.kalloc.32] @zalloc.c:4471\n" + TAIL)
 
+    # 17-19. SMC có target + sensor index + HEX + ASSERT tag (ví dụ người dùng: iPhone17,2 + d94 +
+    #        S.sensor[1] + 0x300000 + TAOP + TAOC). Vị trí tag trong dòng ASSERT là GIẢ ĐỊNH.
+    smc = ("SMC PANIC - ASSERT: target/d94/target.cpp:207: 0, TAOP TAOC out of range, spreadsheet ver(*10) 100\n"
+           "S.sensor array 0 - 7 is 0, %d, 0, 0, 0, 0, 0, 0\nF.sensor array 0 - 1 is 0\n")
+    sample("smc_d94_taop_taoc", "TONG HOP theo vi du nguoi dung (dinh dang tag GIA DINH)", product="iPhone17,2",
+           panic_string="panic(cpu 2 caller 0xfffffff0441a2b3c): " + smc % 3145728 + TAIL)
+    sample("smc_d94_taop_taoc_variant", "bien the cua #17 (khac cpu/caller/thoi diem)", product="iPhone17,2",
+           ts="2026-09-29 08:00:00.00 +0700", incident="22222222-SYNTH",
+           panic_string="panic(cpu 5 caller 0xfffffff0499c0d10): " + smc % 3145728 + TAIL)
+    sample("smc_d94_other_hex", "nhu #17 nhung S.sensor[1] = 0x180000", product="iPhone17,2",
+           panic_string="panic(cpu 2 caller 0xfffffff0441a2b3c): " + smc % 1572864 + TAIL)
+
     # 16. Text thô (không JSON) - vd chữ AI chép từ ảnh panic.
     with open(os.path.join(OUT, "text_only.ips"), "w") as f:
         f.write("bug_type: 210\nproduct: iPhone13,2\nOS Version: iPhone OS 16.7.2 (20H115)\n"

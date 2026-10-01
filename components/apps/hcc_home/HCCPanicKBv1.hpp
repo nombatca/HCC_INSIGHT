@@ -134,6 +134,8 @@ struct CaseRecord {
     std::string model, ios, panic_type, primary_kind;
     std::string signature, signature_generic;
     std::vector<std::string> drivers, sensors, codes;
+    std::string smc_target;                 // SMC: "d94" (từ ASSERT target/<x>/)
+    std::vector<std::string> assert_tags;   // SMC: mã 4 ký tự trong ASSERT (vd TAOP, TAOC)
     std::string hardware_area;
     std::vector<Component> components;
     std::vector<std::string> bus_rail;
@@ -183,7 +185,8 @@ struct CodeHit {
 
 struct CaseMatch {
     const CaseRecord *rec = nullptr;
-    std::string match_type; // exact | same_signature_other_model | partial_same_model | legacy_keyword
+    // exact | same_signature_other_model | partial_same_model | signature_no_discriminator | legacy_keyword
+    std::string match_type;
     Confidence confidence = Confidence::None;
     std::string reason;
 };

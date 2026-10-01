@@ -57,7 +57,7 @@
       "mechanism": {"value": "Dịch vụ hệ thống (vd thermalmonitord) không check-in với watchdog trong thời hạn ghi trong log nên máy panic và khởi động lại. Với thermalmonitord, log thường kèm 'Missing sensor(s)': các sensor dịch vụ không đọc được.", "level": "INFERRED", "sources": ["ifixit_kernel_panics", "dfrws_2025"], "reasoning": "Suy từ chính thông điệp + báo cáo cộng đồng; watchdogd / thermalmonitord không có mã nguồn công khai."},
       "hardware_area": {"value": "Các sensor được liệt kê trong 'Missing sensor(s)' (vị trí phụ thuộc model)", "level": "INFERRED", "sources": ["ifixit_kernel_panics"], "reasoning": "Báo cáo cộng đồng: thay/sửa cụm chứa sensor bị thiếu thường hết lỗi. Chưa có case HCC."},
       "checks": [
-        {"step": "Tra từng sensor trong 'Missing sensor(s)' theo đúng model; nếu chưa có mapping thì giữ UNKNOWN, không đoán.", "level": "INFERRED", "reasoning": "Tên sensor -> vị trí khác nhau giữa các model."},
+        {"step": "Tra từng sensor trong 'Missing sensor(s)' theo đúng model; nếu chưa có mapping thì ghi 'chưa xác định', không đoán.", "level": "INFERRED", "reasoning": "Tên sensor -> vị trí khác nhau giữa các model."},
         {"step": "Đối chiếu số giây trong log (thường 180 s) với chu kỳ khởi động lại thực tế của máy.", "level": "INFERRED", "reasoning": "Thời hạn watchdog ghi trực tiếp trong thông điệp."}
       ]
     },
@@ -89,7 +89,7 @@
     {
       "id": "kind.sep", "kind": "sep", "group": "SEP",
       "mechanism": {"value": "Secure Enclave Processor (bộ xử lý bảo mật riêng chạy sepOS) báo panic.", "level": "DOCUMENTED", "sources": ["apple_sep"]},
-      "hardware_area": {"value": "Secure Enclave là subsystem bảo mật riêng trong SoC; nguyên nhân phần cứng ngoài SoC: UNKNOWN", "level": "DOCUMENTED", "sources": ["apple_sep"]},
+      "hardware_area": {"value": "Secure Enclave - subsystem bảo mật riêng trong SoC", "level": "DOCUMENTED", "sources": ["apple_sep"]},
       "checks": [
         {"step": "Ghi lại chuỗi sau 'SEP Panic' và đối chiếu case; không suy ra linh kiện ngoài SoC khi chưa có case.", "level": "INFERRED", "reasoning": "Chưa có tài liệu nối SEP panic với linh kiện cụ thể."}
       ]

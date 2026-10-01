@@ -20,4 +20,6 @@ has: mailbox: TX 0x423043480000f013 ascii=B0CH
 lacks: kind: i2c
 lacks: AKF_
 lacks: driver: i2c_err_inf
-has: signature: v1|UNKNOWN|UNKNOWN|smc|k=smc|d=smc|s=s.sensor[1]|c=0x180000|w=-|x=-|a=smc bsc failure
+has: smc_target: d47
+lacks: assert_tags:
+has: signature: v1|UNKNOWN|UNKNOWN|smc|k=smc|d=smc|s=s.sensor[1]|c=0x180000|w=-|x=-|a=smc bsc failure|t=d47

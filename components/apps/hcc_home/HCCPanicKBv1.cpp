@@ -209,7 +209,8 @@ int confRank(Confidence c)
 
 int matchRank(const std::string &t)
 {
-    if (t == "exact") return 4;
+    if (t == "exact") return 5;
+    if (t == "signature_no_discriminator") return 0;
     if (t == "same_signature_other_model") return 3;
     if (t == "legacy_keyword") return 2;
     return 1;
@@ -233,6 +234,8 @@ void addCaseFromFacts(CaseRecord &c, const PanicFacts &f)
     for (const auto &k : f.codes) {
         if (k.in_message && k.value != 0) c.codes.push_back(k.label + "=" + k.hex);
     }
+    c.smc_target = f.smc_target;
+    c.assert_tags = f.assert_tags;
 }
 
 void validateCase(CaseRecord &c)
@@ -450,6 +453,8 @@ bool parseCase(const std::string &json, CaseRecord &c)
     c.drivers = jstrs(r, "drivers");
     c.sensors = jstrs(r, "sensors");
     c.codes = jstrs(r, "codes");
+    c.smc_target = jstr(r, "smc_target");
+    c.assert_tags = jstrs(r, "assert_tags");
     c.hardware_area = jstr(r, "hardware_area");
     const cJSON *it = nullptr;
     cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(r, "components"))
@@ -511,6 +516,8 @@ std::string caseToJson(const CaseRecord &c)
     arr(r, "drivers", c.drivers);
     arr(r, "sensors", c.sensors);
     arr(r, "codes", c.codes);
+    s(r, "smc_target", c.smc_target);
+    arr(r, "assert_tags", c.assert_tags);
     s(r, "hardware_area", c.hardware_area);
     cJSON *comps = cJSON_AddArrayToObject(r, "components");
     for (const auto &x : c.components) {
@@ -840,13 +847,26 @@ Analysis analyze(const PanicFacts &f, const KnowledgeBase &kb, const std::vector
     if (f.product.empty()) a.unknowns.push_back("model: UNKNOWN - log không có product; không khớp case theo model");
 
     // 6) VERIFIED / REPAIR_CONFIRMED case.
+    // Dữ kiện phân biệt: chỉ những gì nói lên LỖI CỤ THỂ (không tính model, loại panic, tên chung
+    // như "SMC" được nhắc trong thông điệp, hay target). Cùng model + cùng loại mà không có dữ kiện
+    // phân biệt thì không bao giờ là exact.
     std::vector<std::string> mine;
     for (const auto &d : f.drivers) {
-        if (d.role != "watchdog_daemon") mine.push_back(d.name);
+        if (d.role == "busy_entry") mine.push_back(d.name);
     }
     for (const auto &s : f.sensors) mine.push_back(s.name);
     for (const auto &c : f.codes) {
         if (c.in_message && c.value != 0) mine.push_back(c.label + "=" + c.hex);
+    }
+    for (const auto &t : f.assert_tags) mine.push_back("tag:" + t);
+    const bool is_smc = std::find(f.kinds.begin(), f.kinds.end(), PanicKind::SmcPanic) != f.kinds.end();
+    bool discriminating = !mine.empty() || !f.assert_text.empty();
+    if (is_smc) {
+        // SMC: phải có sensor index / HEX / ASSERT tag (model + target + ASSERT text chưa đủ).
+        bool smc_key = !f.assert_tags.empty();
+        for (const auto &s : f.sensors) smc_key = smc_key || s.context == "sensor_array_nonzero" || s.context == "indexed_sensor";
+        for (const auto &c : f.codes) smc_key = smc_key || (c.in_message && c.value != 0);
+        discriminating = smc_key;
     }
     std::string hay = lower(f.message);
     for (const auto &c : f.codes) hay += " " + lower(c.raw) + " " + lower(c.hex);
@@ -858,19 +878,36 @@ Analysis analyze(const PanicFacts &f, const KnowledgeBase &kb, const std::vector
         CaseMatch m;
         m.rec = &c;
         if (!c.signature.empty()) {
-            if (!f.product.empty() && c.model == f.product && c.signature == f.signature) {
+            if ((c.signature == f.signature || c.signature_generic == f.signature_generic) && !discriminating) {
+                // Signature trùng nhưng chỉ có model / loại panic -> không đủ để coi là cùng lỗi.
+                m.match_type = "signature_no_discriminator";
+                m.confidence = Confidence::Low;
+                m.reason = std::string("chỉ trùng model / loại panic, không có dữ kiện phân biệt") +
+                           (is_smc ? " (SMC cần sensor index / HEX / ASSERT tag)" : "");
+            } else if (!f.product.empty() && c.model == f.product && c.signature == f.signature) {
                 m.match_type = "exact";
                 m.confidence = verified ? Confidence::High : Confidence::Medium;
                 m.reason = "cùng model " + c.model + " + cùng normalized signature";
+                if (is_smc) {
+                    std::string key = c.model + (f.smc_target.empty() ? "" : "+" + f.smc_target);
+                    for (const auto &s : f.sensors) key += "+" + s.name;
+                    for (const auto &k : f.codes) {
+                        if (k.in_message && k.value != 0) key += "+" + k.hex;
+                    }
+                    for (const auto &t : f.assert_tags) key += "+" + t;
+                    m.reason += " (SMC: " + key + ")";
+                }
             } else if (c.signature_generic == f.signature_generic) {
                 m.match_type = "same_signature_other_model";
                 m.confidence = verified ? Confidence::Medium : Confidence::Low;
                 m.reason = "cùng signature nhưng model khác (" + (c.model.empty() ? std::string("?") : c.model) +
                            " vs " + (f.product.empty() ? std::string("UNKNOWN") : f.product) + "): hạ confidence";
-            } else if (!f.product.empty() && c.model == f.product && c.primary_kind == panicKindName(f.primary_kind)) {
+            } else if (!f.product.empty() && c.model == f.product && c.primary_kind == panicKindName(f.primary_kind) &&
+                       !mine.empty() && (!is_smc || c.smc_target == f.smc_target)) {
                 std::vector<std::string> theirs = c.drivers;
                 theirs.insert(theirs.end(), c.sensors.begin(), c.sensors.end());
                 theirs.insert(theirs.end(), c.codes.begin(), c.codes.end());
+                for (const auto &t : c.assert_tags) theirs.push_back("tag:" + t);
                 const double o = overlap(mine, theirs);
                 if (o >= 0.5) {
                     char b[64];
