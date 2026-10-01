@@ -1,0 +1,24 @@
+# Panic THẬT (người dùng gửi, 2026-09-28). Bản chép từ màn hình: dòng bị ngắt giữa chừng,
+# entry cuối 'lapOverUsbHid' bị cắt. crashReporterKey đã xoá.
+has: product: iPhone13,4
+has: bug_type: 210
+has: os_version: iPhone OS 26.5.2 (23F84)
+has: kernel_target: T8101
+has: panicked_task: watchdogd
+has: primary_kind: busy_timeout
+has: timeout: busy_timeout seconds=60 loops=0
+has: driver: smc-charger role=busy_entry state=(a,4020001) tag=smc  <- L1
+has: driver: smc-ext-charger role=busy_entry state=(a,4020001) tag=smc  <- L1
+has: driver: portmicro role=busy_entry state=(a,4020001)  <- L1
+has: driver: lap-uart-1 role=busy_entry state=(a,4020001)  <- L1
+has: driver: audio-codec role=busy_entry state=(a,4020001)  <- L1
+has: driver: lapOverUsbHid role=busy_entry  <- L1
+has: note: busy entry 'lapOverUsbHid': trạng thái (x,y) bị cắt/không đầy đủ
+has: ignored: (a,4020001) (ioservice_state)
+has: source_location: @IOService.cpp:5986
+# (a,4020001) là trạng thái IOService, không phải mã lỗi; không có mã trong thông điệp
+lacks: ctx=message
+lacks: code: a
+# mảnh tên bị ngắt dòng không thành driver riêng
+lacks: driver: smc role=mentioned
+has: signature: v1|iPhone13,4|210|busy_timeout|k=busy_timeout|d=audio-codec,lap-uart-1,lapoverusbhid,portmicro,smc-charger,smc-ext-charger|s=-|c=-|w=-|x=-|a=-

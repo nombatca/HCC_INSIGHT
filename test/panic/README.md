@@ -15,8 +15,11 @@ Thư mục `test/` nằm ngoài `components/` nên không được build vào fi
 - `samples/*.ips`: mẫu **tổng hợp** do `make_samples.py` sinh ra. Chúng **không phải
   panic thật**. Mỗi mẫu dựng lại một định dạng đã biết để kiểm tra cơ chế tách fact.
   Nguồn của từng mẫu ghi trong `samples/SOURCES.txt`.
-- `samples/real/*.ips`: panic **thật** (thư mục này tạo khi có file). Runner tự chạy
-  thư mục này nếu nó tồn tại.
+- `samples/real/*.ips`: panic **thật**. Runner tự chạy thư mục này.
+  - `busy_timeout_smc_charger_iphone13_4`: iPhone13,4, iOS 26.5.2. Đây là bản chép từ màn hình
+    nên có dòng bị ngắt giữa chừng và entry cuối bị cắt.
+  - `smc_bsc_failure_fragment`: đoạn payload SMC PANIC (T8140), thiếu header và product.
+  - Cả hai đã xoá `crashReporterKey`.
 
 ### Thêm một panic .ips thật
 
@@ -45,6 +48,9 @@ Panic thật có thể chứa ECID / serial. Hãy xoá các trường đó trư�
 | `Kernel data abort.` …, register dump `x0: … esr: … far: …` | xnu `osfmk/arm64/sleh.c` | DOCUMENTED |
 | ESR_ELx.EC (bit 31:26) | ARM Architecture Reference Manual | DOCUMENTED |
 | `userspace watchdog timeout … checkins from <daemon>`, `Missing sensor(s): …`, `watchdog timeout … watchdogd` | log thật trên iFixit / Apple Community | OBSERVED |
-| SMC / AOP / SEP / ANS / baseband / PMU / i2c | phần mềm đóng của Apple; chỉ nhận theo chữ | UNKNOWN chi tiết |
+| `SMC PANIC - ASSERT: <file>:<line>: <v>, <chữ>, …`, `S.sensor array A - B is v0, v1, …`, `F.sensor array …` | panic thật `samples/real/smc_bsc_failure_fragment.ips` | OBSERVED (ý nghĩa phần tử/bit: UNKNOWN) |
+| Dump firmware `RTKit-… - Client: …`, mailbox `0x… [TX] …` (4 byte cao in được ASCII) | panic thật như trên | OBSERVED (ý nghĩa khoá: UNKNOWN) |
+| `RELEASE_ARM64_Txxxx` trong kernel version | panic thật | OBSERVED (tên cấu hình kernel) |
+| SMC / AOP / SEP / ANS / baseband / PMU / i2c (phần còn lại) | phần mềm đóng của Apple; chỉ nhận theo chữ | UNKNOWN chi tiết |
 
 Mã nguồn xnu: https://github.com/apple-oss-distributions/xnu

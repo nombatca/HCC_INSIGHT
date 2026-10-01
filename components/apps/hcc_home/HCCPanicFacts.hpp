@@ -84,6 +84,24 @@ struct PanicCodeFact {
     PanicEvidence evidence;
 };
 
+// Mảng sensor trong SMC PANIC: "S.sensor array 0 - 7 is 0, 1572864, 0, ..." (định dạng quan
+// sát được trong log thật; ý nghĩa từng phần tử / từng bit CHƯA có tài liệu).
+struct PanicSensorArrayFact {
+    std::string name;            // "S.sensor", "F.sensor"
+    int first_index = 0;         // "0 - 7" -> 0
+    int last_index = -1;         // "0 - 7" -> 7
+    std::vector<uint64_t> values;// giá trị thập phân theo thứ tự (index = first_index + i)
+    PanicEvidence evidence;
+};
+
+// Tin nhắn mailbox trong dump firmware RTKit ("0x5447304200001013 [TX] user01 0x...").
+struct PanicMailboxFact {
+    std::string dir;             // "TX" | "RX"
+    std::string raw;             // giá trị 64-bit nguyên văn
+    std::string ascii4;          // 4 byte cao in được dạng ASCII (vd "TG0B"); "" nếu không
+    PanicEvidence evidence;
+};
+
 // Thanh ghi CPU (từ register dump của kernel exception).
 struct PanicRegisterFact {
     std::string name;      // "pc", "lr", "esr", "far", "cpsr", "x0"...
@@ -123,12 +141,22 @@ struct PanicFacts {
     std::string debugger_message;  // "Debugger message: ..."
     std::string panicked_task;     // tên tiến trình trong "Panicked task ...: <name>"
     std::string kernel_version;
+    std::string kernel_target;     // "T8101" từ "RELEASE_ARM64_T8101" (tên cấu hình kernel)
     std::string iboot_version;
     std::string os_version_line;   // "OS version: ..." trong panicString
     std::string memory_id;
     std::string roots_installed;
     std::string secure_boot;
     std::string paniclog_version;
+
+    // ---- ASSERT trong thông điệp ("ASSERT: <file>:<line>: <giá trị>, <chữ>, ...") ----
+    std::string assert_location;   // "target/d47/target.cpp:194"
+    std::string assert_text;       // "SMC BSC failure"
+
+    // ---- Dump firmware coprocessor (RTKit) sau thông điệp ----
+    std::string firmware_rtkit;    // "RTKit-2758.40.19.release"
+    std::string firmware_client;   // "AppleSMCFirmware,HIT-5204.42.6.d47a.REL"
+    std::vector<PanicMailboxFact> mailbox;
 
     // ---- Phân loại + fact có kiểu ----
     PanicKind primary_kind = PanicKind::Unknown;
@@ -138,6 +166,7 @@ struct PanicFacts {
     std::vector<PanicSensorFact> sensors;
     std::vector<PanicTimeoutFact> timeouts;
     std::vector<PanicCodeFact> codes;
+    std::vector<PanicSensorArrayFact> sensor_arrays;
     std::vector<PanicRegisterFact> registers;
     int esr_ec = -1;               // ESR_ELx.EC (bit 31:26) nếu có thanh ghi esr
     std::string esr_ec_name;       // theo ARM ARM; "" nếu không thuộc bảng đã biết
@@ -158,7 +187,7 @@ public:
     struct FileFields {
         std::string format;
         std::string bug_type, product, os_version, build, timestamp, incident_id, soc_id,
-            panic_flags;
+            panic_flags, kernel;
         std::vector<PanicEvidence> evidence;
     };
 
@@ -167,7 +196,7 @@ public:
 
     // Signature v1:
     //   v1|<product|UNKNOWN>|<bug_type|UNKNOWN>|<primary kind>|k=<kinds>|d=<drivers>|
-    //   s=<sensors>|c=<codes trong thông điệp>|w=<daemon watchdog>|x=<ESR.EC>
+    //   s=<sensors>|c=<codes trong thông điệp>|w=<daemon watchdog>|x=<ESR.EC>|a=<assert text>
     // Mọi danh sách: chữ thường, khử trùng, sắp xếp. Không chứa địa chỉ, số cpu, thời gian,
     // số giây timeout, trạng thái (x,y), số dòng -> ổn định giữa các lần panic cùng lỗi.
     static void buildSignature(PanicFacts &facts);

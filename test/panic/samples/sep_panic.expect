@@ -2,4 +2,4 @@ has: primary_kind: sep
 has: code: sks raw=0x0001f2e8 hex=0x1F2E8 dec=127720 bits=[3,5,6,7,9,12,13,14,15,16] ctx=sep
 has: code: sks#2 raw=0x00000000 hex=0x0 dec=0 bits=[] ctx=sep
 # số 0 không vào signature
-has: signature: v1|iPhone14,5|210|sep|k=sep|d=sep|s=-|c=0x1f2e8|w=-|x=-
+has: signature: v1|iPhone14,5|210|sep|k=sep|d=sep|s=-|c=0x1f2e8|w=-|x=-|a=-

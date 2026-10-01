@@ -102,6 +102,8 @@ const char *kMetadataPrefixes[] = {
     "panicked task", "panicked thread", "last started kext", "loaded kexts:", "core ",
     "compressor info:", "tpidrx_ely", "total cpu_usage:", "thread task pri cpu_usage",
     "appleHWAccess", "x86 ", "pcieup link state:", "panic diags", "last stopped kext",
+    "device-id:", "kernel uuid:", "boot version:", "boot stage 2 version:", "kernelcache slide:",
+    "kernelcache base:", "kernel text exec", "rtkit-",
 };
 
 bool isMetadataLine(const std::string &low_trimmed)
@@ -174,6 +176,36 @@ std::string labelBefore(const std::string &line, size_t pos)
     return w;
 }
 
+// "(a,4020001)": hai số hex = IOService __state[0], __state[1].
+bool isIOServiceState(const std::string &s)
+{
+    if (s.size() < 5 || s.front() != '(' || s.back() != ')') return false;
+    const std::string in = s.substr(1, s.size() - 2);
+    size_t comma = in.find(',');
+    if (comma == std::string::npos || comma == 0 || comma + 1 >= in.size()) return false;
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (i != comma && !isxdigit((unsigned char)in[i])) return false;
+    }
+    return true;
+}
+
+// Gộp mọi khoảng trắng (kể cả xuống dòng) thành một dấu cách.
+std::string squeeze(const std::string &s)
+{
+    std::string out;
+    bool sp = false;
+    for (char c : s) {
+        if (isspace((unsigned char)c)) {
+            sp = true;
+            continue;
+        }
+        if (sp && !out.empty()) out += ' ';
+        sp = false;
+        out += c;
+    }
+    return out;
+}
+
 bool labelIsCode(const std::string &low_label)
 {
     static const char *labels[] = {"code", "error", "err", "status", "result", "ret", "rc",
@@ -234,14 +266,15 @@ public:
     {
         PanicFacts f;
         _f = &f;
+        // Log chép từ màn hình có thể ngắt dòng giữa giá trị: gộp khoảng trắng.
         f.format = _ff.format;
-        f.bug_type = _ff.bug_type;
-        f.product = _ff.product;
-        f.os_version = _ff.os_version;
-        f.build = _ff.build;
-        f.timestamp = _ff.timestamp;
-        f.incident_id = _ff.incident_id;
-        f.soc_id = _ff.soc_id;
+        f.bug_type = squeeze(_ff.bug_type);
+        f.product = squeeze(_ff.product);
+        f.os_version = squeeze(_ff.os_version);
+        f.build = squeeze(_ff.build);
+        f.timestamp = squeeze(_ff.timestamp);
+        f.incident_id = squeeze(_ff.incident_id);
+        f.soc_id = squeeze(_ff.soc_id);
         f.field_evidence = _ff.evidence;
 
         _lines = splitLines(_ps);
@@ -251,6 +284,8 @@ public:
         readBusyTimeout();
         readWatchdogs();
         readSensors();
+        readSmcDetails();
+        readKernelTarget();
         readDriversMentioned();
         readNumbers();
         readPanicFlags();
@@ -354,13 +389,15 @@ private:
         for (size_t i = _msg_end; i < _lines.size(); ++i) {
             const std::string t = trim(_lines[i].text);
             const std::string lt = toLower(t);
+            readMailbox(i);
             size_t colon = t.find(':');
             if (colon == std::string::npos) continue;
             if (startsWith(lt, "debugger message:") && f.debugger_message.empty()) {
                 f.debugger_message = valueAfter(t, colon);
             } else if (startsWith(lt, "kernel version:") && f.kernel_version.empty()) {
                 f.kernel_version = valueAfter(t, colon);
-            } else if (startsWith(lt, "iboot version:") && f.iboot_version.empty()) {
+            } else if ((startsWith(lt, "iboot version:") || startsWith(lt, "boot version:")) &&
+                       f.iboot_version.empty()) {
                 f.iboot_version = valueAfter(t, colon);
             } else if (startsWith(lt, "os version:") && f.os_version_line.empty()) {
                 f.os_version_line = valueAfter(t, colon);
@@ -374,13 +411,57 @@ private:
                 f.paniclog_version = valueAfter(t, colon);
             } else if (startsWith(lt, "panicked task") && f.panicked_task.empty()) {
                 // "Panicked task 0x...: 123 pages, 4 threads: pid 56: thermalmonitord"
-                size_t pid = lt.rfind("pid ");
-                if (pid != std::string::npos) {
-                    size_t c2 = t.find(':', pid);
-                    if (c2 != std::string::npos) f.panicked_task = trim(t.substr(c2 + 1));
+                // (log chép từ màn hình có thể ngắt "pid ..." sang dòng sau).
+                std::string pt = t;
+                std::string plt = lt;
+                if (plt.find("pid ") == std::string::npos && i + 1 < _lines.size()) {
+                    pt += " " + trim(_lines[i + 1].text);
+                    plt = toLower(pt);
                 }
+                size_t pid = plt.rfind("pid ");
+                if (pid != std::string::npos) {
+                    size_t c2 = pt.find(':', pid);
+                    if (c2 != std::string::npos) f.panicked_task = trim(pt.substr(c2 + 1));
+                }
+            } else if (startsWith(lt, "rtkit-") && f.firmware_rtkit.empty()) {
+                // "RTKit-2758.40.19.release - Client: AppleSMCFirmware,HIT-..."
+                size_t sp = t.find(' ');
+                f.firmware_rtkit = t.substr(0, sp);
+                size_t cl = lt.find("client:");
+                if (cl != std::string::npos) f.firmware_client = trim(t.substr(cl + 7));
             }
         }
+    }
+
+    // "0x5447304200001013 [TX] user01 0x00000001169eae98": 4 byte cao in được ASCII -> ascii4.
+    // Việc 4 byte đó là khoá SMC là QUAN SÁT, chưa có tài liệu.
+    void readMailbox(size_t i)
+    {
+        PanicFacts &f = *_f;
+        const std::string t = trim(_lines[i].text);
+        if (!startsWith(t, "0x")) return;
+        size_t b = t.find(" [");
+        if (b == std::string::npos || b + 4 > t.size() || t[b + 4] != ']') return;
+        const std::string dir = t.substr(b + 2, 2);
+        if (dir != "TX" && dir != "RX") return;
+        PanicMailboxFact m;
+        m.dir = dir;
+        m.raw = t.substr(0, b);
+        const std::string hex = m.raw.substr(2);
+        if (hex.size() == 16) {
+            std::string a;
+            for (int k = 0; k < 4; ++k) {
+                char c = (char)strtol(hex.substr(k * 2, 2).c_str(), nullptr, 16);
+                if (!isalnum((unsigned char)c)) {
+                    a.clear();
+                    break;
+                }
+                a += c;
+            }
+            m.ascii4 = a;
+        }
+        m.evidence = ev("panicString", _lines[i].number, _lines[i].text);
+        f.mailbox.push_back(m);
     }
 
     void addKind(PanicKind k, const Line &line)
@@ -467,7 +548,19 @@ private:
     {
         PanicFacts &f = *_f;
         for (size_t i = _msg_first; i < _msg_end; ++i) {
-            const std::string t = msgText(i);
+            if (toLower(msgText(i)).find("busy timeout[") == std::string::npos &&
+                toLower(msgText(i)).find("stall[") == std::string::npos) {
+                continue;
+            }
+            // Danh sách entry có thể bị ngắt dòng (log chép từ màn hình): nối các dòng tới hết
+            // vùng thông điệp; dòng kết thúc bằng '-' nối liền ("'smc-" + "charger'").
+            std::string t = msgText(i);
+            for (size_t j = i + 1; j < _msg_end; ++j) {
+                std::string nx = trim(msgText(j));
+                if (nx.empty()) continue;
+                if (!t.empty() && t.back() == '-') t += nx;
+                else t += " " + nx;
+            }
             const std::string low = toLower(t);
             size_t p = low.find("busy timeout[");
             const char *what = "busy_timeout";
@@ -486,7 +579,7 @@ private:
                 long secs = strtol(t.c_str() + lp + 1, &end, 10);
                 if (end && *end == 's') to.seconds = secs;
             }
-            to.evidence = ev("panicString", _lines[i].number, _lines[i].text);
+            to.evidence = ev("panicString", _lines[i].number, t);
             f.timeouts.push_back(to);
 
             if (low.find("registry root held busy") != std::string::npos) {
@@ -504,19 +597,26 @@ private:
                 while (k < t.size() && t[k] == ' ') k++;
                 if (k < t.size() && t[k] == '(') {
                     size_t rp = t.find(')', k);
-                    if (rp != std::string::npos) {
-                        state = t.substr(k, rp - k + 1);
+                    std::string cand = (rp == std::string::npos) ? t.substr(k) : t.substr(k, rp - k + 1);
+                    if (isIOServiceState(cand)) {
+                        state = cand;
                         PanicIgnoredNumber ig;
                         ig.raw = state;
                         ig.reason = "ioservice_state";
-                        ig.evidence = ev("panicString", _lines[i].number, _lines[i].text);
+                        ig.evidence = ev("panicString", _lines[i].number, t);
                         f.ignored_numbers.push_back(ig);
                         k = rp + 1;
+                    } else if (!name.empty()) {
+                        f.notes.push_back("busy entry '" + name + "': trạng thái (x,y) bị cắt/không đầy đủ");
                     }
                 }
-                if (!name.empty()) addDriver(name, "busy_entry", state, _lines[i]);
+                if (!name.empty()) {
+                    Line l{t, toLower(t), _lines[i].number};
+                    addDriver(name, "busy_entry", state, l);
+                }
                 pos = k;
             }
+            break;  // một panic chỉ có một dòng busy timeout
         }
     }
 
@@ -631,6 +731,96 @@ private:
         }
     }
 
+    // "ASSERT: target/d47/target.cpp:194: 0, SMC BSC failure, ..." và
+    // "S.sensor array 0 - 7 is 0, 1572864, 0, ..." (định dạng quan sát được trong SMC PANIC thật).
+    void readSmcDetails()
+    {
+        PanicFacts &f = *_f;
+        for (size_t i = _msg_first; i < _msg_end; ++i) {
+            const std::string t = trim(msgText(i));
+            const std::string low = toLower(t);
+            size_t a = low.find("assert: ");
+            if (a != std::string::npos && f.assert_location.empty()) {
+                // <file>:<line>: <giá trị>, <chữ>, ...
+                std::string rest = t.substr(a + 8);
+                size_t c1 = rest.find(':');
+                size_t c2 = (c1 == std::string::npos) ? c1 : rest.find(':', c1 + 1);
+                if (c2 != std::string::npos && isdigit((unsigned char)rest[c1 + 1])) {
+                    f.assert_location = rest.substr(0, c2);
+                    std::string after = rest.substr(c2 + 1);
+                    size_t comma = after.find(',');
+                    if (comma != std::string::npos) {
+                        std::string txt = after.substr(comma + 1);
+                        size_t c3 = txt.find(',');
+                        f.assert_text = trim(c3 == std::string::npos ? txt : txt.substr(0, c3));
+                    }
+                }
+            }
+            size_t arr = low.find(".sensor array ");
+            if (arr != std::string::npos) {
+                size_t nstart = arr;
+                while (nstart > 0 && isalpha((unsigned char)t[nstart - 1])) nstart--;
+                PanicSensorArrayFact sa;
+                sa.name = t.substr(nstart, arr - nstart) + ".sensor";
+                const char *p = t.c_str() + arr + 14;
+                char *end = nullptr;
+                sa.first_index = (int)strtol(p, &end, 10);
+                const char *dash = strchr(end, '-');
+                if (dash) sa.last_index = (int)strtol(dash + 1, &end, 10);
+                const char *is = strstr(end, " is ");
+                if (is) {
+                    p = is + 4;
+                    while (*p) {
+                        while (*p == ' ' || *p == ',') p++;
+                        if (!isdigit((unsigned char)*p)) break;
+                        sa.values.push_back(strtoull(p, &end, 10));
+                        p = end;
+                    }
+                }
+                sa.evidence = ev("panicString", _lines[i].number, _lines[i].text);
+                bool dup = false;
+                for (const auto &x : f.sensor_arrays) {
+                    dup = dup || (x.name == sa.name && x.values == sa.values);  // khối ASSERT lặp lại
+                }
+                if (dup) continue;
+                f.sensor_arrays.push_back(sa);
+                // Phần tử khác 0 -> mã có nhãn "S.sensor[i]" (dec -> hex -> bit).
+                for (size_t k = 0; k < sa.values.size(); ++k) {
+                    if (sa.values[k] == 0) continue;
+                    const int idx = sa.first_index + (int)k;
+                    PanicCodeFact c;
+                    c.label = sa.name + "[" + std::to_string(idx) + "]";
+                    c.raw = std::to_string(sa.values[k]);
+                    c.base = 10;
+                    c.value = sa.values[k];
+                    c.context = "smc";
+                    c.in_message = true;
+                    c.evidence = sa.evidence;
+                    fillNumber(c);
+                    f.codes.push_back(c);
+                    PanicSensorFact sf;
+                    sf.name = c.label;
+                    sf.context = "sensor_array_nonzero";
+                    sf.index = idx;
+                    sf.evidence = sa.evidence;
+                    f.sensors.push_back(sf);
+                }
+            }
+        }
+    }
+
+    // "RELEASE_ARM64_T8101" (tên cấu hình kernel, trong trường kernel hoặc "Kernel version:").
+    void readKernelTarget()
+    {
+        PanicFacts &f = *_f;
+        const std::string src = squeeze(_ff.kernel) + " " + f.kernel_version + " " + _ps.substr(0, 20000);
+        size_t p = src.find("RELEASE_ARM64_");
+        if (p == std::string::npos) return;
+        size_t a = p + 14, e = a;
+        while (e < src.size() && isalnum((unsigned char)src[e])) e++;
+        f.kernel_target = src.substr(a, e - a);
+    }
+
     // Token trong thông điệp có tên thuộc nhóm từ vựng (atc*/dpphy/usb-drd/ANS/AOP...).
     void readDriversMentioned()
     {
@@ -653,7 +843,11 @@ private:
                 // Bỏ từ chung chung (đã có loại panic riêng) và tiền tố "0x...".
                 if (lt == "panic" || startsWith(lt, "0x")) continue;
                 bool known = false;
-                for (const auto &d : f.drivers) known = known || (d.name == tok);
+                for (const auto &d : f.drivers) {
+                    // Mảnh của tên đã có (busy entry bị ngắt dòng "'smc-" / "charger'") -> bỏ.
+                    known = known || d.name == tok ||
+                            (d.role == "busy_entry" && toLower(d.name).find(lt) != std::string::npos);
+                }
                 if (!known) addDriver(tok, "mentioned", "", _lines[i]);
             }
         }
@@ -851,6 +1045,17 @@ private:
                                   ": UNKNOWN - chưa có bảng bit đã kiểm chứng");
             }
         }
+        if (!f.sensor_arrays.empty()) {
+            f.notes.push_back("Ý nghĩa từng phần tử/bit của sensor array: UNKNOWN - chưa có tài liệu, cần KB theo model");
+        }
+        bool ascii = false;
+        for (const auto &m : f.mailbox) ascii = ascii || !m.ascii4.empty();
+        if (ascii) {
+            f.notes.push_back("Mailbox: 4 byte cao đọc được dạng ASCII (vd khoá SMC) - QUAN SÁT, chưa có tài liệu");
+        }
+        if (!f.firmware_rtkit.empty()) {
+            f.notes.push_back("Dump firmware RTKit (call stack, mailbox, *_err_sts) không dùng làm mã lỗi");
+        }
         if (std::find(f.kinds.begin(), f.kinds.end(), PanicKind::Pmu) != f.kinds.end()) {
             f.notes.push_back("'PMU' mơ hồ: Power Management Unit hoặc ARM Performance Monitoring Unit - NEEDS VERIFICATION");
         }
@@ -930,7 +1135,8 @@ void HCCPanicFacts::buildSignature(PanicFacts &f)
     }
     const std::string rest = "|" + bug + "|" + panicKindName(f.primary_kind) + "|k=" + joinSorted(kinds, 8) +
                              "|d=" + joinSorted(drivers, 8) + "|s=" + joinSorted(sensors, 12) +
-                             "|c=" + joinSorted(codes, 6) + "|w=" + joinSorted(daemons, 4) + "|x=" + esr;
+                             "|c=" + joinSorted(codes, 6) + "|w=" + joinSorted(daemons, 4) + "|x=" + esr +
+                             "|a=" + (f.assert_text.empty() ? std::string("-") : toLower(squeeze(f.assert_text)));
     f.signature = "v1|" + (f.product.empty() ? std::string("UNKNOWN") : f.product) + rest;
     f.signature_generic = "v1|*" + rest;
 }
@@ -952,6 +1158,12 @@ std::string HCCPanicFacts::describe(const PanicFacts &f)
     line("source_location", f.source_location);
     line("debugger_message", f.debugger_message);
     line("panicked_task", f.panicked_task);
+    line("kernel_target", f.kernel_target);
+    line("iboot_version", f.iboot_version);
+    line("assert_location", f.assert_location);
+    line("assert_text", f.assert_text);
+    line("firmware_rtkit", f.firmware_rtkit);
+    line("firmware_client", f.firmware_client);
     line("primary_kind", panicKindName(f.primary_kind));
     for (size_t i = 0; i < f.kinds.size(); ++i) {
         s += "kind: " + std::string(panicKindName(f.kinds[i])) + "  <- L" +
@@ -978,6 +1190,14 @@ std::string HCCPanicFacts::describe(const PanicFacts &f)
         s += "] ctx=" + c.context + (c.labeled_bitmask ? " bitmask" : "") + "\n";
     }
     for (const auto &r : f.registers) s += "register: " + r.name + "=" + r.raw + "\n";
+    for (const auto &a : f.sensor_arrays) {
+        s += "sensor_array: " + a.name + " " + std::to_string(a.first_index) + "-" + std::to_string(a.last_index) + " =";
+        for (auto v : a.values) s += " " + std::to_string(v);
+        s += "  <- L" + std::to_string(a.evidence.line) + "\n";
+    }
+    for (const auto &m : f.mailbox) {
+        s += "mailbox: " + m.dir + " " + m.raw + (m.ascii4.empty() ? std::string() : " ascii=" + m.ascii4) + "\n";
+    }
     if (f.esr_ec >= 0) {
         char b[16];
         snprintf(b, sizeof(b), "0x%02X", f.esr_ec);

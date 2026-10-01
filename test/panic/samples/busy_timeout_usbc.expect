@@ -11,4 +11,4 @@ has: source_location: @IOService.cpp:6050
 has: panicked_task: kernel_task
 lacks: code: 2d
 lacks: raw=0xfffffff
-has: signature: v1|iPhone15,4|210|busy_timeout|k=busy_timeout,usb_phy|d=atc-dpphy0,atc0-dpphy,usb-drd0|s=-|c=-|w=-|x=-
+has: signature: v1|iPhone15,4|210|busy_timeout|k=busy_timeout,usb_phy|d=atc-dpphy0,atc0-dpphy,usb-drd0|s=-|c=-|w=-|x=-|a=-

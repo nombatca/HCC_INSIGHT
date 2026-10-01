@@ -1,0 +1,63 @@
+{"bug_type":"210","timestamp":"2026-09-28 18:00:57.00
++0700","os_version":"iPhone OS 26.5.2
+(23F84)","roots_installed":0,"incident_id":"F66FE71A-7584-471D-9021-0B1FD41F87B
+2"}
+{
+"crashReporterKey" : "REDACTED",
+"panicProcessingFlags" : "0x0",
+"product" : "iPhone13,4",
+"kernel" : "Darwin Kernel Version 25.5.0: Tue Jun 9 22:21:55 PDT 2026;
+root:xnu-12377.122.8~1/RELEASE_ARM64_T8101",
+"socRevision" : "11",
+"panicString" : "panic(cpu 2 caller 0xfffffff010cd197c): busy timeout[0], (60s):
+multiple entries holding the registry busy, IOkit termination queue depth 0: 'smc-
+charger' (a,4020001), 'smc-ext-charger' (a,4020001), 'portmicro' (a,4020001), 'lap-
+uart-1' (a,4020001), 'audio-codec' (a,4020001), 'lapOverUsbHid' (a
+@IOService.cpp:5986)\nDebugger message: panic\nDevice-ID: 0x1\nOS release type:
+User\nOS version: 23F84\nKernel version: Darwin Kernel Version 25.5.0: Tue Jun 9
+22:21:55 PDT 2026; root:xnu-12377.122.8~1\/RELEASE_ARM64_T8101\nFileset
+Kernelcache UUID: CB2981E6BDD3C30B5B90FF364F07018B\nKernel UUID:
+6291E087-5EBF-39E2-8193-5FDA66997DFA\nBoot session UUID:
+F66FE71A-7584-471D-9021-0B1FD41F87B2\nBoot version:
+mboot-18000.122.4\nBoot Stage 2 version: \nSecure boot?: YES\nRoots installed:
+0\nPaniclog version: 15\nKernelCache slide: 0x0000000006800000\nKernelCache
+base: 0xfffffff00d804000\nKernel slide: 0x0000000006808000\nKernel text
+base: 0xfffffff00d80c000\nKernel text exec slide: 0x0000000009560000\nKernel
+text exec base: 0xfffffff10105b000\nmach_absolute_time: 0x6c20666b\nEpoch
+Time: sec usec\n Boot : 0x6aba482e 0x0000d78fe\n Sleep : 0x6aba48c5
+0x000061d1\n Wake : 0x6aba48c5 0x000060860\n Calendar: 0x6aba48cb
+0x00037f23\n\nZone info:\n Zone map: 0xfffffffdfc03a98000 - 0xfffffffde203a98000\n
+. . RO : 0xfffffffdfc03a98000 - 0xfffffffdfcea0fc000
+0xfffffffddd36dd0000\n GEN0 : 0xfffffffddd36dd0000 - 0xfffffffde1d434000\n
+GEN1 : 0xfffffffde1d434000 - 0xfffffffdf03a98000\n GEN2 : 0xfffffffdf03a98000 -
+0xfffffffdfdda10000\n GEN3 : 0xfffffffdfdda10000 - 0xfffffffde0d768000\n . DATA :
+0xfffffffde0d768000 - 0xfffffffde203a98000\n Metadata: 0xfffffffde79342000 -
+0xfffffffde794c2000\n Bitmaps: 0xfffffffde794c2000 - 0xfffffffde795c8000\n Extra :
+0 - 0\n\nCORE 0 [EACCO] recently retired instr at 0xfffffff10107716a0\nCORE 1
+[EACCO] recently retired instr at 0xfffffff10107716a0\nCORE 2 [EACCO] recently retired
+instr at 0xfffffff10107701f0\nCORE 3 [EACCO] recently retired instr at
+0xfffffff10107716a0\nCORE 4 [PACC1] recently retired instr at
+0xfffffff10107716a0\nCORE 5 [PACC1] recently retired instr at
+0xfffffff10107716a0\ntPIDRX_EL1 : 0xfffffffdf0450e3a0 0: 0x0000000000000002
+0ro: 0x000000016da0f0e0 )\nCORE 0: PC=0xfffffff1010fff080, LR=0xfffffff1010af759c,
+FP=0xffffffffe3f3f980)\nCORE 1: PC=0x00000000104a18298,
+LR=0x00000000104a18930, FP=0x0000000016ba78bf0)\nCORE 2 is the one that
+panicked. Check the full backtrace for details.\nCORE 3: PC=0x0000000190beb848,
+LR=0x0000000190beb848, FP=0x0000000016fac9480)\nCORE 4:
+PC=0xfffffff101063d8e0, LR=0xfffffff101063d8dc, FP=0xfffffffe51a47ed0)\nCORE 5:
+PC=0xfffffff101063d8e0, LR=0xfffffff101063d8dc, FP=0xfffffffe4127c3ed0\nCompressor
+Info: 0% of compressed pages limit (OK) and 0% of segments limit (OK) with 0
+swapfiles and OK swap space\nPanicked task 0xfffffffdfe9b79a0: 268 pages, 8
+threads: pid 61: watchdogd\npanicked thread: 0xfffffffdf0450e3a0, backtrace:
+0xfffffffe4127033e0, tid: 1772\n\t\t lr: 0xfffffff10106070e4 fp: 0xfffffffe412703450\n\t\t
+lr: 0xfffffff1010769dc4 fp: 0xfffffffe4127034c0\n\t\t lr: 0xfffffff1010768148 fp:
+0xfffffffe412703580\n\t\t lr: 0xfffffff10105bbb9c4 fp: 0xfffffffe412703590\n\t\t lr:
+0xfffffff10106071d0 fp: 0xfffffffe412703a70\n\t\t lr: 0xfffffff1010de9944 fp:
+0xfffffffe412703a90\n\t\t lr: 0xfffffff1010cd197c fp: 0xfffffffe412703b40\n\t\t lr:
+0xfffffff101072f1dc fp: 0xfffffffe412703b70\n\t\t lr: 0xfffffff10101010de058 fp:
+0xfffffffe412703ca0\n\t\t lr: 0xfffffff10105e0eb8 fp: 0xfffffffe412703c70\n\t\t lr:
+0xfffffff10105f8364 fp: 0xfffffffe412703da0\n\t\t lr: 0xfffffff101075c784 fp:
+0xfffffffe412703e50\n\t\t lr: 0xfffffff1010768698 fp: 0xfffffffe412703f10\n\t\t lr:
+0xfffffff10105bb9cc4 fp: 0xfffffffe412703f20\n\t\t lr: 0x00000000242cb5cd4 fp:
+0x00000000000000000\n\n\t\t nlast started kext at 497080176:
+com.apple.driver.AppleUSBE

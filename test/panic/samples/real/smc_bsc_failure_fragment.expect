@@ -1,0 +1,23 @@
+# Panic THẬT (người dùng gửi, 2026-09-28): đoạn payload, thiếu header và product.
+# crashReporterKey đã xoá. Cuối log bị cắt.
+lacks: product: iPhone
+lacks: os_version:
+has: note: product: UNKNOWN - log không có mã máy (iPhoneN,M)
+has: kernel_target: T8140
+has: primary_kind: smc
+has: assert_location: target/d47/target.cpp:194
+has: assert_text: SMC BSC failure
+has: sensor_array: S.sensor 0-7 = 0 1572864 0 0 0 0 0 0  <- L2
+has: sensor_array: F.sensor 0-1 = 0  <- L3
+has: code: S.sensor[1] raw=1572864 hex=0x180000 dec=1572864 bits=[19,20] ctx=smc
+has: sensor: S.sensor[1] ctx=sensor_array_nonzero  <- L2
+has: note: Ý nghĩa từng bit của S.sensor[1] 0x180000: UNKNOWN - chưa có bảng bit đã kiểm chứng
+has: firmware_rtkit: RTKit-2758.40.19.release
+has: firmware_client: AppleSMCFirmware,HIT-5204.42.6.d47a.REL
+has: mailbox: TX 0x5447304200001013 ascii=TG0B
+has: mailbox: TX 0x423043480000f013 ascii=B0CH
+# dump firmware (i2c_err_inf, mailbox, AKF_*) không phải loại panic / mã lỗi
+lacks: kind: i2c
+lacks: AKF_
+lacks: driver: i2c_err_inf
+has: signature: v1|UNKNOWN|UNKNOWN|smc|k=smc|d=smc|s=s.sensor[1]|c=0x180000|w=-|x=-|a=smc bsc failure

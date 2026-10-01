@@ -269,6 +269,7 @@ ParsedPanic HCCPanicParser::parseJson(const std::string &raw)
     field("build", ff.build);
     field("socId", ff.soc_id);
     field("panicFlags", ff.panic_flags);
+    field("kernel", ff.kernel);
 
     out.model = normalizeModel(firstNonEmpty({lookup("product"), lookup("modelCode"),
                                               lookup("hardware_model"), lookup("model")}), raw);
@@ -338,9 +339,9 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
 
     out.model = normalizeModel(firstNonEmpty({quotedValue(raw, "product"), grabAfter("product"),
                                               grabAfter("model")}), raw);
+    // Không lấy "Kernel version" (đó là phiên bản Darwin, không phải iOS).
     out.os_version = firstNonEmpty({quotedValue(raw, "os_version"), quotedValue(raw, "build"),
-                                    cleanValue(grabAfter("os version")), cleanValue(grabAfter("build")),
-                                    cleanValue(grabAfter("kernel version"))});
+                                    cleanValue(grabAfter("os version")), cleanValue(grabAfter("build"))});
     out.panic_type = firstNonEmpty({quotedValue(raw, "bug_type"), cleanValue(grabAfter("panic type")),
                                     cleanValue(grabAfter("bug_type"))});
     out.source = grabAfter("source");
@@ -368,6 +369,10 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
     textField("os_version", out.os_version, ff.os_version);
     textField("product", findProductType(out.model), ff.product);
     textField("panicFlags", quotedValue(raw, "panicFlags"), ff.panic_flags);
+    textField("kernel", quotedValue(raw, "kernel"), ff.kernel);
+    textField("incident_id", firstNonEmpty({quotedValue(raw, "incident_id"), quotedValue(raw, "incident")}),
+              ff.incident_id);
+
     attachFacts(out, ff);
     return out;
 }
