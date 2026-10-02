@@ -17,3 +17,8 @@ Local patches:
    from `usb_host_device_free_all()` instead of `ESP_ERROR_CHECK`-aborting on it (the
    ESP-IDF usb_host example pattern). Without this the board reboots when a device is
    removed while it is still being freed asynchronously.
+5. `Kconfig` + `esp32_p4_wifi6_touch_lcd_7b.c` - new option `BSP_DISPLAY_PPA_ACCEL` (default y)
+   sets `enable_ppa_accel` in `bsp_display_lcd_init()` so esp_lvgl_adapter routes LVGL v8
+   fill/blend through the ESP32-P4 PPA (RGB565 only). Display mode is DOUBLE_DIRECT, where
+   LVGL draws straight into the panel frame buffers, so `buffer_height`/`use_psram` stay
+   unused and unchanged.

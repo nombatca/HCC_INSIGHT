@@ -591,7 +591,11 @@ static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg)
             .ver_res = BSP_LCD_V_RES,
             .buffer_height = 50,
             .use_psram = false,
+#if CONFIG_BSP_DISPLAY_PPA_ACCEL && CONFIG_BSP_LCD_COLOR_FORMAT_RGB565
+            .enable_ppa_accel = true,   // HCC patch 5: PPA fill/blend (menuconfig BSP_DISPLAY_PPA_ACCEL)
+#else
             .enable_ppa_accel = false,
+#endif
             .require_double_buffer = false,
         },
         .tear_avoid_mode = cfg->tear_avoid_mode,

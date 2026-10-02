@@ -92,6 +92,14 @@ menu "Board Support Package(ESP32-P4)"
             LEDC channel is used to generate PWM signal that controls display brightness.
             Set LEDC index that should be used.
 
+        config BSP_DISPLAY_PPA_ACCEL
+            bool "Use PPA (2D accelerator) for LVGL fill/blend"
+            default y
+            help
+                ESP32-P4 PPA does LVGL rectangle fills and image/alpha blends instead of the CPU
+                (RGB565 only). Lowers CPU load while drawing; turn off if the display freezes or
+                shows artifacts.
+
         choice BSP_LCD_COLOR_FORMAT
             prompt "Select LCD color format"
             default BSP_LCD_COLOR_FORMAT_RGB565
