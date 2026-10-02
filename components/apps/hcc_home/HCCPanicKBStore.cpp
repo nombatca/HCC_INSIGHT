@@ -1,6 +1,8 @@
 #include "HCCPanicKBStore.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <sys/stat.h>
 
 #include "HCCPanicStorage.hpp"
 #include "esp_log.h"
@@ -12,6 +14,7 @@ static const char *DIR_CASES = "kb/v1/cases";
 static const char *DIR_LEGACY_VERIFIED = "kb/verified";
 static const char *DIR_LEGACY_CONFIRMED = "kb/repair_confirmed";
 static const char *DIR_RAW = "panic/raw";
+static const char *DIR_TRASH = "kb/v1/trash";
 
 // kb/hcc_kb_default.json nhúng bởi EMBED_TXTFILES (components/apps/CMakeLists.txt), có '\0' cuối.
 extern const char hcc_kb_default_start[] asm("_binary_hcc_kb_default_json_start");
@@ -125,4 +128,39 @@ int HCCPanicKBStore::migrateLegacyToSd(std::vector<std::string> &messages)
         else messages.push_back(c.id + ": " + err);
     }
     return n;
+}
+
+bool HCCPanicKBStore::trashCase(const HCCKB::CaseRecord &c, std::string &moved_to, std::string &error)
+{
+    const std::string &src = c.source_file;
+    std::string prefix; // case cũ: thêm tên thư mục để không trùng tên
+    for (const char *d : {DIR_CASES, DIR_LEGACY_VERIFIED, DIR_LEGACY_CONFIRMED}) {
+        const std::string dir = std::string(d) + "/";
+        if (src.compare(0, dir.size(), dir) == 0 && src.find('/', dir.size()) == std::string::npos &&
+            src.find("..") == std::string::npos) {
+            prefix = (d == DIR_CASES) ? "" : std::string(d).substr(3) + "_";
+            break;
+        }
+        if (d == DIR_LEGACY_CONFIRMED) {
+            error = "không phải file case: " + (src.empty() ? std::string("(trống)") : src);
+            return false;
+        }
+    }
+    if (!HCCPanicStorage::ensureDir(DIR_TRASH)) {
+        error = "không tạo được " + std::string(DIR_TRASH);
+        return false;
+    }
+    const std::string base = src.substr(src.rfind('/') + 1);
+    std::string dst = std::string(DIR_TRASH) + "/" + prefix + base;
+    struct stat st;
+    for (int i = 1; stat(HCCPanicStorage::absPath(dst).c_str(), &st) == 0 && i < 100; ++i) {
+        dst = std::string(DIR_TRASH) + "/" + prefix + std::to_string(i) + "_" + base;
+    }
+    if (rename(HCCPanicStorage::absPath(src).c_str(), HCCPanicStorage::absPath(dst).c_str()) != 0) {
+        error = "chuyển file thất bại: " + src;
+        return false;
+    }
+    moved_to = dst;
+    ESP_LOGI(TAG, "case %s -> %s", src.c_str(), dst.c_str());
+    return true;
 }

@@ -28,6 +28,10 @@ public:
     // Ghi case vào kb/v1/cases/<id>.json rồi đọc lại để xác nhận.
     static bool saveCase(const HCCKB::CaseRecord &c, std::string &error);
 
+    // "Xoá" case: chuyển file (c.source_file) sang kb/v1/trash/ - không xoá hẳn, chép lại để khôi phục.
+    // Chỉ nhận file trong kb/v1/cases, kb/verified, kb/repair_confirmed.
+    static bool trashCase(const HCCKB::CaseRecord &c, std::string &moved_to, std::string &error);
+
     // Ghi bản migrate của mọi case cũ vào kb/v1/cases (giữ nguyên file cũ). Trả số case đã ghi.
     static int migrateLegacyToSd(std::vector<std::string> &messages);
 

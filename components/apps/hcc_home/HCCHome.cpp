@@ -777,6 +777,7 @@ void HCCHome::showHome()
     _case_text = nullptr;
     _case_area = nullptr;
     _case_sel_btn = nullptr;
+    _case_confirm = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -2618,6 +2619,7 @@ bool HCCHome::close(void)
     _case_text = nullptr;
     _case_area = nullptr;
     _case_sel_btn = nullptr;
+    _case_confirm = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -4255,6 +4257,7 @@ void HCCHome::showPanic()
     _case_text = nullptr;
     _case_area = nullptr;
     _case_sel_btn = nullptr;
+    _case_confirm = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -5249,6 +5252,12 @@ void HCCHome::onSavedCasesClicked(lv_event_t *event)
         if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Đang phân tích, chờ xong");
         return;
     }
+    app->openSavedCases(0);
+}
+
+void HCCHome::openSavedCases(size_t select)
+{
+    HCCHome *app = this;
     app->ensureKbLoaded(true); // đọc lại thẻ SD (có thể vừa chép case vào)
     app->_case_order.clear();
     for (size_t i = 0; i < app->_kb_cases.size(); ++i) app->_case_order.push_back(i);
@@ -5298,6 +5307,18 @@ void HCCHome::onSavedCasesClicked(lv_event_t *event)
     lv_label_set_text(cl, "ĐÓNG");
     lv_obj_center(cl);
     lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+
+    if (!app->_case_order.empty()) {
+        lv_obj_t *del_btn = lv_btn_create(panel);
+        lv_obj_set_size(del_btn, 130, 42);
+        lv_obj_align(del_btn, LV_ALIGN_TOP_RIGHT, -122, -6);
+        lv_obj_set_style_bg_color(del_btn, lv_color_hex(0xC0392B), 0);
+        lv_obj_add_event_cb(del_btn, onSavedCaseDeleteClicked, LV_EVENT_CLICKED, app);
+        lv_obj_t *dl = lv_label_create(del_btn);
+        lv_label_set_text(dl, "XÓA CASE");
+        lv_obj_center(dl);
+        lv_obj_set_style_text_font(dl, &lv_font_be_vietnam_16, 0);
+    }
 
     // Trái: danh sách case
     lv_obj_t *list = lv_obj_create(panel);
@@ -5350,14 +5371,20 @@ void HCCHome::onSavedCasesClicked(lv_event_t *event)
         lv_label_set_text(l, HCCKB::caseListLine(c).c_str());
         lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
         lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-        if (k == 0) app->_case_sel_btn = b;
+        if (k == select) app->_case_sel_btn = b;
     }
-    app->showSavedCase(0);
+    if (select >= app->_case_order.size()) {
+        select = app->_case_order.size() - 1;
+        app->_case_sel_btn = lv_obj_get_child(list, (int32_t)select);
+    }
+    app->showSavedCase(select);
+    if (app->_case_sel_btn) lv_obj_scroll_to_view(app->_case_sel_btn, LV_ANIM_OFF);
 }
 
 void HCCHome::showSavedCase(size_t k)
 {
     if (_case_text == nullptr || k >= _case_order.size() || _case_order[k] >= _kb_cases.size()) return;
+    _case_sel = k;
     const HCCKB::CaseRecord &c = _kb_cases[_case_order[k]];
     std::string text = HCCKB::describeCase(c);
     // File JSON gốc trên thẻ (đúng như đã lưu)
@@ -5386,11 +5413,106 @@ void HCCHome::onSavedCasesCloseClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr || app->_case_dialog == nullptr) return;
-    lv_obj_del(app->_case_dialog);
+    app->closeSavedCases();
+}
+
+void HCCHome::closeSavedCases()
+{
+    if (_case_dialog) lv_obj_del(_case_dialog); // xoá luôn hộp hỏi (con của dialog)
+    _case_dialog = nullptr;
+    _case_text = nullptr;
+    _case_area = nullptr;
+    _case_sel_btn = nullptr;
+    _case_confirm = nullptr;
+}
+
+// XÓA CASE: hỏi lại, rồi chuyển file sang kb/v1/trash (không xoá hẳn).
+void HCCHome::onSavedCaseDeleteClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_case_dialog == nullptr || app->_case_confirm != nullptr ||
+        app->_case_sel >= app->_case_order.size()) {
+        return;
+    }
+    const HCCKB::CaseRecord &c = app->_kb_cases[app->_case_order[app->_case_sel]];
+    app->_case_confirm = lv_obj_create(app->_case_dialog);
+    lv_obj_t *dlg = app->_case_confirm;
+    lv_obj_set_size(dlg, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *box = lv_obj_create(dlg);
+    lv_obj_set_size(box, 620, 280);
+    lv_obj_center(box);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x16222C), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(0xC0392B), 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_radius(box, 12, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    const std::string msg = "Xóa case này?\n\n" + HCCKB::caseListLine(c) + "\n\nFile được chuyển vào thẻ SD: kb/v1/trash/\n"
+                            "(chép lại vào kb/v1/cases/ để khôi phục)";
+    lv_obj_t *l = lv_label_create(box);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, lv_pct(100));
+    lv_label_set_text(l, msg.c_str());
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *no = lv_btn_create(box);
+    lv_obj_set_size(no, 160, 48);
+    lv_obj_align(no, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(no, lv_color_hex(0x1F3242), 0);
+    lv_obj_add_event_cb(no, onSavedCaseDeleteCancel, LV_EVENT_CLICKED, app);
+    lv_obj_t *nl = lv_label_create(no);
+    lv_label_set_text(nl, "HỦY");
+    lv_obj_center(nl);
+    lv_obj_set_style_text_font(nl, &lv_font_be_vietnam_16, 0);
+
+    lv_obj_t *yes = lv_btn_create(box);
+    lv_obj_set_size(yes, 160, 48);
+    lv_obj_align(yes, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(yes, lv_color_hex(0xC0392B), 0);
+    lv_obj_add_event_cb(yes, onSavedCaseDeleteConfirm, LV_EVENT_CLICKED, app);
+    lv_obj_t *yl = lv_label_create(yes);
+    lv_label_set_text(yl, "XÓA");
+    lv_obj_center(yl);
+    lv_obj_set_style_text_font(yl, &lv_font_be_vietnam_16, 0);
+}
+
+void HCCHome::onSavedCaseDeleteCancel(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_case_confirm == nullptr) return;
+    lv_obj_del(app->_case_confirm);
+    app->_case_confirm = nullptr;
+}
+
+void HCCHome::onSavedCaseDeleteConfirm(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_case_dialog == nullptr || app->_case_sel >= app->_case_order.size()) return;
+    const size_t sel = app->_case_sel;
+    const HCCKB::CaseRecord c = app->_kb_cases[app->_case_order[sel]];
+    std::string moved, err;
+    const bool ok = HCCPanicKBStore::trashCase(c, moved, err);
+    // Dialog bị xoá trong callback của nút con: để LVGL xoá sau khi event xong.
+    lv_obj_t *old = app->_case_dialog;
     app->_case_dialog = nullptr;
     app->_case_text = nullptr;
     app->_case_area = nullptr;
     app->_case_sel_btn = nullptr;
+    app->_case_confirm = nullptr;
+    lv_obj_del_async(old);
+    app->openSavedCases(sel);   // nạp lại KB + danh sách
+    app->refreshPanicDetail();  // kết quả đối chiếu panic đang xem không còn dùng case đã xoá
+    if (app->_panic_status_label) {
+        lv_label_set_text(app->_panic_status_label, ok ? ("Đã xóa case -> " + moved).c_str() : ("Xóa thất bại: " + err).c_str());
+    }
 }
 
 // ==================== IPHONE HARDWARE CHECK ====================

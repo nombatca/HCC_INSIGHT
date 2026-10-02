@@ -382,6 +382,13 @@ private:
     static void onSavedCaseItemClicked(lv_event_t *event);
     static void onSavedCasesCloseClicked(lv_event_t *event);
     void showSavedCase(size_t order_index);
+    void openSavedCases(size_t select = 0);
+    void closeSavedCases();
+    size_t _case_sel = 0;              // vị trí case đang chọn trong _case_order
+    lv_obj_t *_case_confirm = nullptr; // hộp hỏi XOÁ CASE
+    static void onSavedCaseDeleteClicked(lv_event_t *event);
+    static void onSavedCaseDeleteConfirm(lv_event_t *event);
+    static void onSavedCaseDeleteCancel(lv_event_t *event);
     lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;
