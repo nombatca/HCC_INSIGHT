@@ -790,6 +790,8 @@ private:
                 size_t nstart = arr;
                 while (nstart > 0 && isalpha((unsigned char)t[nstart - 1])) nstart--;
                 PanicSensorArrayFact sa;
+                // Bỏ chữ thường dính phía trước do "\n" bị chép thành "n" ("nF.sensor" -> "F.sensor")
+                while (nstart + 1 < arr && islower((unsigned char)t[nstart]) && isupper((unsigned char)t[nstart + 1])) nstart++;
                 sa.name = t.substr(nstart, arr - nstart) + ".sensor";
                 const char *p = t.c_str() + arr + 14;
                 char *end = nullptr;

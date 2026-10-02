@@ -211,6 +211,7 @@ const char *matchText(const std::string &t)
     if (t == "same_signature_other_model") return "cùng lỗi, khác model - cần xác nhận";
     if (t == "partial_same_model") return "giống một phần - cần xác nhận";
     if (t == "legacy_keyword") return "case cũ (theo keyword) - cần xác nhận";
+    if (t == "shared_assert_tag") return "cùng tag ASSERT, board/mã khác - chỉ tham khảo";
     return "chỉ trùng model / loại panic - không dùng làm kết luận";
 }
 
@@ -308,6 +309,22 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
         if (!b.hardware_confirmed) b.hardware += "\n(theo case " + r.status + " - " + matchText(top->match_type) + ")";
     } else {
         std::vector<std::string> areas;
+        if (f.primary_kind == PanicKind::SmcPanic) {
+            // SMC: dữ kiện cụ thể của panic này lên trước (tag ASSERT, HEX, board); câu chung của KB
+            // ("khối nguồn / sạc / sensor do SMC giám sát") chỉ ở phần chi tiết.
+            std::vector<std::string> hex;
+            for (const auto &c : f.codes) {
+                if (c.in_message && c.value != 0) hex.push_back(c.label + " = " + c.hex);
+            }
+            std::string l1 = "SMC báo lỗi";
+            if (!f.assert_tags.empty()) l1 += " tại tag " + joinList(f.assert_tags, 6, " ");
+            if (!hex.empty()) l1 += (f.assert_tags.empty() ? " tại " : " - ") + joinList(hex, 2);
+            if (f.assert_tags.empty() && hex.empty()) l1 += ": " + (f.assert_text.empty() ? std::string("không rõ vị trí") : f.assert_text);
+            addUnique(areas, l1);
+            std::string l2 = f.smc_target.empty() ? std::string() : "Board " + f.smc_target + " - ";
+            l2 += a.cases.empty() ? "chưa có case sửa nào cho mã này" : "có case tương tự (xem VERIFIED / REPAIR CASE)";
+            addUnique(areas, l2);
+        }
         for (const auto &d : a.drivers) {
             if (d.rule && d.rule->hardware_area.level != Level::Unknown) addUnique(areas, d.rule->hardware_area.value);
         }
@@ -316,6 +333,7 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
                 addUnique(areas, "Sensor " + s.name + ": " + s.rule->location.value);
         }
         for (const auto &k : a.kinds) {
+            if (f.primary_kind == PanicKind::SmcPanic) break;
             if (k.rule && k.rule->group != "WATCHDOG" && k.rule->hardware_area.level != Level::Unknown)
                 addUnique(areas, k.rule->hardware_area.value);
         }
@@ -324,13 +342,6 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
             if (!d.rule && d.role == "busy_entry") unruled.push_back(d.name);
         }
         if (!unruled.empty()) addUnique(areas, "Khối do driver " + joinList(unruled, 4) + " điều khiển");
-        if (f.primary_kind == PanicKind::SmcPanic) {
-            std::vector<std::string> idx;
-            for (const auto &s : f.sensors) {
-                if (s.context != "missing_sensor") idx.push_back(s.name);
-            }
-            if (!idx.empty()) addUnique(areas, "SMC: " + joinList(idx, 4));
-        }
         if (!missing.empty()) {
             bool have = false;
             for (const auto &s : a.sensors) have = have || (s.rule && s.rule->location.level != Level::Unknown);
@@ -367,6 +378,8 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
     // ---- VERIFIED / REPAIR CASE ----
     if (top) {
         b.case_match = top->rec->status + " " + top->rec->id + "\n" + matchText(top->match_type);
+        if (top->match_type == "shared_assert_tag") b.case_match += "\n" + top->reason;
+        if (!top->rec->repair_action.empty()) b.case_match += "\nĐã sửa bằng: " + top->rec->repair_action;
         if (a.cases.size() > 1) b.case_match += "\n(+" + std::to_string(a.cases.size() - 1) + " case khác - xem chi tiết)";
     } else {
         b.case_match = "Chưa có VERIFIED / REPAIR case khớp";

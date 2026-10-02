@@ -370,6 +370,11 @@ ParsedPanic HCCPanicParser::parseText(const std::string &raw)
     textField("product", findProductType(out.model), ff.product);
     textField("panicFlags", quotedValue(raw, "panicFlags"), ff.panic_flags);
     textField("kernel", quotedValue(raw, "kernel"), ff.kernel);
+    if (ff.kernel.empty()) {
+        // Log dán thiếu đầu (mất khoá "kernel"): vẫn lấy "...RELEASE_ARM64_T8122" nếu còn.
+        size_t kp = raw.find("RELEASE_ARM64_");
+        if (kp != std::string::npos) textField("kernel", raw.substr(kp, 24), ff.kernel);
+    }
     textField("incident_id", firstNonEmpty({quotedValue(raw, "incident_id"), quotedValue(raw, "incident")}),
               ff.incident_id);
 

@@ -378,7 +378,7 @@ int main(int argc, char **argv)
                bs.signature.c_str(), bs.hardware.c_str(), bs.confidence_text.c_str(), bs.steps.c_str(), bs.case_match.c_str());
         check(bs.error == "SMC PANIC - ASSERT: SMC BSC failure", "basic SMC: lỗi");
         check(bs.signature.find("HEX: S.sensor[1] = 0x180000") == 0, "basic SMC: HEX đầu tiên");
-        check(bs.hardware.find("SMC: S.sensor[1]") != std::string::npos && !bs.hardware_confirmed, "basic SMC: nghi ngờ, chưa xác nhận");
+        check(bs.hardware.find("SMC báo lỗi tại S.sensor[1] = 0x180000\nBoard d47 - chưa có case") == 0 && !bs.hardware_confirmed, "basic SMC: nghi ngờ, chưa xác nhận");
         const std::string ds = renderDetail(smc, as);
         check(ds.find("mailbox: TX 0x5447304200001013 ascii=TG0B") != std::string::npos, "detail SMC: giữ mailbox");
         check(ds.find("[UNKNOWN]") != std::string::npos, "detail SMC: giữ nhãn UNKNOWN");
@@ -448,6 +448,57 @@ int main(int argc, char **argv)
         check(caseListLine(c).find("[CHƯA XN]") != std::string::npos, "list: REPAIR_CONFIRMED -> CHƯA XN");
         check(parseCase(caseToJson(c), rc) && rc.source_file.empty() && caseToJson(c).find("source_file") == std::string::npos,
               "source_file không ghi vào JSON");
+    }
+
+    // ---- 13. SMC: màn chính nêu tag/HEX/board; case khác board trùng tag chỉ để tham khảo ----
+    printf("[13] SMC tag ASSERT dùng chung giữa các board\n");
+    {
+        PanicFacts real = factsOf(root + "/samples/real/smc_bsc_taop_taoc_iphone17_2.ips");
+        BasicView b0 = renderBasic(real, analyze(real, kb, {}));
+        check(b0.hardware.find("SMC báo lỗi tại tag TAOP TAOC - S.sensor[1] = 0x300000\nBoard d94") == 0,
+              "basic SMC: tag + HEX + board lên đầu");
+        check(b0.hardware.find("Khối nguồn") == std::string::npos, "basic SMC: không dùng câu chung của KB");
+
+        CaseRecord other;  // case board khác (không ghi model), trùng tag TAOC
+        other.id = "test_other_board";
+        other.status = "VERIFIED";
+        other.primary_kind = "smc";
+        other.signature = "v1|?|210|smc|k=smc|d=smc|s=s.sensor[1]|c=0x600000|w=-|x=-|a=smc bsc failure|t=dxx|g=TAOC,TAOJ";
+        other.signature_generic = "v1|*|210|smc|k=smc|d=smc|s=s.sensor[1]|c=0x600000|w=-|x=-|a=smc bsc failure|t=dxx|g=TAOC,TAOJ";
+        other.smc_target = "dxx";
+        other.assert_tags = {"TAOC", "TAOJ"};
+        other.repair_action = "TEST thay cáp";
+        const std::vector<CaseRecord> cs = {other};
+        Analysis a = analyze(real, kb, cs);
+        check(a.cases.size() == 1 && a.cases[0].match_type == "shared_assert_tag" && a.cases[0].confidence == Confidence::Low,
+              "trùng tag, khác board -> shared_assert_tag LOW");
+        check(a.confidence == Confidence::Low, "trùng tag không nâng confidence");
+        BasicView b = renderBasic(real, a);
+        check(!b.hardware_confirmed && b.hardware.find("TEST thay cáp") == std::string::npos,
+              "trùng tag không thành kết luận phần cứng");
+        check(b.case_match.find("cùng tag ASSERT TAOC") != std::string::npos && b.case_match.find("Đã sửa bằng: TEST thay cáp") != std::string::npos,
+              "ô case nêu tag chung + cách sửa để tham khảo");
+        other.assert_tags = {"TAOJ"};
+        check(analyze(real, kb, {other}).cases.empty(), "không trùng tag -> không có case");
+    }
+
+    // ---- 14. Log dán thiếu đầu: kernel target vẫn đọc; "\n" chép thành "n" trước F.sensor ----
+    printf("[14] Log thiếu đầu file\n");
+    {
+        const std::string frag =
+            "root:xnu-12377.162.13~2\\/RELEASE_ARM64_T8122\",\n\"panicString\" : \"panic(cpu 3 caller 0xffffff04e26b308): "
+            "SMC PANIC - ASSERT: target\\/dzz_esim\\/target.cpp:247: 0, SMC BSC failure, TAOC TAOJ\\nspreadsheet ver(*10) 100\\n"
+            "S.sensor array 0 - 4 is 0, 6291456, 0, 0\\nnF.sensor array 0 - 1 is 0\\n\"";
+        PanicFacts f = HCCPanicParser::parse(frag).facts;
+        check(f.kernel_target == "T8122", "kernel target từ log thiếu khoá kernel");
+        check(f.smc_target == "dzz_esim", "target có hậu tố _esim");
+        bool fname = false, nname = false;
+        for (const auto &sa : f.sensor_arrays) {
+            fname = fname || sa.name == "F.sensor";
+            nname = nname || sa.name == "nF.sensor";
+        }
+        check(fname && !nname, "nF.sensor -> F.sensor");
+        check(f.product.empty() && f.signature.find("c=0x600000") != std::string::npos, "không đoán model; HEX 0x600000");
     }
 
     printf("\nKB: %d kiểm tra, %d lỗi\n", g_checks, g_fail);

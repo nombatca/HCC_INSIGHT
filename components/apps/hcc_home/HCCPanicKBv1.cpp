@@ -917,6 +917,22 @@ Analysis analyze(const PanicFacts &f, const KnowledgeBase &kb, const std::vector
                     m.reason = "cùng model + loại panic, trùng " + std::string(b) + " driver/sensor/mã";
                 }
             }
+            if (m.match_type.empty() && is_smc && !f.assert_tags.empty() && !c.assert_tags.empty()) {
+                // SMC khác board / HEX nhưng trùng tag ASSERT: chỉ để tham khảo (LOW), không bao giờ
+                // dùng làm kết luận phần cứng - ý nghĩa tag chưa có tài liệu.
+                std::vector<std::string> common;
+                for (const auto &t : f.assert_tags) {
+                    if (std::find(c.assert_tags.begin(), c.assert_tags.end(), t) != c.assert_tags.end()) common.push_back(t);
+                }
+                if (!common.empty()) {
+                    std::string tags;
+                    for (const auto &t : common) tags += (tags.empty() ? "" : " ") + t;
+                    m.match_type = "shared_assert_tag";
+                    m.confidence = Confidence::Low;
+                    m.reason = "cùng tag ASSERT " + tags + " (case: " + (c.model.empty() ? std::string("?") : c.model) +
+                               (c.smc_target.empty() ? std::string() : " board " + c.smc_target) + ") - chỉ tham khảo";
+                }
+            }
         } else if (!c.legacy_keyword.empty() || !c.legacy_signature.empty()) {
             // Case cũ chưa có file panic gốc: khớp như HCCPanicKB cũ (model + bug_type + keyword).
             const bool model_ok = c.model.empty() || (!f.product.empty() && lower(f.product).find(lower(c.model)) != std::string::npos);

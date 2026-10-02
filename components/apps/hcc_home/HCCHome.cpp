@@ -4481,13 +4481,19 @@ void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
     } else {
         modeltxt += mk.empty() ? std::string("-") : mk;
     }
+    // Log thiếu product (dán thiếu đầu file): hiện board SMC để biết là máy nào, không đoán model.
+    if (mk.empty() && !parsed.facts.smc_target.empty()) modeltxt = "Model: ? (board " + parsed.facts.smc_target + ")";
     setL(_pi_model, modeltxt);
     // "iPhone OS 17.5 (21F79)" -> "17.5 (21F79)".
     std::string os = parsed.os_version;
     if (os.rfind("iPhone OS ", 0) == 0) os = os.substr(10);
     setL(_pi_ios, "iOS: " + (os.empty() ? std::string("-") : os));
     const char *soc = panicSocForModel(mk);
-    setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+    if (soc == nullptr && !parsed.facts.kernel_target.empty()) {
+        setL(_pi_soc, "Kernel: " + parsed.facts.kernel_target);
+    } else {
+        setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+    }
 }
 
 // ---- Knowledge Base V1 ----
