@@ -1,4 +1,5 @@
 #include "HCCAdbClient.hpp"
+#include "hcc_cores.h"
 
 #include "esp_heap_caps.h"
 #include "esp_random.h"
@@ -290,7 +291,7 @@ void HCCAdbClient::startKeyLoad()
         !g_key_loading.compare_exchange_strong(expected, true)) {
         return;
     }
-    if (xTaskCreate(keyTask, "hcc_adb_key", 12288, nullptr, 2, nullptr) != pdPASS) {
+    if (xTaskCreatePinnedToCore(keyTask, "hcc_adb_key", 12288, nullptr, 2, nullptr, HCC_CORE_WORK) != pdPASS) {
         printf("[HCC ADB] key task creation failed\n");
         g_key_failed.store(true, std::memory_order_release);
     }

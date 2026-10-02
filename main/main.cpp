@@ -15,6 +15,7 @@
 
 #include "esp_brookesia.hpp"
 #include "apps.h"
+#include "hcc_cores.h"
 
 static const char *TAG = "main";
 
@@ -80,6 +81,8 @@ extern "C" void app_main(void)
             .mirror_y = 1,
         },
     };
+    // LVGL chạy riêng nhân HCC_CORE_UI; việc nặng ở nhân còn lại (components/apps/hcc_cores.h).
+    cfg.lv_adapter_cfg.task_core_id = HCC_CORE_UI;
     lv_display_t *disp = bsp_display_start_with_config(&cfg);
     if (disp == nullptr) {
         ESP_LOGE(TAG, "Failed to start BSP display");

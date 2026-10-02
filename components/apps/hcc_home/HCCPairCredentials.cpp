@@ -1,4 +1,5 @@
 #include "HCCPairCredentials.hpp"
+#include "hcc_cores.h"
 
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -337,8 +338,8 @@ bool HCCPairCredentials::queueDevicePublicKey(const uint8_t *data, size_t length
     _worker_generation = generation;
     _last_started_generation.store(generation, std::memory_order_release);
     logCryptoCreationHeap("BEFORE CREATE");
-    if (xTaskCreate(HCCPairCredentials::workerTask, "hcc_pair_crypto", kWorkerStackBytes,
-                    this, kWorkerPriority, nullptr) != pdPASS) {
+    if (xTaskCreatePinnedToCore(HCCPairCredentials::workerTask, "hcc_pair_crypto", kWorkerStackBytes,
+                    this, kWorkerPriority, nullptr, HCC_CORE_WORK) != pdPASS) {
         logCryptoCreationHeap("CREATE FAIL");
         printf("[HCC PAIR CRYPTO] worker task creation failed\n");
         mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());

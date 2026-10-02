@@ -1,4 +1,5 @@
 #include "HCCI2C.hpp"
+#include "hcc_cores.h"
 
 #include "bsp/esp-bsp.h"
 #include "driver/i2c_master.h"
@@ -97,13 +98,14 @@ void HCCI2C::startScan()
         lv_label_set_text(_result, "Scanning 0x00 - 0x7F...");
     }
 
-    xTaskCreate(
+    xTaskCreatePinnedToCore(
         scanTask,
         "hcc_i2c_scan",
         4096,
         this,
         5,
-        nullptr
+        nullptr,
+        HCC_CORE_WORK
     );
 }
 

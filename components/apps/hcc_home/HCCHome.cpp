@@ -1,4 +1,5 @@
 #include "HCCHome.hpp"
+#include "hcc_cores.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "driver/i2c_master.h"
 #include <stdio.h>
@@ -2242,13 +2243,14 @@ void HCCHome::onUSBClicked(lv_event_t *event)
     app->showUSB();
     if (!app->_usb_client_registered && app->_usb_client_task == nullptr) {
         app->_usb_shutdown_requested = false;
-        BaseType_t task_created = xTaskCreate(
+        BaseType_t task_created = xTaskCreatePinnedToCore(
             HCCHome::usbClientTask,
             "hcc_usb_client",
             6144,
             app,
             5,
-            &app->_usb_client_task
+            &app->_usb_client_task,
+            HCC_CORE_WORK
         );
         if (task_created != pdPASS) {
             app->_usb_client_task = nullptr;
@@ -2308,7 +2310,7 @@ void HCCHome::onEepromDumpClicked(lv_event_t *event)
     // Reading cancels any pending write confirmation.
     app->_eeprom_program_confirm_pending = false;
     app->beginEepromOp("Đang đọc EEPROM...");
-    xTaskCreate(eepromTask, "hcc_eeprom", 6144, app, 5, nullptr);
+    xTaskCreatePinnedToCore(eepromTask, "hcc_eeprom", 6144, app, 5, nullptr, HCC_CORE_WORK);
 }
 
 void HCCHome::onEepromProgramClicked(lv_event_t *event)
@@ -2333,7 +2335,7 @@ void HCCHome::onEepromProgramClicked(lv_event_t *event)
 
     app->_eeprom_program_confirm_pending = false;
     app->beginEepromOp("Đang ghi EEPROM...");
-    xTaskCreate(eepromProgramTask, "hcc_eeprom_wr", 6144, app, 5, nullptr);
+    xTaskCreatePinnedToCore(eepromProgramTask, "hcc_eeprom_wr", 6144, app, 5, nullptr, HCC_CORE_WORK);
 }
 
 void HCCHome::onBackClicked(lv_event_t *event)
@@ -3077,13 +3079,14 @@ void HCCHome::onScanClicked(lv_event_t *event)
         );
     }
 
-    xTaskCreate(
+    xTaskCreatePinnedToCore(
         scanTask,
         "hcc_i2c_scan",
         4096,
         app,
         5,
-        nullptr
+        nullptr,
+        HCC_CORE_WORK
     );
 }
 
@@ -3444,7 +3447,7 @@ void HCCHome::onEepromViewClicked(lv_event_t *event)
         return;
     }
     app->beginEepromOp("Đang đọc file...");
-    xTaskCreate(eepromViewTask, "hcc_eeprom_vw", 6144, app, 5, nullptr);
+    xTaskCreatePinnedToCore(eepromViewTask, "hcc_eeprom_vw", 6144, app, 5, nullptr, HCC_CORE_WORK);
 }
 
 void HCCHome::onEepromDialogCloseClicked(lv_event_t *event)
@@ -3889,7 +3892,7 @@ void HCCHome::onPanicAnalyzeClicked(lv_event_t *event)
         lv_obj_add_state(app->_panic_analyze_button, LV_STATE_DISABLED);
     }
     // Task lớn: đọc SD + parse + (KB / TLS gọi AI) + cJSON.
-    xTaskCreate(panicAnalyzeTask, "hcc_panic", 16384, app, 4, nullptr);
+    xTaskCreatePinnedToCore(panicAnalyzeTask, "hcc_panic", 16384, app, 4, nullptr, HCC_CORE_WORK);
 }
 
 void HCCHome::panicAnalyzeTask(void *arg)

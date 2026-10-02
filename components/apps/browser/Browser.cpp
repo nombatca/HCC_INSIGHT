@@ -1,4 +1,5 @@
 #include "Browser.hpp"
+#include "hcc_cores.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -543,7 +544,7 @@ void Browser::navigate(const char *url, bool push_history)
     context->length = 0;
     context->blocks = nullptr;
     _fetch_task = nullptr;
-    xTaskCreate(fetchTask, "browser_fetch", 8192, context, 4, &_fetch_task);
+    xTaskCreatePinnedToCore(fetchTask, "browser_fetch", 8192, context, 4, &_fetch_task, HCC_CORE_WORK);
 }
 
 void Browser::goToHistory(int new_pos)
