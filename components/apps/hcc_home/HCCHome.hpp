@@ -372,6 +372,16 @@ private:
     lv_obj_t *_panic_detail_dialog = nullptr; // XEM PHÂN TÍCH CHI TIẾT
     static void onPanicDetailClicked(lv_event_t *event);
     static void onPanicDetailCloseClicked(lv_event_t *event);
+    // CASE ĐÃ LƯU: xem các case XÁC NHẬN ĐÃ SỬA trên thẻ SD (kb/v1/cases + case cũ)
+    lv_obj_t *_case_dialog = nullptr;
+    lv_obj_t *_case_text = nullptr;   // nội dung case đang chọn
+    lv_obj_t *_case_area = nullptr;   // vùng cuộn nội dung (cuộn về đầu khi chọn case khác)
+    lv_obj_t *_case_sel_btn = nullptr;
+    std::vector<size_t> _case_order;  // chỉ số trong _kb_cases, mới nhất trước
+    static void onSavedCasesClicked(lv_event_t *event);
+    static void onSavedCaseItemClicked(lv_event_t *event);
+    static void onSavedCasesCloseClicked(lv_event_t *event);
+    void showSavedCase(size_t order_index);
     lv_obj_t *_pi_detail;       // container cuộn chi tiết (để cuộn về đầu)
     ParsedPanic _pi_parsed;     // parse của file đang chọn (để hiện chi tiết)
     volatile bool _panic_busy;

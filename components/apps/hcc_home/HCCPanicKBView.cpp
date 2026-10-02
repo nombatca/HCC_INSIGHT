@@ -395,4 +395,75 @@ std::string renderDetail(const PanicFacts &f, const Analysis &a)
     return d;
 }
 
+std::string caseStatusText(const CaseRecord &c)
+{
+    if (c.status == "VERIFIED") return "ĐÃ XÁC NHẬN (VERIFIED)";
+    if (c.status == "REPAIR_CONFIRMED") return "ĐÃ SỬA - CHƯA XÁC NHẬN";
+    if (c.status == "DRAFT") return "NHÁP";
+    return c.status.empty() ? std::string("?") : c.status;
+}
+
+std::string caseListLine(const CaseRecord &c)
+{
+    std::string date = c.date.size() >= 10 ? c.date.substr(0, 10) : (c.date.empty() ? "-" : c.date);
+    std::string what = !c.repair_action.empty() ? c.repair_action : (!c.hardware_area.empty() ? c.hardware_area : c.id);
+    if (what.size() > 60) what = what.substr(0, 60) + "...";
+    const char *st = c.status == "VERIFIED" ? "VERIFIED" : (c.status == "REPAIR_CONFIRMED" ? "CHƯA XN" : c.status.c_str());
+    std::string s = date + "  " + (c.model.empty() ? "?" : c.model) + "  [" + st + "]";
+    if (!c.legacy_dir.empty()) s += " (cũ)";
+    return noRecolor(s + "\n" + what);
+}
+
+std::string describeCase(const CaseRecord &c)
+{
+    auto join = [](const std::vector<std::string> &v) {
+        std::string r;
+        for (size_t i = 0; i < v.size(); ++i) r += (i ? ", " : "") + v[i];
+        return r.empty() ? std::string("-") : r;
+    };
+    auto val = [](const std::string &x) { return x.empty() ? std::string("-") : noRecolor(x); };
+    const char *stColor = c.status == "VERIFIED" ? "3DD66E" : (c.status == "REPAIR_CONFIRMED" ? "F2C94C" : "8AA0B4");
+    std::string d;
+    d += std::string("#") + stColor + " " + caseStatusText(c) + "#\n";
+    d += "File: " + val(c.source_file) + "\n";
+    if (!c.legacy_dir.empty()) d += "Case cũ (form trước V1), chỉ khớp theo từ khoá\n";
+    d += "Ngày: " + val(c.date) + "\n";
+    d += "\n#00D9FF == MÁY / PANIC ==#\n";
+    d += "Model: " + val(c.model) + "   iOS: " + val(c.ios) + "\n";
+    d += "Loại: " + val(c.primary_kind) + "   bug_type: " + val(c.panic_type) + "\n";
+    if (!c.smc_target.empty() || !c.assert_tags.empty())
+        d += "SMC target: " + val(c.smc_target) + "   ASSERT tag: " + noRecolor(join(c.assert_tags)) + "\n";
+    d += "Driver: " + noRecolor(join(c.drivers)) + "\n";
+    d += "Sensor: " + noRecolor(join(c.sensors)) + "\n";
+    d += "Mã: " + noRecolor(join(c.codes)) + "\n";
+    d += "Signature: " + val(c.signature) + "\n";
+    d += "\n#3DD66E == SỬA CHỮA ==#\n";
+    d += "Cách sửa: " + val(c.repair_action) + "\n";
+    d += "Khu vực phần cứng: " + val(c.hardware_area) + "\n";
+    if (c.components.empty()) d += "Linh kiện: -\n";
+    for (const auto &k : c.components) {
+        d += "Linh kiện: " + val(k.name);
+        if (!k.ref.empty()) d += " (" + noRecolor(k.ref) + ")";
+        if (!k.action.empty()) d += " - " + noRecolor(k.action);
+        d += "\n";
+    }
+    if (!c.bus_rail.empty()) d += "Bus/rail: " + noRecolor(join(c.bus_rail)) + "\n";
+    for (const auto &m : c.measurements) {
+        d += "Đo " + val(m.point) + " (" + val(m.type) + "): trước " + val(m.before) + " -> sau " + val(m.after) +
+             (m.unit.empty() ? "" : " " + noRecolor(m.unit)) + "\n";
+    }
+    d += "\n#F2C94C == KẾT QUẢ ==#\n";
+    d += std::string("Hết panic: ") + (c.result.panic_resolved ? "CÓ" : "CHƯA / KHÔNG");
+    if (c.result.observed_days >= 0) d += "   theo dõi " + std::to_string(c.result.observed_days) + " ngày";
+    d += "\n";
+    if (!c.result.note.empty()) d += "Ghi chú kết quả: " + noRecolor(c.result.note) + "\n";
+    if (!c.notes.empty()) d += "Ghi chú: " + noRecolor(c.notes) + "\n";
+    if (!c.technician.empty()) d += "Kỹ thuật viên: " + noRecolor(c.technician) + "\n";
+    d += "\n#8AA0B4 == BẰNG CHỨNG ==#\n";
+    d += "File panic: " + val(c.evidence_panic_file) + "\n";
+    if (!c.evidence_excerpt.empty()) d += "Trích panic:\n" + noRecolor(c.evidence_excerpt) + "\n";
+    for (const auto &w : c.warnings) d += "Cảnh báo: " + noRecolor(w) + "\n";
+    return d;
+}
+
 }  // namespace HCCKB

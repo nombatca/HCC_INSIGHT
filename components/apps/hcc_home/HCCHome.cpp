@@ -773,6 +773,10 @@ void HCCHome::showHome()
     _panic_keyboard = nullptr;
     _panic_view_dialog = nullptr;
     _panic_detail_dialog = nullptr;
+    _case_dialog = nullptr;
+    _case_text = nullptr;
+    _case_area = nullptr;
+    _case_sel_btn = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -2610,6 +2614,10 @@ bool HCCHome::close(void)
     _panic_keyboard = nullptr;
     _panic_view_dialog = nullptr;
     _panic_detail_dialog = nullptr;
+    _case_dialog = nullptr;
+    _case_text = nullptr;
+    _case_area = nullptr;
+    _case_sel_btn = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -4243,6 +4251,10 @@ void HCCHome::showPanic()
     _panic_keyboard = nullptr;
     _panic_view_dialog = nullptr;
     _panic_detail_dialog = nullptr;
+    _case_dialog = nullptr;
+    _case_text = nullptr;
+    _case_area = nullptr;
+    _case_sel_btn = nullptr;
     _pi_conf = nullptr;
     _repair_dialog = nullptr;
     _repair_kb = nullptr;
@@ -4445,6 +4457,11 @@ void HCCHome::showPanic()
     lv_obj_set_size(detail_btn, 300, 52);
     lv_obj_align(detail_btn, LV_ALIGN_TOP_LEFT, 300, by);
     styleBtn(detail_btn, "XEM PHÂN TÍCH CHI TIẾT", onPanicDetailClicked, this, lv_color_hex(0x2478D0), &lv_font_be_vietnam_16);
+
+    lv_obj_t *cases_btn = lv_btn_create(_screen);
+    lv_obj_set_size(cases_btn, 180, 52);
+    lv_obj_align(cases_btn, LV_ALIGN_TOP_LEFT, 615, by);
+    styleBtn(cases_btn, "CASE ĐÃ LƯU", onSavedCasesClicked, this, lv_color_hex(0x7A5AD8), &lv_font_be_vietnam_16);
 }
 
 void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
@@ -5215,6 +5232,165 @@ void HCCHome::onPanicViewCloseClicked(lv_event_t *event)
     if (app == nullptr || app->_panic_view_dialog == nullptr) return;
     lv_obj_del(app->_panic_view_dialog);
     app->_panic_view_dialog = nullptr;
+}
+
+// ==================== CASE ĐÃ LƯU (thẻ SD) ====================
+// Danh sách case do XÁC NHẬN ĐÃ SỬA ghi (kb/v1/cases/*.json) + case cũ (kb/verified, kb/repair_confirmed).
+// Chỉ xem; sửa / xoá bằng cách rút thẻ SD.
+
+void HCCHome::onSavedCasesClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr || app->_case_dialog != nullptr ||
+        app->_panic_detail_dialog != nullptr) {
+        return;
+    }
+    if (app->_panic_busy) {
+        if (app->_panic_status_label) lv_label_set_text(app->_panic_status_label, "Đang phân tích, chờ xong");
+        return;
+    }
+    app->ensureKbLoaded(true); // đọc lại thẻ SD (có thể vừa chép case vào)
+    app->_case_order.clear();
+    for (size_t i = 0; i < app->_kb_cases.size(); ++i) app->_case_order.push_back(i);
+    std::stable_sort(app->_case_order.begin(), app->_case_order.end(), [app](size_t a, size_t b) {
+        const auto &ca = app->_kb_cases[a], &cb = app->_kb_cases[b];
+        if (ca.legacy_dir.empty() != cb.legacy_dir.empty()) return ca.legacy_dir.empty(); // V1 trước case cũ
+        return ca.date > cb.date;                                                         // mới nhất trước
+    });
+
+    app->_case_dialog = lv_obj_create(app->_screen);
+    lv_obj_t *dlg = app->_case_dialog;
+    lv_obj_set_size(dlg, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *panel = lv_obj_create(dlg);
+    lv_obj_set_size(panel, 980, 560);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x0B141C), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 12, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    int n_v1 = 0, n_ver = 0;
+    for (const auto &c : app->_kb_cases) {
+        if (c.legacy_dir.empty()) n_v1++;
+        if (c.status == "VERIFIED") n_ver++;
+    }
+    const std::string ttl = "CASE ĐÃ LƯU (thẻ SD) - " + std::to_string(app->_kb_cases.size()) + " case, " +
+                            std::to_string(n_ver) + " VERIFIED, " +
+                            std::to_string((int)app->_kb_cases.size() - n_v1) + " case cũ";
+    lv_obj_t *title = lv_label_create(panel);
+    lv_label_set_text(title, ttl.c_str());
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00D9FF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, 110, 42);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -6);
+    lv_obj_add_event_cb(close_btn, onSavedCasesCloseClicked, LV_EVENT_CLICKED, app);
+    lv_obj_t *cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "ĐÓNG");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_font(cl, &lv_font_be_vietnam_16, 0);
+
+    // Trái: danh sách case
+    lv_obj_t *list = lv_obj_create(panel);
+    lv_obj_set_size(list, 330, 490);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 44);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x101C28), 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_pad_all(list, 6, 0);
+    lv_obj_set_style_pad_row(list, 6, 0);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+    // Phải: nội dung case
+    app->_case_area = lv_obj_create(panel);
+    lv_obj_set_size(app->_case_area, 600, 490);
+    lv_obj_align(app->_case_area, LV_ALIGN_TOP_LEFT, 340, 44);
+    lv_obj_set_style_bg_color(app->_case_area, lv_color_hex(0x101C28), 0);
+    lv_obj_set_style_border_width(app->_case_area, 0, 0);
+    lv_obj_set_scroll_dir(app->_case_area, LV_DIR_VER);
+    app->_case_text = lv_label_create(app->_case_area);
+    lv_label_set_recolor(app->_case_text, true);
+    lv_label_set_long_mode(app->_case_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(app->_case_text, lv_pct(100));
+    lv_obj_set_style_text_color(app->_case_text, lv_color_hex(0xCFE3EF), 0);
+    lv_obj_set_style_text_font(app->_case_text, &lv_font_be_vietnam_16, 0);
+
+    if (app->_case_order.empty()) {
+        lv_label_set_text(app->_case_text,
+                          "Chưa có case nào trên thẻ SD.\n\nBấm XÁC NHẬN ĐÃ SỬA sau khi sửa xong một máy để lưu case.\n"
+                          "Case được ghi vào thẻ SD: kb/v1/cases/<ngày giờ>_<model>.json");
+        return;
+    }
+    for (size_t k = 0; k < app->_case_order.size(); ++k) {
+        const HCCKB::CaseRecord &c = app->_kb_cases[app->_case_order[k]];
+        lv_obj_t *b = lv_btn_create(list);
+        lv_obj_set_width(b, lv_pct(100));
+        lv_obj_set_height(b, LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_all(b, 8, 0);
+        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x1F3242), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x2478D0), LV_STATE_CHECKED);
+        lv_obj_set_style_border_side(b, LV_BORDER_SIDE_LEFT, 0);
+        lv_obj_set_style_border_width(b, 5, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(c.status == "VERIFIED" ? 0x3DD66E : 0xF2C94C), 0);
+        lv_obj_set_user_data(b, (void *)(uintptr_t)k);
+        lv_obj_add_event_cb(b, onSavedCaseItemClicked, LV_EVENT_CLICKED, app);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(l, lv_pct(100));
+        lv_label_set_text(l, HCCKB::caseListLine(c).c_str());
+        lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+        if (k == 0) app->_case_sel_btn = b;
+    }
+    app->showSavedCase(0);
+}
+
+void HCCHome::showSavedCase(size_t k)
+{
+    if (_case_text == nullptr || k >= _case_order.size() || _case_order[k] >= _kb_cases.size()) return;
+    const HCCKB::CaseRecord &c = _kb_cases[_case_order[k]];
+    std::string text = HCCKB::describeCase(c);
+    // File JSON gốc trên thẻ (đúng như đã lưu)
+    std::string json;
+    if (!c.source_file.empty() && HCCPanicStorage::readFile(c.source_file, json)) {
+        if (json.size() > 8000) json = json.substr(0, 8000) + "\n... (đã cắt bớt)";
+        text += "\n#8AA0B4 == FILE JSON TRÊN THẺ SD ==#\n" + HCCKB::noRecolor(json);
+    }
+    if (text.size() > 20000) text = text.substr(0, 20000) + "\n... (đã cắt bớt)";
+    lv_label_set_text(_case_text, text.c_str());
+    if (_case_area) lv_obj_scroll_to_y(_case_area, 0, LV_ANIM_OFF);
+    if (_case_sel_btn) lv_obj_add_state(_case_sel_btn, LV_STATE_CHECKED);
+}
+
+void HCCHome::onSavedCaseItemClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    lv_obj_t *b = lv_event_get_current_target(event);
+    if (app == nullptr || app->_case_dialog == nullptr || b == nullptr) return;
+    if (app->_case_sel_btn && app->_case_sel_btn != b) lv_obj_clear_state(app->_case_sel_btn, LV_STATE_CHECKED);
+    app->_case_sel_btn = b;
+    app->showSavedCase((size_t)(uintptr_t)lv_obj_get_user_data(b));
+}
+
+void HCCHome::onSavedCasesCloseClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_case_dialog == nullptr) return;
+    lv_obj_del(app->_case_dialog);
+    app->_case_dialog = nullptr;
+    app->_case_text = nullptr;
+    app->_case_area = nullptr;
+    app->_case_sel_btn = nullptr;
 }
 
 // ==================== IPHONE HARDWARE CHECK ====================

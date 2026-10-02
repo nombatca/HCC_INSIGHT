@@ -419,6 +419,37 @@ int main(int argc, char **argv)
         check(!exact, "real: panic d47 0x180000 không khớp case d94 0x300000");
     }
 
+    // ---- 12. CASE ĐÃ LƯU: dòng danh sách + nội dung case ----
+    printf("[12] Xem case đã lưu\n");
+    {
+        CaseRecord c = caseFromFacts(factsOf(root + "/samples/real/smc_bsc_taop_taoc_iphone17_2.ips"));
+        c.id = "case_20261001_163900_iphone17_2";
+        c.status = "VERIFIED";
+        c.date = "2026-10-01T16:39:00";
+        c.repair_action = "thay la bàn #test";
+        c.components.push_back({"la bàn", "U1234", "replaced"});
+        c.measurements.push_back({"PP1V8", "voltage", "0", "1.8", "V", ""});
+        c.result.panic_resolved = true;
+        c.result.observed_days = 3;
+        c.source_file = "kb/v1/cases/" + c.id + ".json";
+        const std::string line = caseListLine(c);
+        check(line.find("2026-10-01  iPhone17,2  [VERIFIED]") == 0, "list: ngày + model + trạng thái");
+        check(line.find("thay la bàn") != std::string::npos && line.find('#') == std::string::npos, "list: cách sửa, bỏ '#'");
+        const std::string d = describeCase(c);
+        printf("---- case ----\n%s\n", d.c_str());
+        for (const char *want : {"ĐÃ XÁC NHẬN (VERIFIED)", "File: kb/v1/cases/case_20261001_163900_iphone17_2.json",
+                                 "SMC target: d94   ASSERT tag: TAOP, TAOC", "Linh kiện: la bàn (U1234) - replaced",
+                                 "Đo PP1V8 (voltage): trước 0 -> sau 1.8 V", "Hết panic: CÓ   theo dõi 3 ngày",
+                                 "Cách sửa: thay la bàn  test"}) {
+            check(d.find(want) != std::string::npos, std::string("case: có '") + want + "'");
+        }
+        CaseRecord rc;
+        c.status = "REPAIR_CONFIRMED";
+        check(caseListLine(c).find("[CHƯA XN]") != std::string::npos, "list: REPAIR_CONFIRMED -> CHƯA XN");
+        check(parseCase(caseToJson(c), rc) && rc.source_file.empty() && caseToJson(c).find("source_file") == std::string::npos,
+              "source_file không ghi vào JSON");
+    }
+
     printf("\nKB: %d kiểm tra, %d lỗi\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -38,6 +38,7 @@ static void loadLegacyDir(const char *dir, std::vector<HCCKB::CaseRecord> &out, 
             continue;
         }
         c.legacy_file = fn;
+        c.source_file = std::string(dir) + "/" + fn;
         for (const auto &w : c.warnings) msgs.push_back(c.id + ": " + w);
         out.push_back(c);
     }
@@ -67,6 +68,7 @@ bool HCCPanicKBStore::load(HCCKB::KnowledgeBase &kb, std::vector<HCCKB::CaseReco
             continue;
         }
         for (const auto &w : c.warnings) report.messages.push_back(c.id + ": " + w);
+        c.source_file = std::string(DIR_CASES) + "/" + fn;
         cases.push_back(c);
     }
     report.cases = (int)cases.size();

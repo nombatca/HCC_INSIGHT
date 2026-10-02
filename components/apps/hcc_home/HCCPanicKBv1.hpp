@@ -148,6 +148,7 @@ struct CaseRecord {
     // Case cũ (HCCPanicKB trước V1) đã migrate.
     std::string legacy_dir, legacy_file, legacy_keyword, legacy_signature;
     std::vector<std::string> warnings; // validate / migrate
+    std::string source_file;           // đường dẫn trên SD lúc nạp (vd kb/v1/cases/x.json); không ghi vào JSON
 };
 
 // ---- Kết quả đối chiếu ----

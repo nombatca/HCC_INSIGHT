@@ -40,6 +40,11 @@ std::string renderDetail(const PanicFacts &facts, const Analysis &a);
 // Nhãn mức có màu: DOCUMENTED xanh dương, INFERRED vàng, VERIFIED xanh lá, UNKNOWN xám.
 std::string levelTag(Level l);
 
+// Màn CASE ĐÃ LƯU: một dòng tóm tắt cho danh sách, và nội dung đầy đủ (recolor LVGL) của một case.
+std::string caseStatusText(const CaseRecord &c);
+std::string caseListLine(const CaseRecord &c);
+std::string describeCase(const CaseRecord &c);
+
 KbView renderView(const PanicFacts &facts, const Analysis &a);
 
 // Bỏ '#' khỏi chữ tự do để không phá cú pháp recolor.
