@@ -3928,7 +3928,7 @@ void HCCHome::performPanicAnalyze()
             _panic_result.ok = false;
             _panic_result.message = err;
             _kv_ai = "#FF6B6B AI đọc ảnh lỗi:# " + HCCKB::noRecolor(err);
-            snprintf(_panic_status, sizeof(_panic_status), "AI đọc ảnh lỗi");
+            snprintf(_panic_status, sizeof(_panic_status), "AI đọc ảnh lỗi: %s", err.c_str());
             return;
         }
     } else if (!loadSelectedRaw(raw)) {
@@ -4330,6 +4330,11 @@ void HCCHome::showPanic()
 
     _panic_status_label = lv_label_create(_screen);
     lv_label_set_text(_panic_status_label, "Sẵn sàng");
+    // Rộng cố định, chữ dài (lỗi AI) thành "..." thay vì đè lên dòng địa chỉ gửi panic bên trái.
+    lv_label_set_long_mode(_panic_status_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(_panic_status_label, 420);
+    lv_obj_set_height(_panic_status_label, 22);
+    lv_obj_set_style_text_align(_panic_status_label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(_panic_status_label, LV_ALIGN_TOP_RIGHT, -24, 66);
     lv_obj_set_style_text_color(_panic_status_label, lv_color_hex(0x69E0C0), 0);
     lv_obj_set_style_text_font(_panic_status_label, &lv_font_be_vietnam_16, 0);

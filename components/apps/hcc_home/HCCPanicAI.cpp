@@ -463,6 +463,7 @@ static const char *TRANSCRIBE_SYSTEM_PROMPT =
     "visible, reply with exactly: NO_TEXT";
 static const char *TRANSCRIBE_USER_PROMPT = "Transcribe the text in this image.";
 static constexpr int TRANSCRIBE_MAX_TOKENS = 4000;
+static const char *IMG_PLACEHOLDER = "@@HCC_IMG_B64@@";
 
 bool HCCPanicAI::transcribeImage(const std::string &img_bytes, const std::string &mime,
                                  std::string &text, std::string &error)
@@ -507,7 +508,7 @@ bool HCCPanicAI::transcribeImage(const std::string &img_bytes, const std::string
         cJSON *src = cJSON_AddObjectToObject(img, "source");
         cJSON_AddStringToObject(src, "type", "base64");
         cJSON_AddStringToObject(src, "media_type", mime.c_str());
-        cJSON_AddStringToObject(src, "data", b64.c_str());
+        cJSON_AddStringToObject(src, "data", IMG_PLACEHOLDER);
         cJSON_AddItemToArray(content, img);
         cJSON *tx = cJSON_CreateObject();
         cJSON_AddStringToObject(tx, "type", "text");
@@ -531,23 +532,33 @@ bool HCCPanicAI::transcribeImage(const std::string &img_bytes, const std::string
         cJSON *iu = cJSON_CreateObject();
         cJSON_AddStringToObject(iu, "type", "image_url");
         cJSON *urlobj = cJSON_AddObjectToObject(iu, "image_url");
-        std::string data_uri = "data:" + mime + ";base64," + b64;
+        const std::string data_uri = "data:" + mime + ";base64," + IMG_PLACEHOLDER;
         cJSON_AddStringToObject(urlobj, "url", data_uri.c_str());
         cJSON_AddStringToObject(urlobj, "detail", "high");  // chữ log nhỏ, cần độ phân giải cao
         cJSON_AddItemToArray(content, iu);
         cJSON_AddItemToArray(msgs, um);
     }
-    b64.clear();
-    b64.shrink_to_fit();
-
+    // cJSON chỉ giữ phần khung nhỏ: nó cấp bộ nhớ bằng malloc (RAM nội, vì PSRAM không cấp cho
+    // malloc) nên chuỗi base64 vài trăm KB nằm trong cJSON sẽ hết RAM. Ảnh được ghép vào sau,
+    // trong std::string (operator new -> PSRAM). Base64 không có ký tự cần escape trong JSON.
     char *body_str = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
     if (!body_str) {
-        error = "Loi tao request anh";
+        error = "Loi tao request anh (het RAM)";
         return false;
     }
     std::string body_json = body_str;
     cJSON_free(body_str);
+    const size_t ph = body_json.find(IMG_PLACEHOLDER);
+    if (ph == std::string::npos) {
+        error = "Loi tao request anh";
+        return false;
+    }
+    body_json.replace(ph, strlen(IMG_PLACEHOLDER), b64);
+    b64.clear();
+    b64.shrink_to_fit();
+    ESP_LOGI(TAG, "image request: %u byte anh, %u byte body (%s)", (unsigned)img_bytes.size(),
+             (unsigned)body_json.size(), mime.c_str());
 
     bool truncated = false;
     if (!sendRequest(provider, url, api_key, body_json, text, truncated, error)) {
