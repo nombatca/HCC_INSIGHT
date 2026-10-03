@@ -90,6 +90,8 @@ void setPhyBits(int sw_hw, int sel)
 }
 
 // Đưa OTG Full-Speed ra PHY của cổng Type-C (PHY mà USB-Serial/JTAG đang dùng).
+// Trên board này cổng flash/monitor là chip USB->UART riêng; PHY0 ra một cổng USB khác của board.
+// Đã thử trên board: sw_hw=1 sel=1 (eFuse=0) -> máy tính nhận ổ đĩa ở cổng USB của chip.
 // LP_SYS.usb_ctrl: theo chú thích ESP-IDF, sw_hw_usb_phy_sel = 1 cho phần mềm chọn và
 // sw_usb_phy_sel = 1 đưa USJ->PHY1, OTG->PHY0. Thử trên board: chỉ ghi như vậy thì Serial/JTAG
 // vẫn chạy trên Type-C (monitor không ngắt) -> ý nghĩa bit chưa chắc đúng như chú thích. Vì vậy thử
@@ -110,7 +112,7 @@ bool swapPhy(bool otg_on_type_c)
         // Chưa cắm máy tính (hoặc không có SOF): không kiểm chứng được, dùng cách theo chú thích.
         setPhyBits(1, want);
         s_phy_swapped = true;
-        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=1 sel=%d (chưa kiểm chứng: không thấy SOF, int_raw=%08lx frame=%lu)",
+        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=1 sel=%d (cổng USB chip chưa có máy tính lúc bật; int_raw=%08lx frame=%lu)",
                  efuse_sel ? 1 : 0, want, (unsigned long)USB_SERIAL_JTAG.int_raw.val,
                  (unsigned long)(USB_SERIAL_JTAG.fram_num.val & 0x7FF));
         ESP_LOGW(TAG, "PHY: %s", s_phy_note);

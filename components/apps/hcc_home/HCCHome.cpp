@@ -5614,9 +5614,9 @@ void HCCHome::showUsbDisk()
     lv_obj_set_width(guide, 940);
     lv_label_set_text(guide,
                       "Bật để máy tính thấy thẻ SD như một ổ USB (chép nhạc vào thư mục music, lấy case trong kb/v1/cases...).\n"
-                      "1. Bấm BẬT USB DISK.  2. Cắm cáp vào cổng Type-C của board (cổng dùng để flash) và máy tính.\n"
+                      "1. Bấm BẬT USB DISK.  2. Cắm cáp vào cổng USB của chip ESP32-P4 (KHÔNG phải cổng UART dùng để flash/monitor).\n"
                       "3. Chép xong: EJECT ổ đĩa trên máy tính rồi mới bấm TẮT USB DISK.\n"
-                      "Trong lúc bật: board không dùng được thẻ SD, cổng Type-C không còn monitor/flash.");
+                      "Trong lúc bật: board không dùng được thẻ SD. Cổng UART vẫn monitor bình thường.");
     lv_obj_align(guide, LV_ALIGN_TOP_LEFT, 28, 70);
     lv_obj_set_style_text_color(guide, lv_color_hex(0xB8C5CF), 0);
     lv_obj_set_style_text_font(guide, &lv_font_be_vietnam_16, 0);
@@ -5677,7 +5677,7 @@ void HCCHome::refreshUsbDisk()
     } else if (HCCUsbDisk::capacityMb() > 0) {
         snprintf(info, sizeof(info), "Thẻ SD: %.1f GB   |   %s%s", HCCUsbDisk::capacityMb() / 1024.0,
                  HCCUsbDisk::phyNote(),
-                 st == State::Ready ? "\nMáy tính chưa nhận: kiểm tra cáp ở cổng nạp chương trình (Type-C)." : "");
+                 st == State::Ready ? "\nMáy tính chưa nhận: cắm cáp vào cổng USB của chip, không phải cổng UART (flash/monitor)." : "");
     }
     lv_label_set_text(_ud_info, info);
 
