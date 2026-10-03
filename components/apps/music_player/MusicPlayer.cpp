@@ -21,6 +21,7 @@
 #include "gui_music/lv_demo_music.h"
 #include "gui_music/lv_demo_music_main.h"
 #include "MusicPlayer.hpp"
+#include "hcc_home/HCCUsbDisk.hpp"
 
 #define MUSIC_DIR       BSP_SPIFFS_MOUNT_POINT "/music"   // nhạc nạp sẵn trong flash (build)
 #define MUSIC_DIR_SD    BSP_SD_MOUNT_POINT "/music"       // nhạc chép vào thẻ SD
@@ -109,21 +110,28 @@ static void freeMusicList(file_iterator_instance_t *it)
     free(it);
 }
 
-// Thẻ SD có thư mục music chứa nhạc thì dùng thẻ, không thì nhạc trong flash.
+// Thẻ SD có thư mục music chứa nhạc thì dùng thẻ (không có thì thử gốc thẻ), không thì nhạc trong flash.
 // Quét lại mỗi lần mở app để nhận bài vừa chép vào thẻ.
 static file_iterator_instance_t *loadMusicList(const char **source)
 {
-    const esp_err_t mount = bsp_sdcard_mount();
-    if (mount == ESP_OK || mount == ESP_ERR_INVALID_STATE) {  // INVALID_STATE: đã mount nơi khác
-        file_iterator_instance_t *sd = scanMusicDir(MUSIC_DIR_SD);
-        if (sd != nullptr) {
-            *source = "SD card";
-            ESP_LOGI(TAG, "Nhạc từ thẻ SD: %s (%u bài)", MUSIC_DIR_SD, (unsigned)sd->count);
-            return sd;
-        }
-        ESP_LOGI(TAG, "Thẻ SD không có nhạc trong %s - dùng nhạc trong flash", MUSIC_DIR_SD);
+    if (HCCUsbDisk::state() != HCCUsbDisk::State::Off) {
+        // Thẻ đang giao cho máy tính (USB DISK): không được mount song song.
+        ESP_LOGW(TAG, "USB DISK đang bật - thẻ SD đang ở máy tính, dùng nhạc trong flash");
     } else {
-        ESP_LOGI(TAG, "Không có thẻ SD (%s) - dùng nhạc trong flash", esp_err_to_name(mount));
+        const esp_err_t mount = bsp_sdcard_mount();
+        if (mount == ESP_OK || mount == ESP_ERR_INVALID_STATE) {  // INVALID_STATE: đã mount nơi khác
+            for (const char *dir : {MUSIC_DIR_SD, BSP_SD_MOUNT_POINT}) {
+                file_iterator_instance_t *sd = scanMusicDir(dir);
+                if (sd != nullptr) {
+                    *source = "SD card";
+                    ESP_LOGI(TAG, "Nhạc từ thẻ SD: %s (%u bài)", dir, (unsigned)sd->count);
+                    return sd;
+                }
+                ESP_LOGI(TAG, "Không có .mp3/.wav trong %s", dir);
+            }
+        } else {
+            ESP_LOGI(TAG, "Không có thẻ SD (%s) - dùng nhạc trong flash", esp_err_to_name(mount));
+        }
     }
     file_iterator_instance_t *flash = scanMusicDir(MUSIC_DIR);
     *source = "Internal";
