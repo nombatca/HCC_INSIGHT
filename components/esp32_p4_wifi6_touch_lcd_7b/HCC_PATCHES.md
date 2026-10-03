@@ -26,4 +26,5 @@ Local patches:
    accepts one owner; `bsp_sdcard_mount()` acquired it on every call and never released it, so
    mounting again after `bsp_sdcard_unmount()` failed. The handle is now created once and reused
    (`bsp_sdcard_host_config()`); `bsp_sdcard_unmount()` clears `bsp_sdcard`. New
-   `bsp_sdcard_raw_init()` / `bsp_sdcard_raw_deinit()` bring the card up without FAT for USB MSC.
+   `bsp_sdcard_raw_init()` / `bsp_sdcard_raw_deinit()` bring the card up without FAT for USB MSC;
+   they release only SDMMC slot 0 (slot 1 is the ESP-Hosted SDIO link to the Wi-Fi chip).

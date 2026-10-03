@@ -200,7 +200,10 @@ esp_err_t bsp_sdcard_host_config(sdmmc_host_t *host, sdmmc_slot_config_t *slot_c
 }
 
 /* HCC patch 6: card without FAT/VFS (for USB mass storage, where the USB host owns the
- * filesystem). Call only while the card is not mounted with bsp_sdcard_mount(). */
+ * filesystem). Call only while the card is not mounted with bsp_sdcard_mount().
+ * The SDMMC controller is shared: slot 1 carries the ESP-Hosted SDIO link to the ESP32-C6
+ * (Wi-Fi). Only ever release slot 0 (sdmmc_host_deinit_slot); sdmmc_host_deinit() would tear
+ * down the Wi-Fi link too (H_SDIO_DRV "failed to read registers", then a FreeRTOS assert). */
 esp_err_t bsp_sdcard_raw_init(sdmmc_card_t **out_card)
 {
     ESP_RETURN_ON_FALSE(out_card != NULL, ESP_ERR_INVALID_ARG, TAG, "out_card is NULL");
@@ -211,20 +214,21 @@ esp_err_t bsp_sdcard_raw_init(sdmmc_card_t **out_card)
     esp_err_t ret = sdmmc_host_init_slot(host.slot, &slot_config);
     if (ret != ESP_OK)
     {
-        sdmmc_host_deinit();
+        /* Slot 0 was not counted as initialized: releasing it here would drop the shared host's
+         * slot count and could deinit the controller under the Wi-Fi SDIO link. */
         return ret;
     }
     sdmmc_card_t *card = (sdmmc_card_t *)calloc(1, sizeof(sdmmc_card_t));
     if (card == NULL)
     {
-        sdmmc_host_deinit();
+        sdmmc_host_deinit_slot(SDMMC_HOST_SLOT_0);
         return ESP_ERR_NO_MEM;
     }
     ret = sdmmc_card_init(&host, card);
     if (ret != ESP_OK)
     {
         free(card);
-        sdmmc_host_deinit();
+        sdmmc_host_deinit_slot(SDMMC_HOST_SLOT_0);
         return ret;
     }
     *out_card = card;
@@ -237,7 +241,7 @@ void bsp_sdcard_raw_deinit(sdmmc_card_t *card)
     {
         return;
     }
-    sdmmc_host_deinit();
+    sdmmc_host_deinit_slot(SDMMC_HOST_SLOT_0);
     free(card);
 }
 
