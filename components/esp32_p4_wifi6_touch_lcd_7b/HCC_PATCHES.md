@@ -22,3 +22,8 @@ Local patches:
    fill/blend through the ESP32-P4 PPA (RGB565 only). Display mode is DOUBLE_DIRECT, where
    LVGL draws straight into the panel frame buffers, so `buffer_height`/`use_psram` stay
    unused and unchanged.
+6. `esp32_p4_wifi6_touch_lcd_7b.c/.h` - SD power: the on-chip LDO channel 4 is adjustable and
+   accepts one owner; `bsp_sdcard_mount()` acquired it on every call and never released it, so
+   mounting again after `bsp_sdcard_unmount()` failed. The handle is now created once and reused
+   (`bsp_sdcard_host_config()`); `bsp_sdcard_unmount()` clears `bsp_sdcard`. New
+   `bsp_sdcard_raw_init()` / `bsp_sdcard_raw_deinit()` bring the card up without FAT for USB MSC.

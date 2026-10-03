@@ -9,6 +9,7 @@
 #include "driver/ledc.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include <stdlib.h>
 #include "esp_check.h"
 #include "esp_idf_version.h"
 #include "esp_spiffs.h"
@@ -16,6 +17,7 @@
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_ldo_regulator.h"
 #include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"  // sdmmc_card_init (HCC patch 6)
 #include "usb/usb_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 
@@ -140,36 +142,103 @@ esp_err_t bsp_sdcard_mount(void)
         .max_files = 5,
         .allocation_unit_size = 64 * 1024};
 
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot = SDMMC_HOST_SLOT_0;
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
-
-    sd_pwr_ctrl_ldo_config_t ldo_config = {
-        .ldo_chan_id = 4,
-    };
-    sd_pwr_ctrl_handle_t pwr_ctrl_handle = NULL;
-    esp_err_t ret = sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &pwr_ctrl_handle);
+    sdmmc_host_t host;
+    sdmmc_slot_config_t slot_config;
+    esp_err_t ret = bsp_sdcard_host_config(&host, &slot_config);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to create a new on-chip LDO power control driver");
         return ret;
     }
-    host.pwr_ctrl_handle = pwr_ctrl_handle;
-
-    const sdmmc_slot_config_t slot_config = {
-        /* SD card is connected to Slot 0 pins. Slot 0 uses IO MUX, so not specifying the pins here */
-        .cd = SDMMC_SLOT_NO_CD,
-        .wp = SDMMC_SLOT_NO_WP,
-        .width = 4,
-        .flags = 0,
-    };
 
     return esp_vfs_fat_sdmmc_mount(BSP_SD_MOUNT_POINT, &host, &slot_config, &mount_config, &bsp_sdcard);
 }
 
 esp_err_t bsp_sdcard_unmount(void)
 {
-    return esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
+    esp_err_t ret = esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
+    if (ret == ESP_OK)
+    {
+        bsp_sdcard = NULL;
+    }
+    return ret;
+}
+
+/* HCC patch 6: the SD LDO channel (4) is adjustable, and an adjustable LDO channel accepts a
+ * single owner. The original code acquired it on every mount and never released it, so a
+ * second mount after an unmount failed. Acquire it once and reuse the handle. */
+static sd_pwr_ctrl_handle_t s_sd_pwr_ctrl = NULL;
+
+esp_err_t bsp_sdcard_host_config(sdmmc_host_t *host, sdmmc_slot_config_t *slot_config)
+{
+    if (s_sd_pwr_ctrl == NULL)
+    {
+        sd_pwr_ctrl_ldo_config_t ldo_config = {
+            .ldo_chan_id = 4,
+        };
+        esp_err_t ret = sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &s_sd_pwr_ctrl);
+        if (ret != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to create a new on-chip LDO power control driver");
+            s_sd_pwr_ctrl = NULL;
+            return ret;
+        }
+    }
+
+    *host = (sdmmc_host_t)SDMMC_HOST_DEFAULT();
+    host->slot = SDMMC_HOST_SLOT_0;
+    host->max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    host->pwr_ctrl_handle = s_sd_pwr_ctrl;
+
+    *slot_config = (sdmmc_slot_config_t){
+        /* SD card is connected to Slot 0 pins. Slot 0 uses IO MUX, so not specifying the pins here */
+        .cd = SDMMC_SLOT_NO_CD,
+        .wp = SDMMC_SLOT_NO_WP,
+        .width = 4,
+        .flags = 0,
+    };
+    return ESP_OK;
+}
+
+/* HCC patch 6: card without FAT/VFS (for USB mass storage, where the USB host owns the
+ * filesystem). Call only while the card is not mounted with bsp_sdcard_mount(). */
+esp_err_t bsp_sdcard_raw_init(sdmmc_card_t **out_card)
+{
+    ESP_RETURN_ON_FALSE(out_card != NULL, ESP_ERR_INVALID_ARG, TAG, "out_card is NULL");
+    sdmmc_host_t host;
+    sdmmc_slot_config_t slot_config;
+    ESP_RETURN_ON_ERROR(bsp_sdcard_host_config(&host, &slot_config), TAG, "SD host config failed");
+    ESP_RETURN_ON_ERROR(sdmmc_host_init(), TAG, "sdmmc_host_init failed");
+    esp_err_t ret = sdmmc_host_init_slot(host.slot, &slot_config);
+    if (ret != ESP_OK)
+    {
+        sdmmc_host_deinit();
+        return ret;
+    }
+    sdmmc_card_t *card = (sdmmc_card_t *)calloc(1, sizeof(sdmmc_card_t));
+    if (card == NULL)
+    {
+        sdmmc_host_deinit();
+        return ESP_ERR_NO_MEM;
+    }
+    ret = sdmmc_card_init(&host, card);
+    if (ret != ESP_OK)
+    {
+        free(card);
+        sdmmc_host_deinit();
+        return ret;
+    }
+    *out_card = card;
+    return ESP_OK;
+}
+
+void bsp_sdcard_raw_deinit(sdmmc_card_t *card)
+{
+    if (card == NULL)
+    {
+        return;
+    }
+    sdmmc_host_deinit();
+    free(card);
 }
 
 esp_err_t bsp_spiffs_mount(void)

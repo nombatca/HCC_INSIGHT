@@ -372,6 +372,20 @@ private:
     lv_obj_t *_panic_detail_dialog = nullptr; // XEM PHÂN TÍCH CHI TIẾT
     static void onPanicDetailClicked(lv_event_t *event);
     static void onPanicDetailCloseClicked(lv_event_t *event);
+    // Đặt nullptr mọi con trỏ LVGL của các màn hình trước lv_obj_clean(_screen).
+    void detachScreenObjects();
+    // USB DISK (HCCUsbDisk): thẻ SD -> ổ USB trên máy tính qua cổng Type-C.
+    lv_obj_t *_ud_state = nullptr;
+    lv_obj_t *_ud_info = nullptr;
+    lv_obj_t *_ud_btn = nullptr;
+    lv_obj_t *_ud_btn_label = nullptr;
+    void showUsbDisk();
+    void refreshUsbDisk();
+    static void onUsbDiskClicked(lv_event_t *event);
+    static void onUsbDiskToggle(lv_event_t *event);
+    static void onUsbDiskBack(lv_event_t *event);
+    static void onUsbDiskTimer(lv_timer_t *timer);
+    static void onUsbDiskStateDeleted(lv_event_t *event);
     // CASE ĐÃ LƯU: xem các case XÁC NHẬN ĐÃ SỬA trên thẻ SD (kb/v1/cases + case cũ)
     lv_obj_t *_case_dialog = nullptr;
     lv_obj_t *_case_text = nullptr;   // nội dung case đang chọn

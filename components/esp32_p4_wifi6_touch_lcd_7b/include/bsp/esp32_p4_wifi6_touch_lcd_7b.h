@@ -238,6 +238,19 @@ esp_err_t bsp_sdcard_mount(void);
  */
 esp_err_t bsp_sdcard_unmount(void);
 
+/**
+ * @brief SDMMC host + slot configuration of the uSD slot (shares one on-chip LDO power handle).
+ */
+esp_err_t bsp_sdcard_host_config(sdmmc_host_t *host, sdmmc_slot_config_t *slot_config);
+
+/**
+ * @brief Initialize the uSD card without mounting FAT (e.g. to expose it as USB mass storage).
+ *
+ * Only while the card is not mounted with bsp_sdcard_mount(). Release with bsp_sdcard_raw_deinit().
+ */
+esp_err_t bsp_sdcard_raw_init(sdmmc_card_t **out_card);
+void bsp_sdcard_raw_deinit(sdmmc_card_t *card);
+
 /**************************************************************************************************
  *
  * LCD interface

@@ -24,3 +24,7 @@ dependencies:
   espressif/mdns:
       version: "^1.2.0"
       public: true
+
+  # USB DISK (components/apps/hcc_home/HCCUsbDisk.cpp): thẻ SD -> USB Mass Storage qua OTG Full-Speed
+  espressif/esp_tinyusb:
+      version: "^2.3.0"

@@ -1,5 +1,6 @@
 #include "HCCHome.hpp"
 #include "hcc_cores.h"
+#include "HCCUsbDisk.hpp"
 #include "setting/hcc_clock.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "driver/i2c_master.h"
@@ -740,12 +741,8 @@ bool HCCHome::run(void)
 
     return true;
 }
-void HCCHome::showHome()
+void HCCHome::detachScreenObjects()
 {
-    if (_screen == nullptr) {
-        return;
-    }
-
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
     _usb_mode_label = nullptr;
@@ -802,6 +799,19 @@ void HCCHome::showHome()
     _pi_conclusion = nullptr;
     _pi_ai = nullptr;
     _pi_detail = nullptr;
+    _ud_state = nullptr;
+    _ud_info = nullptr;
+    _ud_btn = nullptr;
+    _ud_btn_label = nullptr;
+}
+
+void HCCHome::showHome()
+{
+    if (_screen == nullptr) {
+        return;
+    }
+
+    detachScreenObjects();
     lv_obj_clean(_screen);
 
     /* Background */
@@ -1212,6 +1222,43 @@ void HCCHome::showHome()
         &lv_font_be_vietnam_16,
         0
     );
+
+    /*
+     * USB DISK: thẻ SD -> máy tính qua cổng Type-C
+     */
+    lv_obj_t *ud_button = lv_btn_create(_screen);
+    lv_obj_set_size(ud_button, 438, 72);
+    lv_obj_align(ud_button, LV_ALIGN_TOP_LEFT, 28, 336);
+    lv_obj_add_event_cb(ud_button, onUsbDiskClicked, LV_EVENT_CLICKED, this);
+    lv_obj_set_style_bg_color(ud_button, button_color, 0);
+    lv_obj_set_style_bg_color(ud_button, button_color_pressed, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(ud_button, 14, 0);
+    lv_obj_set_style_border_width(ud_button, 0, 0);
+
+    lv_obj_t *ud_icon = lv_label_create(ud_button);
+    lv_label_set_text(ud_icon, LV_SYMBOL_SD_CARD);
+    lv_obj_align(ud_icon, LV_ALIGN_LEFT_MID, 32, 0);
+    lv_obj_set_style_text_color(ud_icon, dark_text, 0);
+    lv_obj_set_style_text_font(ud_icon, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *ud_div = lv_obj_create(ud_button);
+    lv_obj_set_size(ud_div, 2, 48);
+    lv_obj_align(ud_div, LV_ALIGN_LEFT_MID, 92, 0);
+    lv_obj_set_style_bg_color(ud_div, divider, 0);
+    lv_obj_set_style_bg_opa(ud_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ud_div, 0, 0);
+
+    lv_obj_t *ud_title = lv_label_create(ud_button);
+    lv_label_set_text(ud_title, "USB DISK");
+    lv_obj_align(ud_title, LV_ALIGN_LEFT_MID, 116, -10);
+    lv_obj_set_style_text_color(ud_title, dark_text, 0);
+    lv_obj_set_style_text_font(ud_title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *ud_sub = lv_label_create(ud_button);
+    lv_label_set_text(ud_sub, "Thẻ SD thành ổ USB trên máy tính");
+    lv_obj_align(ud_sub, LV_ALIGN_LEFT_MID, 116, 16);
+    lv_obj_set_style_text_color(ud_sub, dark_text, 0);
+    lv_obj_set_style_text_font(ud_sub, &lv_font_be_vietnam_16, 0);
 
     /* Status */
     lv_obj_t *status = lv_label_create(_screen);
@@ -5539,6 +5586,142 @@ void HCCHome::onSavedCaseDeleteConfirm(lv_event_t *event)
     if (app->_panic_status_label) {
         lv_label_set_text(app->_panic_status_label, ok ? ("Đã xóa case -> " + moved).c_str() : ("Xóa thất bại: " + err).c_str());
     }
+}
+
+// ==================== USB DISK (thẻ SD -> máy tính qua Type-C) ====================
+
+void HCCHome::onUsbDiskClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showUsbDisk();
+}
+
+void HCCHome::showUsbDisk()
+{
+    if (_screen == nullptr) return;
+    detachScreenObjects();
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x101820), 0);
+
+    lv_obj_t *title = lv_label_create(_screen);
+    lv_label_set_text(title, "USB DISK");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 20);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
+
+    lv_obj_t *guide = lv_label_create(_screen);
+    lv_label_set_long_mode(guide, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(guide, 940);
+    lv_label_set_text(guide,
+                      "Bật để máy tính thấy thẻ SD như một ổ USB (chép nhạc vào thư mục music, lấy case trong kb/v1/cases...).\n"
+                      "1. Bấm BẬT USB DISK.  2. Cắm cáp vào cổng Type-C của board (cổng dùng để flash) và máy tính.\n"
+                      "3. Chép xong: EJECT ổ đĩa trên máy tính rồi mới bấm TẮT USB DISK.\n"
+                      "Trong lúc bật: board không dùng được thẻ SD, cổng Type-C không còn monitor/flash.");
+    lv_obj_align(guide, LV_ALIGN_TOP_LEFT, 28, 70);
+    lv_obj_set_style_text_color(guide, lv_color_hex(0xB8C5CF), 0);
+    lv_obj_set_style_text_font(guide, &lv_font_be_vietnam_16, 0);
+
+    _ud_state = lv_label_create(_screen);
+    lv_obj_align(_ud_state, LV_ALIGN_TOP_LEFT, 28, 200);
+    lv_obj_set_style_text_font(_ud_state, &lv_font_be_vietnam_22, 0);
+
+    _ud_info = lv_label_create(_screen);
+    lv_label_set_long_mode(_ud_info, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_ud_info, 940);
+    lv_obj_align(_ud_info, LV_ALIGN_TOP_LEFT, 28, 240);
+    lv_obj_set_style_text_color(_ud_info, lv_color_hex(0xCFE3EF), 0);
+    lv_obj_set_style_text_font(_ud_info, &lv_font_be_vietnam_16, 0);
+
+    _ud_btn = lv_btn_create(_screen);
+    lv_obj_set_size(_ud_btn, 300, 64);
+    lv_obj_align(_ud_btn, LV_ALIGN_TOP_LEFT, 28, 320);
+    lv_obj_set_style_radius(_ud_btn, 12, 0);
+    lv_obj_add_event_cb(_ud_btn, onUsbDiskToggle, LV_EVENT_CLICKED, this);
+    _ud_btn_label = lv_label_create(_ud_btn);
+    lv_obj_center(_ud_btn_label);
+    lv_obj_set_style_text_font(_ud_btn_label, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *back = lv_btn_create(_screen);
+    lv_obj_set_size(back, 160, 52);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 28, 470);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x1F3242), 0);
+    lv_obj_add_event_cb(back, onUsbDiskBack, LV_EVENT_CLICKED, this);
+    lv_obj_t *bl = lv_label_create(back);
+    lv_label_set_text(bl, "QUAY LẠI");
+    lv_obj_center(bl);
+    lv_obj_set_style_text_font(bl, &lv_font_be_vietnam_16, 0);
+
+    // Cập nhật trạng thái 4 lần/giây; timer tự huỷ khi nhãn trạng thái bị xoá (rời màn hình).
+    lv_timer_t *t = lv_timer_create(onUsbDiskTimer, 250, this);
+    lv_obj_add_event_cb(_ud_state, onUsbDiskStateDeleted, LV_EVENT_DELETE, t);
+    refreshUsbDisk();
+}
+
+void HCCHome::refreshUsbDisk()
+{
+    if (_ud_state == nullptr) return;
+    using HCCUsbDisk::State;
+    const State st = HCCUsbDisk::state();
+    uint32_t color = 0x8A97A3;
+    if (st == State::Connected) color = 0x3DD66E;
+    else if (st == State::Ready) color = 0xF2C94C;
+    else if (st == State::Error) color = 0xFF6B6B;
+    lv_label_set_text(_ud_state, HCCUsbDisk::stateText());
+    lv_obj_set_style_text_color(_ud_state, lv_color_hex(color), 0);
+
+    char info[160] = "";
+    if (st == State::Error) {
+        snprintf(info, sizeof(info), "%s", HCCUsbDisk::lastError());
+    } else if (HCCUsbDisk::capacityMb() > 0) {
+        snprintf(info, sizeof(info), "Thẻ SD: %.1f GB", HCCUsbDisk::capacityMb() / 1024.0);
+    }
+    lv_label_set_text(_ud_info, info);
+
+    const bool on = st == State::Ready || st == State::Connected;
+    const bool busy = st == State::Starting || st == State::Stopping;
+    lv_label_set_text(_ud_btn_label, busy ? "ĐANG XỬ LÝ..." : (on ? "TẮT USB DISK" : "BẬT USB DISK"));
+    lv_obj_set_style_bg_color(_ud_btn, lv_color_hex(on ? 0xC0392B : 0x2478D0), 0);
+    if (busy) lv_obj_add_state(_ud_btn, LV_STATE_DISABLED);
+    else lv_obj_clear_state(_ud_btn, LV_STATE_DISABLED);
+}
+
+void HCCHome::onUsbDiskToggle(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    using HCCUsbDisk::State;
+    const State st = HCCUsbDisk::state();
+    if (st == State::Ready || st == State::Connected || st == State::Error) {
+        HCCUsbDisk::requestStop();  // lỗi: dọn phần đã dựng dở và gắn lại thẻ cho board
+    } else if (st == State::Off) {
+        HCCUsbDisk::requestStart();
+    }
+    app->refreshUsbDisk();
+}
+
+void HCCHome::onUsbDiskBack(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    using HCCUsbDisk::State;
+    const State st = HCCUsbDisk::state();
+    if (st != State::Off && st != State::Error) {
+        if (app->_ud_info) lv_label_set_text(app->_ud_info, "Tắt USB DISK trước khi quay lại (thẻ SD đang thuộc máy tính).");
+        return;
+    }
+    app->showHome();
+}
+
+void HCCHome::onUsbDiskTimer(lv_timer_t *timer)
+{
+    HCCHome *app = static_cast<HCCHome *>(timer->user_data);
+    if (app) app->refreshUsbDisk();
+}
+
+void HCCHome::onUsbDiskStateDeleted(lv_event_t *event)
+{
+    lv_timer_t *t = static_cast<lv_timer_t *>(lv_event_get_user_data(event));
+    if (t) lv_timer_del(t);
 }
 
 // ==================== IPHONE HARDWARE CHECK ====================
