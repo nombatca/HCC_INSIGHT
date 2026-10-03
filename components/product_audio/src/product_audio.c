@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define _GNU_SOURCE  // fopencookie()
+
+#include <fcntl.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <stdbool.h>
 #include <string.h>
 #include "esp_log.h"
@@ -241,6 +246,140 @@ esp_err_t product_audio_file_instance_init(const char *path, file_iterator_insta
     return ESP_OK;
 }
 
+/*
+ * HCC: esp-audio-player 1.1.0 không bỏ qua thẻ ID3v2 ở đầu file MP3. File có ảnh bìa (JPEG chứa
+ * byte 0xFF 0xE0/0xE1 giống sync word MP3) làm MP3Decode() trả ERR_MP3_INVALID_FRAMEHEADER (-6)
+ * mà không tiến con trỏ đọc, decode_mp3() lại tìm đúng chỗ đó -> lặp "mp3: status error -6" mãi,
+ * không ra tiếng. Ở đây mở file qua fopencookie() để người chơi nhạc thấy file bắt đầu SAU thẻ
+ * ID3v2 (is_mp3() vẫn nhận ra frame MP3 0xFF 0xFB/0xF3/0xF2 ở đầu).
+ */
+#ifdef __LARGE64_FILES
+typedef _off64_t audio_cookie_off_t;
+#else
+typedef off_t audio_cookie_off_t;
+#endif
+
+typedef struct {
+    int fd;
+    off_t base;  // số byte bỏ qua ở đầu file (thẻ ID3v2)
+} audio_skip_cookie_t;
+
+static ssize_t audio_skip_read(void *c, char *buf, size_t n)
+{
+    return read(((audio_skip_cookie_t *)c)->fd, buf, n);
+}
+
+static int audio_skip_seek(void *c, audio_cookie_off_t *off, int whence)
+{
+    audio_skip_cookie_t *ck = (audio_skip_cookie_t *)c;
+    off_t target = (off_t)*off;
+    if (whence == SEEK_SET) {
+        target += ck->base;
+    }
+    off_t pos = lseek(ck->fd, target, whence);
+    if (pos < 0) {
+        return -1;
+    }
+    if (pos < ck->base) {  // không cho lùi vào trong thẻ ID3
+        pos = lseek(ck->fd, ck->base, SEEK_SET);
+        if (pos < 0) {
+            return -1;
+        }
+    }
+    *off = (audio_cookie_off_t)(pos - ck->base);
+    return 0;
+}
+
+static int audio_skip_close(void *c)
+{
+    audio_skip_cookie_t *ck = (audio_skip_cookie_t *)c;
+    int ret = close(ck->fd);
+    free(ck);
+    return ret;
+}
+
+// Kích thước thẻ ID3v2 ở đầu file (gồm header 10 byte và footer nếu có), 0 nếu không có thẻ.
+static off_t audio_id3v2_size(int fd)
+{
+    uint8_t h[10];
+    if (read(fd, h, sizeof(h)) != (ssize_t)sizeof(h) || memcmp(h, "ID3", 3) != 0 ||
+            h[3] == 0xFF || h[4] == 0xFF || ((h[6] | h[7] | h[8] | h[9]) & 0x80) != 0) {
+        return 0;
+    }
+    off_t size = ((off_t)h[6] << 21) | ((off_t)h[7] << 14) | ((off_t)h[8] << 7) | (off_t)h[9];
+    size += 10;
+    if (h[5] & 0x10) {  // có footer
+        size += 10;
+    }
+    return size;
+}
+
+// Từ vị trí 'from', tìm header frame MP3 mà is_mp3() chấp nhận (0xFF 0xFB / 0xF3 / 0xF2) với
+// bitrate và tần số lấy mẫu hợp lệ; bỏ qua byte đệm giữa thẻ ID3 và frame đầu. -1 nếu không thấy.
+static off_t audio_find_first_frame(int fd, off_t from)
+{
+    uint8_t buf[512];
+    off_t pos = from;
+    while (pos < from + 65536) {
+        if (lseek(fd, pos, SEEK_SET) != pos) {
+            return -1;
+        }
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n < 4) {
+            return -1;
+        }
+        for (ssize_t i = 0; i + 3 < n; ++i) {
+            if (buf[i] == 0xFF && (buf[i + 1] == 0xFB || buf[i + 1] == 0xF3 || buf[i + 1] == 0xF2) &&
+                    (buf[i + 2] & 0xF0) != 0xF0 && (buf[i + 2] & 0xF0) != 0x00 && (buf[i + 2] & 0x0C) != 0x0C) {
+                return pos + i;
+            }
+        }
+        pos += n - 3;
+    }
+    return -1;
+}
+
+static FILE *audio_open_file(const char *path)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return NULL;
+    }
+    off_t skip = audio_id3v2_size(fd);
+    if (skip > 0) {
+        off_t first = audio_find_first_frame(fd, skip);
+        if (first > 0) {
+            skip = first;
+        }
+    }
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (skip <= 0 || end < 0 || skip >= end) {
+        close(fd);
+        return fopen(path, "rb");
+    }
+    audio_skip_cookie_t *ck = calloc(1, sizeof(*ck));
+    if (ck == NULL || lseek(fd, skip, SEEK_SET) != skip) {
+        free(ck);
+        close(fd);
+        return fopen(path, "rb");
+    }
+    ck->fd = fd;
+    ck->base = skip;
+    cookie_io_functions_t io = {
+        .read = audio_skip_read,
+        .write = NULL,
+        .seek = audio_skip_seek,
+        .close = audio_skip_close,
+    };
+    FILE *fp = fopencookie(ck, "rb", io);
+    if (fp == NULL) {
+        audio_skip_close(ck);
+        return fopen(path, "rb");
+    }
+    ESP_LOGI(TAG, "Bỏ qua thẻ ID3v2 %ld byte (ảnh bìa/thông tin bài)", (long)skip);
+    return fp;
+}
+
 esp_err_t product_audio_player_play_index(file_iterator_instance_t *instance, int index)
 {
     ESP_RETURN_ON_FALSE(instance, ESP_FAIL, TAG, "instance is NULL");
@@ -252,7 +391,7 @@ esp_err_t product_audio_player_play_index(file_iterator_instance_t *instance, in
     ESP_RETURN_ON_ERROR(audio_file_path_length(filename, NULL), TAG, "invalid audio file path");
 
     ESP_LOGI(TAG, "opening file '%s'", filename);
-    FILE *fp = fopen(filename, "rb");
+    FILE *fp = audio_open_file(filename);
     ESP_RETURN_ON_FALSE(fp, ESP_FAIL, TAG, "unable to open file");
 
     ESP_LOGI(TAG, "Playing '%s'", filename);
@@ -266,7 +405,7 @@ esp_err_t product_audio_player_play_file(const char *file_path)
 {
     ESP_RETURN_ON_ERROR(audio_file_path_length(file_path, NULL), TAG, "invalid audio file path");
     ESP_LOGI(TAG, "opening file '%s'", file_path);
-    FILE *fp = fopen(file_path, "rb");
+    FILE *fp = audio_open_file(file_path);
     ESP_RETURN_ON_FALSE(fp, ESP_FAIL, TAG, "unable to open file");
 
     ESP_LOGI(TAG, "Playing '%s'", file_path);
