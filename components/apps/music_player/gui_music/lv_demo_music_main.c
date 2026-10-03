@@ -63,6 +63,8 @@ static void play_event_click_cb(lv_event_t * e);
 static void prev_click_event_cb(lv_event_t * e);
 static void next_click_event_cb(lv_event_t * e);
 static void timer_cb(lv_timer_t * t);
+static void audio_event_cb(audio_player_cb_ctx_t *ctx);
+static void spectrum_anim_start(void);
 static void track_load(uint32_t id);
 static void stop_start_anim_timer_cb(lv_timer_t * t);
 static void spectrum_end_cb(lv_anim_t * a);
@@ -83,6 +85,9 @@ static lv_obj_t * album_img_obj;
 static lv_obj_t * slider_obj;
 static uint32_t spectrum_i = 0;
 static uint32_t spectrum_i_pause = 0;
+// HCC: bộ phát báo IDLE khi phát hết file -> timer_cb (luồng LVGL) chuyển bài tiếp theo.
+// Không gọi LVGL trong callback vì callback chạy trên task của audio player.
+static volatile bool s_track_finished = false;
 static uint32_t bar_ofs = 0;
 static uint32_t spectrum_lane_ofs_start = 0;
 static uint32_t bar_rot = 0;
@@ -248,6 +253,8 @@ lv_obj_t * _lv_demo_music_main_create(lv_obj_t * parent, file_iterator_instance_
 
     sec_counter_timer = lv_timer_create(timer_cb, 1000, NULL);
     lv_timer_pause(sec_counter_timer);
+    s_track_finished = false;
+    product_audio_player_register_callback(audio_event_cb, NULL);
 
     /*Animate in the content after the intro time*/
     lv_anim_t a;
@@ -316,6 +323,7 @@ lv_obj_t * _lv_demo_music_main_create(lv_obj_t * parent, file_iterator_instance_
 
 void _lv_demo_music_main_close(void)
 {
+    product_audio_player_register_callback(NULL, NULL);
     if(stop_start_anim_timer) lv_timer_del(stop_start_anim_timer);
     lv_timer_del(sec_counter_timer);
 }
@@ -365,15 +373,7 @@ void _lv_demo_music_resume(void)
     spectrum_i = spectrum_i_pause;
     LV_LOG_USER("resume, [%d-%d]", spectrum_i, spectrum_len);
 
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_values(&a, spectrum_i, spectrum_len - 1);
-    lv_anim_set_exec_cb(&a, spectrum_anim_cb);
-    lv_anim_set_var(&a, spectrum_obj);
-    lv_anim_set_time(&a, ((spectrum_len - spectrum_i) * 1000) / 30);
-    lv_anim_set_playback_time(&a, 0);
-    lv_anim_set_ready_cb(&a, spectrum_end_cb);
-    lv_anim_start(&a);
+    spectrum_anim_start();
 
     lv_timer_resume(sec_counter_timer);
     lv_slider_set_range(slider_obj, 0, _lv_demo_music_get_track_length(track_id));
@@ -385,6 +385,7 @@ void _lv_demo_music_resume(void)
         audio_player_resume();
     } else {
         pause_exit = false;
+        s_track_finished = false;
         LV_LOG_USER("Music is not playing. Start playing.");
         product_audio_player_play_index(file_iterator, track_id);
     }
@@ -1038,15 +1039,52 @@ static void next_click_event_cb(lv_event_t * e)
 static void timer_cb(lv_timer_t * t)
 {
     LV_UNUSED(t);
+    if (s_track_finished) {
+        s_track_finished = false;
+        if (playing) {
+            _lv_demo_music_album_next(true);  // phát hết bài -> bài tiếp theo
+            return;
+        }
+    }
     time_act++;
     lv_label_set_text_fmt(time_obj, "%"LV_PRIu32":%02"LV_PRIu32, time_act / 60, time_act % 60);
+    // Độ dài bài lấy từ bảng cố định của demo, không phải độ dài file thật: nới thanh trượt khi vượt quá.
+    if ((int32_t)time_act > lv_slider_get_max_value(slider_obj)) {
+        lv_slider_set_range(slider_obj, 0, time_act + 60);
+    }
     lv_slider_set_value(slider_obj, time_act, LV_ANIM_ON);
 }
 
+static void audio_event_cb(audio_player_cb_ctx_t *ctx)
+{
+    if (ctx != NULL && ctx->audio_event == AUDIO_PLAYER_CALLBACK_EVENT_IDLE) {
+        s_track_finished = true;
+    }
+}
+
+static void spectrum_anim_start(void)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_values(&a, spectrum_i, spectrum_len - 1);
+    lv_anim_set_exec_cb(&a, spectrum_anim_cb);
+    lv_anim_set_var(&a, spectrum_obj);
+    lv_anim_set_time(&a, ((spectrum_len - spectrum_i) * 1000) / 30);
+    lv_anim_set_playback_time(&a, 0);
+    lv_anim_set_ready_cb(&a, spectrum_end_cb);
+    lv_anim_start(&a);
+}
+
+// HCC: hiệu ứng phổ là dữ liệu mẫu dài cố định (vài chục giây), không gắn với bài thật. Trước đây hết
+// hiệu ứng là chuyển bài -> chỉ nghe được đoạn đầu. Giờ hết thì chạy lại hiệu ứng; chuyển bài do
+// audio_event_cb báo phát xong.
 static void spectrum_end_cb(lv_anim_t * a)
 {
     LV_UNUSED(a);
-    _lv_demo_music_album_next(true);
+    if (playing) {
+        spectrum_i = 0;
+        spectrum_anim_start();
+    }
 }
 
 static void stop_start_anim_timer_cb(lv_timer_t * t)
