@@ -7,6 +7,7 @@
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hcc_cores.h"
@@ -30,7 +31,7 @@ tinyusb_msc_storage_handle_t s_storage = nullptr;
 bool s_tinyusb_installed = false;
 bool s_msc_driver_installed = false;
 bool s_phy_swapped = false;
-char s_phy_note[128] = "";
+char s_phy_note[192] = "";
 char s_last_crash[96] = "";
 
 // Ghi bước đang làm vào NVS: nếu board crash giữa chừng (lúc bật USB DISK không có monitor),
@@ -67,11 +68,18 @@ void setError(const char *msg, esp_err_t err)
 }
 
 // USB-Serial/JTAG còn nhận khung SOF từ máy tính (1 khung/ms) qua cổng Type-C không.
+// Lần thử trước chỉ so số khung (fram_num) thì không đổi dù máy tính đang cắm, nên giờ dò thêm bit
+// SOF trong int_raw. Tick hook của ESP-IDF (usb_serial_jtag_connection_monitor) xoá bit này mỗi tick,
+// vì vậy phải đọc liên tục (busy-poll) trong khoảng 20 ms chứ không đọc một lần.
 bool usjSeesHost()
 {
-    const uint32_t a = (USB_SERIAL_JTAG.fram_num.val & 0x7FF);
-    vTaskDelay(pdMS_TO_TICKS(8));
-    return (USB_SERIAL_JTAG.fram_num.val & 0x7FF) != a;
+    const uint32_t f0 = USB_SERIAL_JTAG.fram_num.val & 0x7FF;
+    const int64_t end = esp_timer_get_time() + 20000;
+    while (esp_timer_get_time() < end) {
+        if ((USB_SERIAL_JTAG.int_raw.val & (1u << 1)) != 0) return true;  // USB_SERIAL_JTAG_INTR_SOF
+        if ((USB_SERIAL_JTAG.fram_num.val & 0x7FF) != f0) return true;
+    }
+    return false;
 }
 
 void setPhyBits(int sw_hw, int sel)
@@ -102,8 +110,9 @@ bool swapPhy(bool otg_on_type_c)
         // Chưa cắm máy tính (hoặc không có SOF): không kiểm chứng được, dùng cách theo chú thích.
         setPhyBits(1, want);
         s_phy_swapped = true;
-        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=1 sel=%d (chưa kiểm chứng: chưa cắm máy tính)",
-                 efuse_sel ? 1 : 0, want);
+        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=1 sel=%d (chưa kiểm chứng: không thấy SOF, int_raw=%08lx frame=%lu)",
+                 efuse_sel ? 1 : 0, want, (unsigned long)USB_SERIAL_JTAG.int_raw.val,
+                 (unsigned long)(USB_SERIAL_JTAG.fram_num.val & 0x7FF));
         ESP_LOGW(TAG, "PHY: %s", s_phy_note);
         return true;
     }
