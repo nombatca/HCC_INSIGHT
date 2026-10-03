@@ -12,6 +12,7 @@
 #include "hcc_cores.h"
 #include "nvs.h"
 #include "soc/lp_system_struct.h"
+#include "soc/usb_serial_jtag_struct.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_msc.h"
@@ -29,7 +30,7 @@ tinyusb_msc_storage_handle_t s_storage = nullptr;
 bool s_tinyusb_installed = false;
 bool s_msc_driver_installed = false;
 bool s_phy_swapped = false;
-char s_phy_note[64] = "";
+char s_phy_note[128] = "";
 char s_last_crash[96] = "";
 
 // Ghi bước đang làm vào NVS: nếu board crash giữa chừng (lúc bật USB DISK không có monitor),
@@ -65,26 +66,64 @@ void setError(const char *msg, esp_err_t err)
     ESP_LOGE(TAG, "%s", s_error);
 }
 
-// Đưa OTG Full-Speed ra đúng PHY mà USB-Serial/JTAG đang dùng (cổng Type-C dùng để flash).
-// Mặc định (eFuse USB_PHY_SEL = 0): USJ ở PHY0, OTG FS ở PHY1. eFuse = 1 thì ngược lại.
-// LP_SYS.usb_ctrl: sw_hw_usb_phy_sel = 1 cho phần mềm chọn; sw_usb_phy_sel = 0: USJ->PHY0, OTG->PHY1;
-// = 1: USJ->PHY1, OTG->PHY0. Ghi thẳng thanh ghi: usb_wrap_ll_phy_select() của ESP-IDF 5.5 thiếu
-// 'break' (case 0 rơi xuống case 1) nên luôn trả về ánh xạ mặc định.
-void swapPhy(bool otg_on_type_c)
+// USB-Serial/JTAG còn nhận khung SOF từ máy tính (1 khung/ms) qua cổng Type-C không.
+bool usjSeesHost()
 {
-    if (otg_on_type_c) {
-        const bool efuse_sel = esp_efuse_read_field_bit(ESP_EFUSE_USB_PHY_SEL);
-        const int usj_phy = efuse_sel ? 1 : 0;     // PHY của cổng Type-C (USJ lúc khởi động)
-        LP_SYS.usb_ctrl.sw_usb_phy_sel = usj_phy == 0 ? 1 : 0;  // OTG FS -> PHY đó
-        LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 1;
-        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse USB_PHY_SEL=%d, OTG FS -> PHY%d", efuse_sel ? 1 : 0, usj_phy);
-    } else {
-        LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 0;  // trả lại cho eFuse quyết định như lúc khởi động
-        LP_SYS.usb_ctrl.sw_usb_phy_sel = 0;
+    const uint32_t a = USB_SERIAL_JTAG.fram_num.sof_frame_index;
+    vTaskDelay(pdMS_TO_TICKS(8));
+    return USB_SERIAL_JTAG.fram_num.sof_frame_index != a;
+}
+
+void setPhyBits(int sw_hw, int sel)
+{
+    LP_SYS.usb_ctrl.sw_usb_phy_sel = sel;
+    LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = sw_hw;
+    vTaskDelay(pdMS_TO_TICKS(30));
+}
+
+// Đưa OTG Full-Speed ra PHY của cổng Type-C (PHY mà USB-Serial/JTAG đang dùng).
+// LP_SYS.usb_ctrl: theo chú thích ESP-IDF, sw_hw_usb_phy_sel = 1 cho phần mềm chọn và
+// sw_usb_phy_sel = 1 đưa USJ->PHY1, OTG->PHY0. Thử trên board: chỉ ghi như vậy thì Serial/JTAG
+// vẫn chạy trên Type-C (monitor không ngắt) -> ý nghĩa bit chưa chắc đúng như chú thích. Vì vậy thử
+// lần lượt các tổ hợp và KIỂM CHỨNG: Serial/JTAG hết thấy khung SOF của máy tính = Type-C đã nhả.
+// (usb_wrap_ll_phy_select() của ESP-IDF 5.5 còn thiếu 'break', không dùng.)
+bool swapPhy(bool otg_on_type_c)
+{
+    if (!otg_on_type_c) {
+        setPhyBits(0, 0);  // mặc định lúc khởi động
+        s_phy_swapped = false;
+        ESP_LOGI(TAG, "PHY: mặc định (Type-C = Serial/JTAG)");
+        return true;
     }
-    s_phy_swapped = otg_on_type_c;
-    ESP_LOGI(TAG, "PHY: %s (%s)", otg_on_type_c ? "OTG FS -> Type-C (USB DISK)" : "mặc định (Type-C = Serial/JTAG)",
-             s_phy_note);
+    const bool efuse_sel = esp_efuse_read_field_bit(ESP_EFUSE_USB_PHY_SEL);
+    const int want = efuse_sel ? 0 : 1;  // sw_usb_phy_sel theo chú thích ESP-IDF
+    const bool host_seen = usjSeesHost();
+    if (!host_seen) {
+        // Chưa cắm máy tính (hoặc không có SOF): không kiểm chứng được, dùng cách theo chú thích.
+        setPhyBits(1, want);
+        s_phy_swapped = true;
+        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=1 sel=%d (chưa kiểm chứng: chưa cắm máy tính)",
+                 efuse_sel ? 1 : 0, want);
+        ESP_LOGW(TAG, "PHY: %s", s_phy_note);
+        return true;
+    }
+    const int combos[4][2] = {{1, want}, {0, want}, {0, !want}, {1, !want}};
+    for (const auto &c : combos) {
+        setPhyBits(c[0], c[1]);
+        const bool still = usjSeesHost();
+        ESP_LOGI(TAG, "PHY thử sw_hw=%d sel=%d -> Serial/JTAG %s Type-C", c[0], c[1], still ? "VẪN ở" : "đã nhả");
+        if (!still) {
+            s_phy_swapped = true;
+            snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d, sw_hw=%d sel=%d (Type-C đã chuyển)",
+                     efuse_sel ? 1 : 0, c[0], c[1]);
+            return true;
+        }
+    }
+    setPhyBits(0, 0);
+    s_phy_swapped = false;
+    snprintf(s_phy_note, sizeof(s_phy_note), "eFuse=%d: không tổ hợp nào chuyển được Type-C", efuse_sel ? 1 : 0);
+    ESP_LOGE(TAG, "PHY: %s", s_phy_note);
+    return false;
 }
 
 void onUsbEvent(tinyusb_event_t *event, void *)
@@ -189,7 +228,12 @@ void doStart()
 
     breadcrumb(4);
     // 4) Đưa OTG Full-Speed ra cổng Type-C rồi bật TinyUSB.
-    swapPhy(true);
+    if (!swapPhy(true)) {
+        snprintf(s_error, sizeof(s_error), "Không chuyển được cổng Type-C sang USB (xem dòng PHY)");
+        teardown();
+        s_state = State::Error;
+        return;
+    }
     tinyusb_config_t tcfg = TINYUSB_DEFAULT_CONFIG(onUsbEvent);
     tcfg.port = TINYUSB_PORT_FULL_SPEED_0;
     tcfg.task.xCoreID = HCC_CORE_WORK;

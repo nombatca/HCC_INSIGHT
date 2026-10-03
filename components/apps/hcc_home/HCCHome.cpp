@@ -5673,7 +5673,7 @@ void HCCHome::refreshUsbDisk()
     if (st == State::Off && HCCUsbDisk::lastCrash()[0] != '\0') {
         snprintf(info, sizeof(info), "%s", HCCUsbDisk::lastCrash());
     } else if (st == State::Error) {
-        snprintf(info, sizeof(info), "%s", HCCUsbDisk::lastError());
+        snprintf(info, sizeof(info), "%s\n%s", HCCUsbDisk::lastError(), HCCUsbDisk::phyNote());
     } else if (HCCUsbDisk::capacityMb() > 0) {
         snprintf(info, sizeof(info), "Thẻ SD: %.1f GB   |   %s%s", HCCUsbDisk::capacityMb() / 1024.0,
                  HCCUsbDisk::phyNote(),
