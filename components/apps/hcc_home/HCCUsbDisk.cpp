@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,6 +28,7 @@ tinyusb_msc_storage_handle_t s_storage = nullptr;
 bool s_tinyusb_installed = false;
 bool s_msc_driver_installed = false;
 bool s_phy_swapped = false;
+char s_phy_note[64] = "";
 
 void setError(const char *msg, esp_err_t err)
 {
@@ -33,18 +36,26 @@ void setError(const char *msg, esp_err_t err)
     ESP_LOGE(TAG, "%s", s_error);
 }
 
-// true: OTG Full-Speed -> PHY0 (cổng Type-C), USB-Serial/JTAG -> PHY1.
-// Ghi thẳng thanh ghi: usb_wrap_ll_phy_select() của ESP-IDF 5.5 thiếu 'break' (case 0 rơi xuống
-// case 1) nên luôn trả về ánh xạ mặc định.
+// Đưa OTG Full-Speed ra đúng PHY mà USB-Serial/JTAG đang dùng (cổng Type-C dùng để flash).
+// Mặc định (eFuse USB_PHY_SEL = 0): USJ ở PHY0, OTG FS ở PHY1. eFuse = 1 thì ngược lại.
+// LP_SYS.usb_ctrl: sw_hw_usb_phy_sel = 1 cho phần mềm chọn; sw_usb_phy_sel = 0: USJ->PHY0, OTG->PHY1;
+// = 1: USJ->PHY1, OTG->PHY0. Ghi thẳng thanh ghi: usb_wrap_ll_phy_select() của ESP-IDF 5.5 thiếu
+// 'break' (case 0 rơi xuống case 1) nên luôn trả về ánh xạ mặc định.
 void swapPhy(bool otg_on_type_c)
 {
-    LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 1;
-    LP_SYS.usb_ctrl.sw_usb_phy_sel = otg_on_type_c ? 1 : 0;
-    if (!otg_on_type_c) {
+    if (otg_on_type_c) {
+        const bool efuse_sel = esp_efuse_read_field_bit(ESP_EFUSE_USB_PHY_SEL);
+        const int usj_phy = efuse_sel ? 1 : 0;     // PHY của cổng Type-C (USJ lúc khởi động)
+        LP_SYS.usb_ctrl.sw_usb_phy_sel = usj_phy == 0 ? 1 : 0;  // OTG FS -> PHY đó
+        LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 1;
+        snprintf(s_phy_note, sizeof(s_phy_note), "eFuse USB_PHY_SEL=%d, OTG FS -> PHY%d", efuse_sel ? 1 : 0, usj_phy);
+    } else {
         LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 0;  // trả lại cho eFuse quyết định như lúc khởi động
+        LP_SYS.usb_ctrl.sw_usb_phy_sel = 0;
     }
     s_phy_swapped = otg_on_type_c;
-    ESP_LOGI(TAG, "PHY: OTG FS %s", otg_on_type_c ? "-> Type-C (USB DISK)" : "-> mặc định (Type-C = Serial/JTAG)");
+    ESP_LOGI(TAG, "PHY: %s (%s)", otg_on_type_c ? "OTG FS -> Type-C (USB DISK)" : "mặc định (Type-C = Serial/JTAG)",
+             s_phy_note);
 }
 
 void onUsbEvent(tinyusb_event_t *event, void *)
@@ -227,6 +238,11 @@ const char *lastError()
 uint32_t capacityMb()
 {
     return s_capacity_mb;
+}
+
+const char *phyNote()
+{
+    return s_phy_note;
 }
 
 }  // namespace HCCUsbDisk

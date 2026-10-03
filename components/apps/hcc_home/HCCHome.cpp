@@ -5669,11 +5669,13 @@ void HCCHome::refreshUsbDisk()
     lv_label_set_text(_ud_state, HCCUsbDisk::stateText());
     lv_obj_set_style_text_color(_ud_state, lv_color_hex(color), 0);
 
-    char info[160] = "";
+    char info[256] = "";
     if (st == State::Error) {
         snprintf(info, sizeof(info), "%s", HCCUsbDisk::lastError());
     } else if (HCCUsbDisk::capacityMb() > 0) {
-        snprintf(info, sizeof(info), "Thẻ SD: %.1f GB", HCCUsbDisk::capacityMb() / 1024.0);
+        snprintf(info, sizeof(info), "Thẻ SD: %.1f GB   |   %s%s", HCCUsbDisk::capacityMb() / 1024.0,
+                 HCCUsbDisk::phyNote(),
+                 st == State::Ready ? "\nMáy tính chưa nhận: kiểm tra cáp ở cổng nạp chương trình (Type-C)." : "");
     }
     lv_label_set_text(_ud_info, info);
 

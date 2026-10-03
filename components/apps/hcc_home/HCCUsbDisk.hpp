@@ -31,5 +31,7 @@ const char *stateText();
 const char *lastError();
 // Dung lượng thẻ (MB) khi đang bật, 0 nếu chưa biết.
 uint32_t capacityMb();
+// Thông tin chẩn đoán PHY (eFuse, PHY được chọn) - hiện trên màn hình vì lúc bật không có monitor.
+const char *phyNote();
 
 }  // namespace HCCUsbDisk
