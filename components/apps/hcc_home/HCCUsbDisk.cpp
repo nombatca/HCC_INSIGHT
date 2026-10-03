@@ -69,9 +69,9 @@ void setError(const char *msg, esp_err_t err)
 // USB-Serial/JTAG còn nhận khung SOF từ máy tính (1 khung/ms) qua cổng Type-C không.
 bool usjSeesHost()
 {
-    const uint32_t a = USB_SERIAL_JTAG.fram_num.sof_frame_index;
+    const uint32_t a = (USB_SERIAL_JTAG.fram_num.val & 0x7FF);
     vTaskDelay(pdMS_TO_TICKS(8));
-    return USB_SERIAL_JTAG.fram_num.sof_frame_index != a;
+    return (USB_SERIAL_JTAG.fram_num.val & 0x7FF) != a;
 }
 
 void setPhyBits(int sw_hw, int sel)
