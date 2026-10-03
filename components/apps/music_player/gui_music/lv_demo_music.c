@@ -98,7 +98,7 @@ static lv_color_t original_screen_bg_color;
 
 static uint32_t active_track_cnt = 5;
 static file_iterator_instance_t *_file_iterator = NULL;
-static const char * artist_list_name = "Unknown Artist";
+static const char * artist_list_name = "Unknown Artist";  /* thay bằng nguồn nhạc khi mở app */
 static const char * genre_list_name = "Unknown Genre";
 static const uint32_t time_list_num = 1 * 60;
 
@@ -149,10 +149,9 @@ const char * _lv_demo_music_get_title(uint32_t track_id)
         return NULL;
     }
 
+    /* Chỉ hiện file nhạc thật; các bài mẫu của demo LVGL (title_list) không còn liệt kê. */
     if (track_id < active_track_cnt) {
         return file_iterator_get_name_from_index(_file_iterator, track_id);
-    } else if (track_id < active_track_cnt + sizeof(title_list) / sizeof(title_list[0])) {
-        return title_list[track_id - active_track_cnt];
     }
 
     return NULL;
@@ -201,6 +200,16 @@ uint32_t _lv_demo_music_get_track_length(uint32_t track_id)
     }
 
     return time_list_num;
+}
+
+uint32_t _lv_demo_music_get_track_count(void)
+{
+    return active_track_cnt;
+}
+
+void _lv_demo_music_set_source_label(const char *label)
+{
+    artist_list_name = (label != NULL) ? label : "Unknown Artist";
 }
 
 /**********************

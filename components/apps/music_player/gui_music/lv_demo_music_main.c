@@ -326,12 +326,13 @@ void _lv_demo_music_album_next(bool next)
 
     if (next) {
         id++;
-        if (id >= ACTIVE_TRACK_CNT) {
+        if (id >= _lv_demo_music_get_track_count()) {
             id = 0;
     }
     } else {
         if (id == 0) {
-            id = ACTIVE_TRACK_CNT - 1;
+            const uint32_t cnt = _lv_demo_music_get_track_count();
+            id = cnt > 0 ? cnt - 1 : 0;
         } else {
             id--;
         }
@@ -715,7 +716,8 @@ static void track_load(uint32_t id)
 
     if(id == track_id) return;
     bool next = false;
-    if((track_id + 1) % ACTIVE_TRACK_CNT == id) next = true;
+    const uint32_t cnt = _lv_demo_music_get_track_count();
+    if(cnt > 0 && (track_id + 1) % cnt == id) next = true;
 
     _lv_demo_music_list_btn_check(track_id, false);
 

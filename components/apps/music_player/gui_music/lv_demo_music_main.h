@@ -20,7 +20,7 @@ extern "C" {
 /*********************
  *      DEFINES
  *********************/
-#define ACTIVE_TRACK_CNT    5
+/* Số bài: _lv_demo_music_get_track_count() (theo thư mục nhạc thật, không cố định 5). */
 
 /**********************
  *      TYPEDEFS
