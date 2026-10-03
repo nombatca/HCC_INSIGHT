@@ -22,6 +22,11 @@ enum class State : uint8_t {
     Error,      // xem lastError()
 };
 
+// Gọi một lần lúc khởi động (sau NVS): trả PHY USB về mặc định, đọc dấu vết lần crash trước.
+void bootInit();
+// "" hoặc mô tả bước đang làm khi board dừng ở lần chạy trước.
+const char *lastCrash();
+
 // Bật / tắt (bất đồng bộ). Trả false nếu đang bận.
 bool requestStart();
 bool requestStop();

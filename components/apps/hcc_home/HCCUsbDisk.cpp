@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hcc_cores.h"
+#include "nvs.h"
 #include "soc/lp_system_struct.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
@@ -29,6 +30,34 @@ bool s_tinyusb_installed = false;
 bool s_msc_driver_installed = false;
 bool s_phy_swapped = false;
 char s_phy_note[64] = "";
+char s_last_crash[96] = "";
+
+// Ghi bước đang làm vào NVS: nếu board crash giữa chừng (lúc bật USB DISK không có monitor),
+// lần khởi động sau biết hỏng ở bước nào. 0 = xong / không dở dang.
+void breadcrumb(uint8_t step)
+{
+    nvs_handle_t h;
+    if (nvs_open("hcc_udisk", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "step", step);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+const char *stepName(uint8_t step)
+{
+    switch (step) {
+    case 1: return "tháo thẻ khỏi board";
+    case 2: return "khởi tạo thẻ";
+    case 3: return "cài MSC / tạo ổ đĩa";
+    case 4: return "bật TinyUSB";
+    case 11: return "trả PHY về Type-C";
+    case 12: return "tắt TinyUSB";
+    case 13: return "xoá ổ đĩa MSC";
+    case 14: return "giải phóng thẻ";
+    case 15: return "gắn lại thẻ cho board";
+    default: return "?";
+    }
+}
 
 void setError(const char *msg, esp_err_t err)
 {
@@ -72,10 +101,17 @@ void onUsbEvent(tinyusb_event_t *event, void *)
 // Tháo hết những gì đã dựng (dùng cho cả stop và khi start lỗi giữa chừng), rồi trả thẻ cho board.
 void teardown()
 {
+    // Trả cổng Type-C cho USB-Serial/JTAG trước tiên: nếu bước sau crash thì monitor vẫn đọc được log.
+    breadcrumb(11);
+    if (s_phy_swapped) {
+        swapPhy(false);
+    }
+    breadcrumb(12);
     if (s_tinyusb_installed) {
         tinyusb_driver_uninstall();
         s_tinyusb_installed = false;
     }
+    breadcrumb(13);
     if (s_storage != nullptr) {
         tinyusb_msc_delete_storage(s_storage);
         s_storage = nullptr;
@@ -84,24 +120,25 @@ void teardown()
         tinyusb_msc_uninstall_driver();
         s_msc_driver_installed = false;
     }
-    if (s_phy_swapped) {
-        swapPhy(false);
-    }
+    breadcrumb(14);
     if (s_card != nullptr) {
         bsp_sdcard_raw_deinit(s_card);
         s_card = nullptr;
     }
     s_capacity_mb = 0;
     // Board dùng lại thẻ SD ở /sdcard (panic, case, nhạc).
+    breadcrumb(15);
     const esp_err_t m = bsp_sdcard_mount();
     if (m != ESP_OK && m != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Gắn lại thẻ SD cho board thất bại: %s", esp_err_to_name(m));
     }
+    breadcrumb(0);
 }
 
 void doStart()
 {
     s_error[0] = '\0';
+    breadcrumb(1);
     // 1) Board nhả thẻ: tháo FAT ở /sdcard (nếu đang gắn). Không có thẻ thì raw_init báo lỗi bên dưới.
     if (bsp_sdcard != nullptr) {
         const esp_err_t u = bsp_sdcard_unmount();
@@ -111,6 +148,7 @@ void doStart()
             return;
         }
     }
+    breadcrumb(2);
     // 2) Khởi tạo thẻ "thô" (không FAT): máy tính sẽ quản lý hệ thống file.
     esp_err_t err = bsp_sdcard_raw_init(&s_card);
     if (err != ESP_OK) {
@@ -122,6 +160,7 @@ void doStart()
     }
     s_capacity_mb = (uint32_t)(((uint64_t)s_card->csd.capacity * s_card->csd.sector_size) / (1024 * 1024));
 
+    breadcrumb(3);
     // 3) Ổ đĩa MSC trên thẻ, luôn thuộc máy tính; không tự gắn lại cho app khi rút cáp.
     tinyusb_msc_driver_config_t drv = {};
     drv.user_flags.auto_mount_off = 1;
@@ -148,6 +187,7 @@ void doStart()
         return;
     }
 
+    breadcrumb(4);
     // 4) Đưa OTG Full-Speed ra cổng Type-C rồi bật TinyUSB.
     swapPhy(true);
     tinyusb_config_t tcfg = TINYUSB_DEFAULT_CONFIG(onUsbEvent);
@@ -161,6 +201,7 @@ void doStart()
         return;
     }
     s_tinyusb_installed = true;
+    breadcrumb(0);
     s_state = State::Ready;
     ESP_LOGI(TAG, "USB DISK bật: thẻ %u MB", (unsigned)s_capacity_mb);
 }
@@ -181,12 +222,36 @@ void worker(void *arg)
 bool launch(bool start)
 {
     // Ngăn xếp đủ cho sdmmc_card_init + cài TinyUSB.
-    return xTaskCreatePinnedToCore(worker, start ? "hcc_usbdisk_on" : "hcc_usbdisk_off", 6144,
+    return xTaskCreatePinnedToCore(worker, start ? "hcc_usbdisk_on" : "hcc_usbdisk_off", 10240,
                                    start ? reinterpret_cast<void *>(1) : nullptr, 5, nullptr,
                                    HCC_CORE_WORK) == pdPASS;
 }
 
 }  // namespace
+
+void bootInit()
+{
+    // LP_SYS giữ nguyên qua crash / reset mềm: nếu lần trước dừng giữa lúc USB DISK bật, cổng Type-C
+    // vẫn bị đưa sang OTG -> mất monitor/flash. Luôn trả PHY về mặc định khi khởi động.
+    LP_SYS.usb_ctrl.sw_hw_usb_phy_sel = 0;
+    LP_SYS.usb_ctrl.sw_usb_phy_sel = 0;
+    nvs_handle_t h;
+    uint8_t step = 0;
+    if (nvs_open("hcc_udisk", NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_get_u8(h, "step", &step) == ESP_OK && step != 0) {
+            snprintf(s_last_crash, sizeof(s_last_crash), "Lần trước board dừng ở bước: %s (%u)", stepName(step), step);
+            ESP_LOGW(TAG, "%s", s_last_crash);
+            nvs_set_u8(h, "step", 0);
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+}
+
+const char *lastCrash()
+{
+    return s_last_crash;
+}
 
 bool requestStart()
 {

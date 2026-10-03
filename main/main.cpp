@@ -17,6 +17,7 @@
 #include "apps.h"
 #include "hcc_cores.h"
 #include "setting/hcc_clock.h"
+#include "hcc_home/HCCUsbDisk.hpp"
 
 static const char *TAG = "main";
 
@@ -62,6 +63,8 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(err);
     // Giờ từ pin RTC (ML1220): đặt múi giờ VN + log chẩn đoán trước mọi việc dùng time().
     hcc_clock_init();
+    // USB DISK: trả cổng Type-C về USB-Serial/JTAG (LP_SYS không bị xoá khi crash/reset mềm).
+    HCCUsbDisk::bootInit();
 
     ESP_ERROR_CHECK(bsp_spiffs_mount());
     ESP_LOGI(TAG, "SPIFFS mount successfully");
