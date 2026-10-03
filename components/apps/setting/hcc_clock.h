@@ -21,7 +21,7 @@ typedef enum {
 
 // Gọi sớm trong app_main, sau nvs_flash_init(): đặt múi giờ Việt Nam và ghi log chẩn đoán.
 void hcc_clock_init(void);
-// Gọi từ callback SNTP với giờ vừa nhận, TRƯỚC settimeofday(): đo độ trôi của giờ RTC.
+// Gọi từ callback SNTP với giờ vừa nhận: đo độ trôi của giờ RTC (so với giờ lúc khởi động).
 void hcc_clock_on_sntp_sync(int64_t sntp_unix);
 
 bool hcc_clock_is_valid(void);

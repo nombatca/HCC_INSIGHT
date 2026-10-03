@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_rtc_time.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs.h"
 
 static const char *TAG = "hcc_clock";
@@ -16,6 +17,10 @@ static const char *TAG = "hcc_clock";
 #define NVS_NS "hcc_clock"
 
 static hcc_clock_source_t s_source = HCC_CLOCK_NONE;
+// Giờ lúc khởi động (nếu còn từ RTC) + mốc esp_timer tương ứng: để đo độ trôi khi SNTP về.
+// Không đo trong callback bằng time(): ESP-IDF đã settimeofday() trước khi gọi callback.
+static time_t s_boot_unix = 0;
+static int64_t s_boot_timer_us = 0;
 
 static const char *reset_name(esp_reset_reason_t r)
 {
@@ -63,6 +68,8 @@ void hcc_clock_init(void)
     const time_t now = time(NULL);
     const esp_reset_reason_t reason = esp_reset_reason();
     s_source = now >= HCC_VALID_AFTER ? HCC_CLOCK_RTC : HCC_CLOCK_NONE;
+    s_boot_unix = now;
+    s_boot_timer_us = esp_timer_get_time();
 
     char buf[32] = "-";
     if (s_source != HCC_CLOCK_NONE) {
@@ -82,13 +89,14 @@ void hcc_clock_init(void)
 
 void hcc_clock_on_sntp_sync(int64_t sntp_unix)
 {
-    const time_t before = time(NULL);
-    if (before >= HCC_VALID_AFTER) {
-        // Độ trôi thật của giờ đang chạy (giờ RTC giữ bằng pin hoặc lần đồng bộ trước) so với NTP.
-        const int64_t drift = (int64_t)before - sntp_unix;
-        ESP_LOGI(TAG, "[HCC TIME DIAG] SNTP sync: giờ trước đó lệch %+lld s (nguồn trước=%s)",
-                 (long long)drift, hcc_clock_source_name());
+    if (s_source == HCC_CLOCK_RTC) {
+        // Giờ RTC (pin) dự kiến tại lúc này = giờ lúc khởi động + thời gian đã chạy.
+        const int64_t expected = (int64_t)s_boot_unix + (esp_timer_get_time() - s_boot_timer_us) / 1000000;
+        const int64_t drift = expected - sntp_unix;
+        ESP_LOGI(TAG, "[HCC TIME DIAG] SNTP sync: giờ giữ bằng pin RTC lệch %+lld s so với NTP", (long long)drift);
         nvs_put_i64("last_drift", drift);
+    } else if (s_source == HCC_CLOCK_NONE) {
+        ESP_LOGI(TAG, "[HCC TIME DIAG] SNTP sync: trước đó chưa có giờ (pin RTC không giữ được qua lần khởi động này)");
     }
     s_source = HCC_CLOCK_SNTP;
     nvs_put_i64("last_sync", sntp_unix);

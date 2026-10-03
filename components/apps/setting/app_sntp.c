@@ -77,7 +77,7 @@ static void time_sync_notification_cb(struct timeval *tv)
 {
     ESP_LOGI(TAG, "[HCC TIME DIAG] SNTP sync callback unix=%lld", (long long)time(NULL));
     ESP_LOGI(TAG, "Notification of a time synchronization event, sec=%lu", tv->tv_sec);
-    hcc_clock_on_sntp_sync((int64_t)tv->tv_sec);  // đo độ trôi trước khi ghi đè giờ
+    hcc_clock_on_sntp_sync((int64_t)tv->tv_sec);  // đo độ trôi của giờ giữ bằng pin RTC
     const int result = settimeofday(tv, NULL);
     ESP_LOGI(TAG, "[HCC TIME DIAG] settimeofday result=%d unix=%lld", result, (long long)time(NULL));
 }
