@@ -17,6 +17,7 @@
 #include "esp_sntp.h"
 #include "lwip/dns.h"
 #include "lwip/tcpip.h"
+#include "hcc_clock.h"
 
 #define TIMEZONE        "CST-8"
 #define SERVER_NAME_0   "216.239.35.0"  // Google Public NTP; numeric fallback avoids broken DNS
@@ -76,6 +77,7 @@ static void time_sync_notification_cb(struct timeval *tv)
 {
     ESP_LOGI(TAG, "[HCC TIME DIAG] SNTP sync callback unix=%lld", (long long)time(NULL));
     ESP_LOGI(TAG, "Notification of a time synchronization event, sec=%lu", tv->tv_sec);
+    hcc_clock_on_sntp_sync((int64_t)tv->tv_sec);  // đo độ trôi trước khi ghi đè giờ
     const int result = settimeofday(tv, NULL);
     ESP_LOGI(TAG, "[HCC TIME DIAG] settimeofday result=%d unix=%lld", result, (long long)time(NULL));
 }
@@ -104,6 +106,13 @@ void app_sntp_init(void)
         // update 'now' variable with current time
         time(&now);
     }
+#ifndef CONFIG_SNTP_TIME_SYNC_METHOD_SMOOTH
+    else {
+        // Giờ còn từ pin RTC: vẫn đồng bộ (không chờ) để chỉnh độ trôi của đồng hồ RTC.
+        ESP_LOGI(TAG, "[HCC TIME DIAG] time already set (RTC), starting SNTP to correct drift");
+        initialize_sntp();
+    }
+#endif
 #ifdef CONFIG_SNTP_TIME_SYNC_METHOD_SMOOTH
     else {
         // add 500 ms error to the current system time.

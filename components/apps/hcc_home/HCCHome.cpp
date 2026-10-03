@@ -1,5 +1,6 @@
 #include "HCCHome.hpp"
 #include "hcc_cores.h"
+#include "setting/hcc_clock.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "driver/i2c_master.h"
 #include <stdio.h>
@@ -4997,8 +4998,14 @@ bool HCCHome::submitRepairCase(bool verified)
     struct tm tmv;
     localtime_r(&now, &tmv);
     char ts[32], idts[32];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
-    strftime(idts, sizeof(idts), "%Y%m%d_%H%M%S", &tmv);
+    if (hcc_clock_is_valid()) {
+        strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
+        strftime(idts, sizeof(idts), "%Y%m%d_%H%M%S", &tmv);
+    } else {
+        // Chưa có giờ (mất nguồn, pin RTC không giữ, chưa có Wi-Fi): không ghi ngày giả kiểu 1970.
+        ts[0] = '\0';
+        snprintf(idts, sizeof(idts), "nosync_%lld", (long long)now);
+    }
     c.date = ts;
     std::string mid;
     for (char ch : c.model) mid += isalnum((unsigned char)ch) ? (char)tolower((unsigned char)ch) : '_';
@@ -5013,7 +5020,12 @@ bool HCCHome::submitRepairCase(bool verified)
         return false;
     }
     ensureKbLoaded(true);
-    setStatus(verified ? "Đã lưu VERIFIED case" : "Đã lưu REPAIR_CONFIRMED case");
+    if (c.date.empty()) {
+        setStatus(verified ? "Đã lưu VERIFIED case (chưa có giờ - không ghi ngày)"
+                           : "Đã lưu REPAIR_CONFIRMED case (chưa có giờ - không ghi ngày)");
+    } else {
+        setStatus(verified ? "Đã lưu VERIFIED case" : "Đã lưu REPAIR_CONFIRMED case");
+    }
     return true;
 }
 

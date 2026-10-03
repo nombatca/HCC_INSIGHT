@@ -16,6 +16,7 @@
 #include "esp_brookesia.hpp"
 #include "apps.h"
 #include "hcc_cores.h"
+#include "setting/hcc_clock.h"
 
 static const char *TAG = "main";
 
@@ -59,6 +60,8 @@ extern "C" void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    // Giờ từ pin RTC (ML1220): đặt múi giờ VN + log chẩn đoán trước mọi việc dùng time().
+    hcc_clock_init();
 
     ESP_ERROR_CHECK(bsp_spiffs_mount());
     ESP_LOGI(TAG, "SPIFFS mount successfully");
