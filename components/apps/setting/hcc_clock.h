@@ -17,10 +17,18 @@ typedef enum {
     HCC_CLOCK_NONE = 0,  // chưa có giờ (sau mất nguồn, chưa có Wi-Fi)
     HCC_CLOCK_RTC,       // giờ còn sau khởi động (pin RTC / reset mềm), chưa đồng bộ lại
     HCC_CLOCK_SNTP,      // đã đồng bộ qua Wi-Fi trong lần chạy này
+    HCC_CLOCK_DS3231,    // lấy từ module RTC rời DS3231 (I2C 0x68) lúc khởi động
 } hcc_clock_source_t;
 
 // Gọi sớm trong app_main, sau nvs_flash_init(): đặt múi giờ Việt Nam và ghi log chẩn đoán.
 void hcc_clock_init(void);
+// Module RTC rời DS3231 (pin riêng) trên bus I2C của board (GPIO7 SDA / GPIO8 SCL).
+// Gọi sau khi bus I2C đã sẵn sàng (sau bsp_display_start): nếu có DS3231 hợp lệ và hệ thống
+// chưa có giờ thì đặt giờ từ DS3231. Không có module thì chỉ ghi log, không làm gì khác.
+void hcc_clock_ext_rtc_init(void);
+// True khi đã nhận diện được DS3231 lúc khởi động.
+bool hcc_clock_ext_rtc_present(void);
+
 // Gọi từ callback SNTP với giờ vừa nhận: đo độ trôi của giờ RTC (so với giờ lúc khởi động).
 void hcc_clock_on_sntp_sync(int64_t sntp_unix);
 

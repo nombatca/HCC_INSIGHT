@@ -92,6 +92,9 @@ extern "C" void app_main(void)
         return;
     }
 
+    // Bus I2C đã khởi tạo (cảm ứng): đọc giờ từ module DS3231 nếu có gắn.
+    hcc_clock_ext_rtc_init();
+
     ESP_ERROR_CHECK(bsp_display_lock(-1) ? ESP_OK : ESP_ERR_TIMEOUT);
 
     ESP_Brookesia_Phone *phone = new ESP_Brookesia_Phone();
