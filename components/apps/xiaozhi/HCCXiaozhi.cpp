@@ -806,8 +806,12 @@ void micTask(void *arg)
     cfg.bits_per_sample = 16;
     cfg.bitrate = ESP_OPUS_BITRATE_AUTO;
     cfg.frame_duration = ESP_OPUS_ENC_FRAME_DURATION_60_MS;
-    cfg.application_mode = ESP_OPUS_ENC_APPLICATION_VOIP;
-    cfg.complexity = 3;
+    // Giống xiaozhi-esp32 (audio_service.h): complexity 0. Complexity >= 2 bật bộ lượng tử hoá
+    // "delayed decision" của SILK (NSQ_del_dec) dùng rất nhiều stack -> tràn stack 24 KB (đã crash).
+    cfg.application_mode = ESP_OPUS_ENC_APPLICATION_AUDIO;
+    cfg.complexity = 0;
+    cfg.enable_dtx = true;
+    cfg.enable_vbr = true;
     void *enc = nullptr;
     if (esp_opus_enc_open(&cfg, sizeof(cfg), &enc) != ESP_AUDIO_ERR_OK) {
         ESP_LOGE(TAG, "Không mở được bộ mã hoá Opus");
