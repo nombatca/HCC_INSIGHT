@@ -186,6 +186,14 @@ extern "C" void app_main(void)
         return;
     }
 
+    XiaozhiApp *xiaozhi = new XiaozhiApp();
+    assert(xiaozhi != nullptr && "Failed to create xiaozhi");
+    if (phone->installApp(xiaozhi) < 0) {
+        ESP_LOGE(TAG, "Failed to install xiaozhi");
+        bsp_display_unlock();
+        return;
+    }
+
     
 
    

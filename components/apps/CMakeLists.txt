@@ -2,7 +2,7 @@ set(APPS_DIR ./)
 # GLOB chỉ quét lại khi CMake chạy lại: sau khi thêm file .c/.cpp mới (vd hcc_home/HCCMemory.cpp)
 # phải chạy "idf.py reconfigure" (hoặc sửa file này) thì file mới được build.
 # (đã thêm: setting/hcc_clock.c, hcc_home/HCCUsbDisk.cpp, music_player/HCCMusicEngine.c, music_player/HCCAudioMeta.c;
-#  đã xoá music_player/gui_music)
+#  xiaozhi/*.cpp + xiaozhi/assets/img_app_xiaozhi.c; đã xoá music_player/gui_music)
 file(GLOB_RECURSE APPS_C_SRCS ${APPS_DIR}/*.c)
 file(GLOB_RECURSE APPS_CPP_SRCS ${APPS_DIR}/*.cpp)
 list(FILTER APPS_C_SRCS EXCLUDE REGEX "/camera/")

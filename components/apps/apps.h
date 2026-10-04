@@ -8,5 +8,6 @@
 #include "browser/Browser.hpp"
 #include "video_player/VideoPlayer.hpp"
 #include "hcc_home/HCCHome.hpp"
+#include "xiaozhi/XiaozhiApp.hpp"
 
 #include "hcc_i2c/HCCI2C.hpp"

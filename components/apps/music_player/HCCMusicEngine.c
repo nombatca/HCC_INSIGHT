@@ -294,6 +294,9 @@ static void start_track(const cmd_t *c)
     close_track();
     s_cur_play_id = c->play_id;
     s_rate = 0;
+    // App khác (Xiaozhi, video) có thể đã đổi tần số codec: luôn cấu hình lại ở bài mới.
+    s_cfg_rate = 0;
+    s_cfg_ch = 0;
     portENTER_CRITICAL(&s_lock);
     memset(&s_status, 0, offsetof(hcc_me_status_t, play_id));
     s_status.play_id = c->play_id;
