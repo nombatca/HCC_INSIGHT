@@ -28,3 +28,9 @@ dependencies:
   # USB DISK (components/apps/hcc_home/HCCUsbDisk.cpp): thẻ SD -> USB Mass Storage qua OTG Full-Speed
   espressif/esp_tinyusb:
       version: "^2.3.0"
+
+  # Music (components/apps/music_player/HCCMusicEngine.c): giải mã MP3/AAC/FLAC/M4A/OGG.
+  # Không dùng gói esp-gmf vì gmf_io 1.1 đòi esp_codec_dev 2.0 beta, xung đột với BSP (~1.5).
+  # Bản 2.6 cần ESP32-P4 rev >= 3.0 (sdkconfig: CONFIG_ESP32P4_REV_MIN_301=y).
+  espressif/esp_audio_codec:
+      version: "~2.6"

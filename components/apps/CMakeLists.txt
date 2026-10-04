@@ -1,7 +1,8 @@
 set(APPS_DIR ./)
 # GLOB chỉ quét lại khi CMake chạy lại: sau khi thêm file .c/.cpp mới (vd hcc_home/HCCMemory.cpp)
 # phải chạy "idf.py reconfigure" (hoặc sửa file này) thì file mới được build.
-# (đã thêm: setting/hcc_clock.c, hcc_home/HCCUsbDisk.cpp)
+# (đã thêm: setting/hcc_clock.c, hcc_home/HCCUsbDisk.cpp, music_player/HCCMusicEngine.c, music_player/HCCAudioMeta.c;
+#  đã xoá music_player/gui_music)
 file(GLOB_RECURSE APPS_C_SRCS ${APPS_DIR}/*.c)
 file(GLOB_RECURSE APPS_CPP_SRCS ${APPS_DIR}/*.cpp)
 list(FILTER APPS_C_SRCS EXCLUDE REGEX "/camera/")
@@ -16,7 +17,7 @@ idf_component_register(
     INCLUDE_DIRS ${APPS_DIR}
     # Knowledge Base V1 mặc định cho phân tích panic (HCCPanicKBStore::defaultKbJson).
     EMBED_TXTFILES ${APPS_DIR}/hcc_home/kb/hcc_kb_default.json
-    REQUIRES lvgl__lvgl esp_event esp_wifi esp_http_client esp_http_server nvs_flash esp_driver_jpeg esp_mm esp-brookesia product_audio esp32_p4_wifi6_touch_lcd_7b esp_video vn_fonts esp_netif mbedtls esp_websocket_client json usb mdns esp_tinyusb efuse)
+    REQUIRES lvgl__lvgl esp_event esp_wifi esp_http_client esp_http_server nvs_flash esp_driver_jpeg esp_mm esp-brookesia product_audio esp32_p4_wifi6_touch_lcd_7b esp_video vn_fonts esp_netif mbedtls esp_websocket_client json usb mdns esp_tinyusb efuse esp_audio_codec)
 
 target_compile_options(
     ${COMPONENT_LIB}
