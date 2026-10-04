@@ -159,6 +159,8 @@ void XiaozhiApp::detachUi(void)
 {
     _root = nullptr;
     _avatar.detach();
+    _img_avatar.detach();
+    _cartoon = nullptr;
     _emotion_label = nullptr;
     _status = nullptr;
     _btn_talk = nullptr;
@@ -208,9 +210,14 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
     lv_obj_set_style_pad_gap(left, 6, 0);
     lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *avatar = _avatar.create(left);
-    lv_obj_set_width(avatar, LV_PCT(100));
-    lv_obj_set_flex_grow(avatar, 1);
+    // Vùng avatar: nhân vật hoạt hình và avatar ảnh (nếu có trên thẻ SD) chồng lên nhau.
+    lv_obj_t *avatar_area = lv_obj_create(left);
+    lv_obj_remove_style_all(avatar_area);
+    lv_obj_set_width(avatar_area, LV_PCT(100));
+    lv_obj_set_flex_grow(avatar_area, 1);
+    lv_obj_clear_flag(avatar_area, LV_OBJ_FLAG_SCROLLABLE);
+    _cartoon = _avatar.create(avatar_area);
+    lv_obj_set_size(_cartoon, LV_PCT(100), LV_PCT(100));
 
     _emotion_label = makeLabel(left, &lv_font_be_vietnam_16, COLOR_MUTED, "");
     _status = makeLabel(left, &lv_font_be_vietnam_24, COLOR_TEXT, "");
@@ -315,6 +322,14 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
 
     std::string dev = "Mã thiết bị: " + HCCXiaozhi::deviceId();
     _device_label = makeLabel(right, &lv_font_be_vietnam_14, COLOR_MUTED, dev.c_str());
+
+    // Kích thước thật của vùng avatar (khoảng 370x520) -> nạp ảnh đúng cỡ đó.
+    lv_obj_update_layout(_root);
+    const int aw = lv_obj_get_content_width(avatar_area);
+    const int ah = lv_obj_get_content_height(avatar_area);
+    if (aw > 16 && ah > 16) {
+        _img_avatar.create(avatar_area, aw, ah);
+    }
 }
 
 void XiaozhiApp::rebuildChat(void)
@@ -434,9 +449,21 @@ void XiaozhiApp::refresh(void)
     _avatar.setMode(mode);
     _avatar.setSpeakLevel(HCCXiaozhi::speakLevel());
     _avatar.setMicLevel(HCCXiaozhi::micLevel());
+    _img_avatar.setMode(static_cast<XiaozhiImageAvatar::Mode>(mode));
+    _img_avatar.setSpeakLevel(HCCXiaozhi::speakLevel());
+    _img_avatar.setMicLevel(HCCXiaozhi::micLevel());
+    // Có avatar ảnh thì ẩn nhân vật hoạt hình (không vẽ khi ẩn), không có thì giữ nguyên.
+    if (_cartoon != nullptr) {
+        if (_img_avatar.ready()) {
+            lv_obj_add_flag(_cartoon, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(_cartoon, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     if ((int)st != _last_state || emo != _last_emotion) {
         const EmotionView &ev = emotionView(emo);
         _avatar.setEmotion(in_session ? emo.c_str() : "neutral");
+        _img_avatar.setEmotion(in_session ? emo.c_str() : "neutral");
         lv_label_set_text(_emotion_label, in_session ? ev.label : "");
         snprintf(_last_emotion, sizeof(_last_emotion), "%s", emo.c_str());
         _last_state = (int)st;

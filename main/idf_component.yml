@@ -34,3 +34,8 @@ dependencies:
   # Bản 2.6 cần ESP32-P4 rev >= 3.0 (sdkconfig: CONFIG_ESP32P4_REV_MIN_301=y).
   espressif/esp_audio_codec:
       version: "~2.6"
+
+  # Avatar ảnh của Xiaozhi (components/apps/xiaozhi/XiaozhiPng.c): giải mã PNG trên thẻ SD.
+  # Cùng bản đã có sẵn trong cây phụ thuộc (log build: espressif/libpng 1.6.58~2), không tải thêm.
+  espressif/libpng:
+      version: "^1.6.58"
