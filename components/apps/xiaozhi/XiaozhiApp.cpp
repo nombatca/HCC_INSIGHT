@@ -125,7 +125,7 @@ bool XiaozhiApp::init(void)
 bool XiaozhiApp::run(void)
 {
     buildUi(lv_scr_act());
-    lv_timer_create(onTimer, 150, this);
+    lv_timer_create(onTimer, 60, this);  // nhanh để miệng nhân vật khớp tiếng
     HCCXiaozhi::start();
     refresh();
     return true;
@@ -158,8 +158,7 @@ bool XiaozhiApp::close(void)
 void XiaozhiApp::detachUi(void)
 {
     _root = nullptr;
-    _face = nullptr;
-    _face_label = nullptr;
+    _avatar.detach();
     _emotion_label = nullptr;
     _status = nullptr;
     _btn_talk = nullptr;
@@ -201,22 +200,17 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
     lv_obj_clear_flag(_root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(_root, onRootDeleted, LV_EVENT_DELETE, this);
 
-    /* ----- Bên trái: khuôn mặt + điều khiển ----- */
+    /* ----- Bên trái: nhân vật hoạt hình + trạng thái ----- */
     lv_obj_t *left = makePanel(_root);
     lv_obj_set_size(left, LV_PCT(38), LV_PCT(100));
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(left, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(left, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(left, 6, 0);
     lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
 
-    _face = lv_obj_create(left);
-    lv_obj_set_size(_face, 170, 170);
-    lv_obj_set_style_radius(_face, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(_face, lv_color_hex(COLOR_ACCENT), 0);
-    lv_obj_set_style_border_width(_face, 6, 0);
-    lv_obj_set_style_border_color(_face, lv_color_hex(0x2C3845), 0);
-    lv_obj_clear_flag(_face, LV_OBJ_FLAG_SCROLLABLE);
-    _face_label = makeLabel(_face, &lv_font_be_vietnam_36, COLOR_TEXT, "(-_-)");
-    lv_obj_center(_face_label);
+    lv_obj_t *avatar = _avatar.create(left);
+    lv_obj_set_width(avatar, LV_PCT(100));
+    lv_obj_set_flex_grow(avatar, 1);
 
     _emotion_label = makeLabel(left, &lv_font_be_vietnam_16, COLOR_MUTED, "");
     _status = makeLabel(left, &lv_font_be_vietnam_24, COLOR_TEXT, "");
@@ -224,59 +218,18 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
     lv_obj_set_style_text_align(_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_status, LV_LABEL_LONG_WRAP);
 
-    _btn_talk = makeButton(left, LV_SYMBOL_AUDIO "  Bắt đầu nói chuyện", COLOR_ACCENT, &lv_font_be_vietnam_22,
-                           onTalkClicked, this, &_btn_talk_label);
-    lv_obj_set_size(_btn_talk, LV_PCT(100), 72);
-
-    _btn_end = makeButton(left, LV_SYMBOL_CLOSE "  Kết thúc", 0x2C3845, &lv_font_be_vietnam_18, onEndClicked, this);
-    lv_obj_set_size(_btn_end, LV_PCT(100), 52);
-
-    lv_obj_t *vol = lv_obj_create(left);
-    lv_obj_remove_style_all(vol);
-    lv_obj_set_size(vol, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(vol, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(vol, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(vol, 12, 0);
-    makeLabel(vol, &lv_font_be_vietnam_22, COLOR_MUTED, LV_SYMBOL_VOLUME_MID);
-    lv_obj_t *slider = lv_slider_create(vol);
-    lv_obj_set_flex_grow(slider, 1);
-    lv_slider_set_range(slider, 0, 100);
-    lv_slider_set_value(slider, HCCXiaozhi::volume(), LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x2C3845), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
-    lv_obj_set_ext_click_area(slider, 14);
-    lv_obj_add_event_cb(slider, onVolumeChanged, LV_EVENT_VALUE_CHANGED, this);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", HCCXiaozhi::volume());
-    _volume_label = makeLabel(vol, &lv_font_be_vietnam_18, COLOR_MUTED, buf);
-    lv_obj_set_width(_volume_label, 40);
-
-    lv_obj_t *tools = lv_obj_create(left);
-    lv_obj_remove_style_all(tools);
-    lv_obj_set_size(tools, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_gap(tools, 10, 0);
-    lv_obj_t *b1 = makeButton(tools, LV_SYMBOL_SETTINGS " Máy chủ", 0x2C3845, &lv_font_be_vietnam_16, onServerClicked, this);
-    lv_obj_set_flex_grow(b1, 1);
-    lv_obj_set_height(b1, 44);
-    lv_obj_t *b2 = makeButton(tools, LV_SYMBOL_REFRESH " Kích hoạt lại", 0x2C3845, &lv_font_be_vietnam_16,
-                              onReactivateClicked, this);
-    lv_obj_set_flex_grow(b2, 1);
-    lv_obj_set_height(b2, 44);
-
-    std::string dev = "Mã thiết bị: " + HCCXiaozhi::deviceId();
-    _device_label = makeLabel(left, &lv_font_be_vietnam_14, COLOR_MUTED, dev.c_str());
-
-    /* ----- Bên phải: trò chuyện / kích hoạt ----- */
+    /* ----- Bên phải: trò chuyện / kích hoạt + điều khiển ----- */
     lv_obj_t *right = makePanel(_root);
     lv_obj_set_height(right, LV_PCT(100));
     lv_obj_set_flex_grow(right, 1);
+    lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(right, 10, 0);
     lv_obj_clear_flag(right, LV_OBJ_FLAG_SCROLLABLE);
 
     _chat_panel = lv_obj_create(right);
     lv_obj_remove_style_all(_chat_panel);
-    lv_obj_set_size(_chat_panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_width(_chat_panel, LV_PCT(100));
+    lv_obj_set_flex_grow(_chat_panel, 1);
     lv_obj_set_flex_flow(_chat_panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_gap(_chat_panel, 10, 0);
     lv_obj_clear_flag(_chat_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -300,10 +253,11 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
 
     _act_panel = lv_obj_create(right);
     lv_obj_remove_style_all(_act_panel);
-    lv_obj_set_size(_act_panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_width(_act_panel, LV_PCT(100));
+    lv_obj_set_flex_grow(_act_panel, 1);
     lv_obj_set_flex_flow(_act_panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(_act_panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(_act_panel, 18, 0);
+    lv_obj_set_style_pad_gap(_act_panel, 14, 0);
     makeLabel(_act_panel, &lv_font_be_vietnam_24, COLOR_TEXT, "Kích hoạt thiết bị");
     _act_code = makeLabel(_act_panel, &lv_font_be_vietnam_48, COLOR_OK, "------");
     lv_obj_set_style_text_letter_space(_act_code, 12, 0);
@@ -312,12 +266,55 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
                                 "2. Bảng điều khiển -> Thêm thiết bị -> nhập mã 6 số ở trên.\n"
                                 "3. Trong cấu hình agent: chọn ngôn ngữ / giọng tiếng Việt.\n"
                                 "Board tự kiểm tra mỗi 3 giây, xong sẽ chuyển sang Sẵn sàng.");
-    lv_obj_set_width(guide, LV_PCT(90));
+    lv_obj_set_width(guide, LV_PCT(95));
     lv_label_set_long_mode(guide, LV_LABEL_LONG_WRAP);
     _act_msg = makeLabel(_act_panel, &lv_font_be_vietnam_16, COLOR_MUTED, "");
-    lv_obj_set_width(_act_msg, LV_PCT(90));
+    lv_obj_set_width(_act_msg, LV_PCT(95));
     lv_label_set_long_mode(_act_msg, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(_act_panel, LV_OBJ_FLAG_HIDDEN);
+
+    // Hàng nút chính
+    lv_obj_t *row = lv_obj_create(right);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row, 10, 0);
+    _btn_talk = makeButton(row, LV_SYMBOL_AUDIO "  Bắt đầu nói chuyện", COLOR_ACCENT, &lv_font_be_vietnam_22,
+                           onTalkClicked, this, &_btn_talk_label);
+    lv_obj_set_height(_btn_talk, 64);
+    lv_obj_set_flex_grow(_btn_talk, 1);
+    _btn_end = makeButton(row, LV_SYMBOL_CLOSE "  Kết thúc", 0x2C3845, &lv_font_be_vietnam_18, onEndClicked, this);
+    lv_obj_set_size(_btn_end, 150, 64);
+
+    // Âm lượng + cài đặt
+    lv_obj_t *tools = lv_obj_create(right);
+    lv_obj_remove_style_all(tools);
+    lv_obj_set_size(tools, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(tools, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(tools, 10, 0);
+    makeLabel(tools, &lv_font_be_vietnam_22, COLOR_MUTED, LV_SYMBOL_VOLUME_MID);
+    lv_obj_t *slider = lv_slider_create(tools);
+    lv_obj_set_flex_grow(slider, 1);
+    lv_slider_set_range(slider, 0, 100);
+    lv_slider_set_value(slider, HCCXiaozhi::volume(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0x2C3845), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
+    lv_obj_set_ext_click_area(slider, 14);
+    lv_obj_add_event_cb(slider, onVolumeChanged, LV_EVENT_VALUE_CHANGED, this);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", HCCXiaozhi::volume());
+    _volume_label = makeLabel(tools, &lv_font_be_vietnam_18, COLOR_MUTED, buf);
+    lv_obj_set_width(_volume_label, 40);
+    lv_obj_t *b1 = makeButton(tools, LV_SYMBOL_SETTINGS " Máy chủ", 0x2C3845, &lv_font_be_vietnam_16, onServerClicked, this);
+    lv_obj_set_height(b1, 44);
+    lv_obj_t *b2 = makeButton(tools, LV_SYMBOL_REFRESH " Kích hoạt lại", 0x2C3845, &lv_font_be_vietnam_16,
+                              onReactivateClicked, this);
+    lv_obj_set_height(b2, 44);
+
+    std::string dev = "Mã thiết bị: " + HCCXiaozhi::deviceId();
+    _device_label = makeLabel(right, &lv_font_be_vietnam_14, COLOR_MUTED, dev.c_str());
 }
 
 void XiaozhiApp::rebuildChat(void)
@@ -422,14 +419,24 @@ void XiaozhiApp::refresh(void)
         lv_obj_add_flag(_btn_end, LV_OBJ_FLAG_HIDDEN);
     }
 
-    // Khuôn mặt theo cảm xúc
+    // Nhân vật: chế độ, cảm xúc, mức âm
     const std::string emo = HCCXiaozhi::emotion();
+    XiaozhiAvatar::Mode mode = XiaozhiAvatar::Mode::Idle;
+    if (st == State::Listening) {
+        mode = HCCXiaozhi::thinking() ? XiaozhiAvatar::Mode::Thinking : XiaozhiAvatar::Mode::Listening;
+    } else if (st == State::Speaking) {
+        mode = XiaozhiAvatar::Mode::Speaking;
+    } else if (st == State::Connecting || st == State::Checking) {
+        mode = XiaozhiAvatar::Mode::Thinking;
+    } else if (st == State::Error) {
+        mode = XiaozhiAvatar::Mode::Sad;
+    }
+    _avatar.setMode(mode);
+    _avatar.setSpeakLevel(HCCXiaozhi::speakLevel());
+    _avatar.setMicLevel(HCCXiaozhi::micLevel());
     if ((int)st != _last_state || emo != _last_emotion) {
         const EmotionView &ev = emotionView(emo);
-        lv_label_set_text(_face_label, st == State::Listening ? "(o_o)" : ev.face);
-        lv_obj_set_style_bg_color(_face, lv_color_hex(ev.color), 0);
-        lv_obj_set_style_border_color(_face, lv_color_hex(st == State::Listening ? COLOR_OK
-                                                           : st == State::Speaking ? 0xE08A55 : 0x2C3845), 0);
+        _avatar.setEmotion(in_session ? emo.c_str() : "neutral");
         lv_label_set_text(_emotion_label, in_session ? ev.label : "");
         snprintf(_last_emotion, sizeof(_last_emotion), "%s", emo.c_str());
         _last_state = (int)st;

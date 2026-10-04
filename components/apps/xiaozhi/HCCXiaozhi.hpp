@@ -66,6 +66,12 @@ uint32_t chatVersion(void);
 std::vector<ChatLine> chat(void);
 void clearChat(void);
 
+// Cho hoạt hình nhân vật: mức âm 0..1000 của tiếng trả lời đang phát / micro đang thu,
+// thinking = đã nghe xong câu hỏi, đang chờ trợ lý trả lời.
+int speakLevel(void);
+int micLevel(void);
+bool thinking(void);
+
 int volume(void);
 void setVolume(int volume);
 

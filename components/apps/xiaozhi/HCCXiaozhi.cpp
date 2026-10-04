@@ -107,6 +107,10 @@ volatile bool s_mic_on = false;
 volatile bool s_play_flush = false;
 volatile bool s_play_busy = false;
 volatile bool s_accept_audio = false;  // nhận khung Opus từ máy chủ (không nhận khi đang thu)
+// Cho hoạt hình nhân vật: mức âm (0..1000) của tiếng trả lời / micro, và "đang nghĩ" (đã nhận stt, chờ tts).
+volatile int s_speak_level = 0;
+volatile int s_mic_level = 0;
+volatile bool s_thinking = false;
 
 // ---- ghép khung WebSocket (task websocket) ----
 std::string s_rx_buf;
@@ -458,6 +462,7 @@ void handleJson(const char *data, size_t len)
         if (cJSON_IsString(text)) {
             ESP_LOGI(TAG, ">> %s", text->valuestring);
             addChat(true, text->valuestring);
+            s_thinking = true;
         }
     } else if (strcmp(t, "llm") == 0) {
         cJSON *emo = cJSON_GetObjectItem(root, "emotion");
@@ -470,6 +475,7 @@ void handleJson(const char *data, size_t len)
         if (cJSON_IsString(st)) {
             if (strcmp(st->valuestring, "start") == 0) {
                 s_accept_audio = true;
+                s_thinking = false;
                 post(Evt::TtsStart);
             } else if (strcmp(st->valuestring, "stop") == 0) {
                 post(Evt::TtsStop);
@@ -563,6 +569,8 @@ void wsEvent(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 void closeWs(void)
 {
     s_mic_on = false;
+    s_thinking = false;
+    s_mic_level = 0;
     s_accept_audio = false;
     s_pending_listen = false;
     if (s_ws != nullptr) {
@@ -652,6 +660,7 @@ void prepareAudio(void)
 void startListening(void)
 {
     s_pending_listen = false;
+    s_thinking = false;
     s_accept_audio = false;
     {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -867,6 +876,13 @@ void micTask(void *arg)
             peak_l = std::max(peak_l, l < 0 ? -l : l);
             peak_r = std::max(peak_r, r < 0 ? -r : r);
         }
+        {
+            int64_t a = 0;
+            for (int i = 0; i < FRAME_SAMPLES; ++i) {
+                a += mono[i] < 0 ? -mono[i] : mono[i];
+            }
+            s_mic_level = (int)std::min<int64_t>(1000, a / FRAME_SAMPLES * 1000 / 1500);
+        }
         if (++frames >= 16) {
             ESP_LOGI(TAG, "Micro: trái tb %d đỉnh %d | phải tb %d đỉnh %d | đã gửi %d khung (%d byte)",
                      (int)(sum_l / (frames * FRAME_SAMPLES)), peak_l, (int)(sum_r / (frames * FRAME_SAMPLES)), peak_r,
@@ -924,6 +940,7 @@ void playTask(void *arg)
                 wrote = false;
             }
             s_play_busy = false;
+            s_speak_level = 0;
             continue;
         }
         s_play_busy = true;
@@ -940,10 +957,14 @@ void playTask(void *arg)
             continue;
         }
         const int n = (int)(out.decoded_size / sizeof(int16_t));
+        int64_t a = 0;
         for (int i = 0; i < n && i < MAX_SAMPLES; ++i) {
             stereo[i * 2] = pcm[i];
             stereo[i * 2 + 1] = pcm[i];
+            a += pcm[i] < 0 ? -pcm[i] : pcm[i];
         }
+        // Mức âm của khung sắp phát (write chặn đúng thời lượng khung) -> miệng nhân vật khớp tiếng.
+        s_speak_level = n > 0 ? (int)std::min<int64_t>(1000, a / n * 1000 / 4000) : 0;
         size_t w = 0;
         product_audio_i2s_write(stereo, (size_t)std::min(n, MAX_SAMPLES) * 2 * sizeof(int16_t), &w, portMAX_DELAY);
         wrote = true;
@@ -1074,6 +1095,21 @@ void clearChat(void)
     std::lock_guard<std::mutex> lk(s_mutex);
     s_chat.clear();
     s_chat_version++;
+}
+
+int speakLevel(void)
+{
+    return s_speak_level;
+}
+
+int micLevel(void)
+{
+    return s_mic_on ? s_mic_level : 0;
+}
+
+bool thinking(void)
+{
+    return s_thinking;
 }
 
 int volume(void)

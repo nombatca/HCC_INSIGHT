@@ -7,6 +7,7 @@
 
 #include "lvgl.h"
 #include "esp_brookesia.hpp"
+#include "XiaozhiAvatar.hpp"
 
 class XiaozhiApp: public ESP_Brookesia_PhoneApp {
 public:
@@ -41,8 +42,7 @@ private:
     static void onRootDeleted(lv_event_t *e);
 
     lv_obj_t *_root = nullptr;
-    lv_obj_t *_face = nullptr;
-    lv_obj_t *_face_label = nullptr;
+    XiaozhiAvatar _avatar;
     lv_obj_t *_emotion_label = nullptr;
     lv_obj_t *_status = nullptr;
     lv_obj_t *_btn_talk = nullptr;
