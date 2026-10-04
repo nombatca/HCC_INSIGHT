@@ -487,7 +487,7 @@ void handleJson(const char *data, size_t len)
             addChat(false, msg->valuestring);
         }
     } else {
-        ESP_LOGD(TAG, "Bỏ qua tin nhắn loại %s", t);
+        ESP_LOGI(TAG, "Tin nhắn khác: %.*s", (int)std::min<size_t>(len, 300), data);
     }
     cJSON_Delete(root);
 }
@@ -834,6 +834,14 @@ void micTask(void *arg)
         return;
     }
     bool was_on = false;
+    // Chẩn đoán: mức âm 2 kênh + số khung đã gửi, in mỗi ~1 giây khi đang nghe.
+    int64_t sum_l = 0;
+    int64_t sum_r = 0;
+    int peak_l = 0;
+    int peak_r = 0;
+    int frames = 0;
+    int sent = 0;
+    int sent_bytes = 0;
     for (;;) {
         if (!s_mic_on) {
             was_on = false;
@@ -849,8 +857,23 @@ void micTask(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+        // Chưa rõ micro của board nối vào kênh nào của ES7210: trộn 2 kênh (kênh im lặng chỉ làm nhỏ 6 dB).
         for (int i = 0; i < FRAME_SAMPLES; ++i) {
-            mono[i] = stereo[i * 2];  // kênh trái (MIC1 của ES7210)
+            const int l = stereo[i * 2];
+            const int r = stereo[i * 2 + 1];
+            mono[i] = (int16_t)((l + r) / 2);
+            sum_l += l < 0 ? -l : l;
+            sum_r += r < 0 ? -r : r;
+            peak_l = std::max(peak_l, l < 0 ? -l : l);
+            peak_r = std::max(peak_r, r < 0 ? -r : r);
+        }
+        if (++frames >= 16) {
+            ESP_LOGI(TAG, "Micro: trái tb %d đỉnh %d | phải tb %d đỉnh %d | đã gửi %d khung (%d byte)",
+                     (int)(sum_l / (frames * FRAME_SAMPLES)), peak_l, (int)(sum_r / (frames * FRAME_SAMPLES)), peak_r,
+                     sent, sent_bytes);
+            sum_l = sum_r = 0;
+            peak_l = peak_r = 0;
+            frames = sent = sent_bytes = 0;
         }
         esp_audio_enc_in_frame_t in = {.buffer = reinterpret_cast<uint8_t *>(mono), .len = FRAME_SAMPLES * 2};
         esp_audio_enc_out_frame_t o = {.buffer = out, .len = (uint32_t)(out_size > 0 ? out_size : 1500)};
@@ -858,8 +881,11 @@ void micTask(void *arg)
             continue;
         }
         if (s_mic_on && s_ws != nullptr && esp_websocket_client_is_connected(s_ws)) {
-            esp_websocket_client_send_bin(s_ws, reinterpret_cast<const char *>(out), (int)o.encoded_bytes,
-                                          pdMS_TO_TICKS(200));
+            if (esp_websocket_client_send_bin(s_ws, reinterpret_cast<const char *>(out), (int)o.encoded_bytes,
+                                              pdMS_TO_TICKS(200)) > 0) {
+                sent++;
+                sent_bytes += (int)o.encoded_bytes;
+            }
         }
     }
 }
