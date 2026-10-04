@@ -1,10 +1,16 @@
 set(APPS_DIR ./)
 # CONFIGURE_DEPENDS: mỗi lần build, CMake kiểm tra lại danh sách file nên file .c/.cpp mới được build
 # luôn, không cần "idf.py reconfigure" (trước đây quên reconfigure -> lỗi link "undefined reference").
+# ESP-IDF đọc file này cả ở chế độ script (lấy requirements), nơi CONFIGURE_DEPENDS bị cấm -> chỉ bật khi build.
+if(CMAKE_SCRIPT_MODE_FILE)
+    set(HCC_GLOB_DEPENDS "")
+else()
+    set(HCC_GLOB_DEPENDS CONFIGURE_DEPENDS)
+endif()
 # (đã thêm: setting/hcc_clock.c, hcc_home/HCCUsbDisk.cpp, music_player/HCCMusicEngine.c, music_player/HCCAudioMeta.c;
 #  xiaozhi/*.cpp + xiaozhi/assets/img_app_xiaozhi.c; đã xoá music_player/gui_music)
-file(GLOB_RECURSE APPS_C_SRCS CONFIGURE_DEPENDS ${APPS_DIR}/*.c)
-file(GLOB_RECURSE APPS_CPP_SRCS CONFIGURE_DEPENDS ${APPS_DIR}/*.cpp)
+file(GLOB_RECURSE APPS_C_SRCS ${HCC_GLOB_DEPENDS} ${APPS_DIR}/*.c)
+file(GLOB_RECURSE APPS_CPP_SRCS ${HCC_GLOB_DEPENDS} ${APPS_DIR}/*.cpp)
 list(FILTER APPS_C_SRCS EXCLUDE REGEX "/camera/")
 list(FILTER APPS_CPP_SRCS EXCLUDE REGEX "/camera/")
 
