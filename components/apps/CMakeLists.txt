@@ -1,10 +1,10 @@
 set(APPS_DIR ./)
-# GLOB chỉ quét lại khi CMake chạy lại: sau khi thêm file .c/.cpp mới (vd hcc_home/HCCMemory.cpp)
-# phải chạy "idf.py reconfigure" (hoặc sửa file này) thì file mới được build.
+# CONFIGURE_DEPENDS: mỗi lần build, CMake kiểm tra lại danh sách file nên file .c/.cpp mới được build
+# luôn, không cần "idf.py reconfigure" (trước đây quên reconfigure -> lỗi link "undefined reference").
 # (đã thêm: setting/hcc_clock.c, hcc_home/HCCUsbDisk.cpp, music_player/HCCMusicEngine.c, music_player/HCCAudioMeta.c;
 #  xiaozhi/*.cpp + xiaozhi/assets/img_app_xiaozhi.c; đã xoá music_player/gui_music)
-file(GLOB_RECURSE APPS_C_SRCS ${APPS_DIR}/*.c)
-file(GLOB_RECURSE APPS_CPP_SRCS ${APPS_DIR}/*.cpp)
+file(GLOB_RECURSE APPS_C_SRCS CONFIGURE_DEPENDS ${APPS_DIR}/*.c)
+file(GLOB_RECURSE APPS_CPP_SRCS CONFIGURE_DEPENDS ${APPS_DIR}/*.cpp)
 list(FILTER APPS_C_SRCS EXCLUDE REGEX "/camera/")
 list(FILTER APPS_CPP_SRCS EXCLUDE REGEX "/camera/")
 
