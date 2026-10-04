@@ -288,7 +288,7 @@ lv_obj_t *XiaozhiImageAvatar::create(lv_obj_t *parent, int w, int h)
     lv_obj_set_size(_img, w, h);
     lv_obj_center(_img);
     lv_img_set_antialias(_img, true);
-    lv_img_set_pivot(_img, w / 2, h);  // thở: phóng từ đáy lên, đầu nhích nhẹ
+    lv_img_set_pivot(_img, w / 2, h / 2);  // thở: phóng to / thu nhỏ quanh tâm, không dịch chuyển ảnh
 
     _t0 = lv_tick_get();
     _next_blink = _t0 + randRange(1500, 3500);
@@ -478,12 +478,13 @@ void XiaozhiImageAvatar::tick(void)
         _cur_frame = frame;
     }
 
-    // Thở: zoom 256..259 (~1%), chu kỳ 3.5 s, chỉ cập nhật ~10 lần/giây (phép biến đổi ảnh khá nặng).
+    // Thở: chỉ zoom rất nhẹ quanh tâm, cập nhật ~10 lần/giây (phép biến đổi ảnh khá nặng).
     const uint32_t now = lv_tick_get();
     if (now - _last_zoom_ms >= 100) {
         _last_zoom_ms = now;
-        const float ph = (float)((now - _t0) % 3500) / 3500.0f;
-        const uint16_t z = (uint16_t)(256 + lroundf(1.5f * (1.0f - cosf(6.2831853f * ph))));
+        // 256..258 (tối đa ~0.8%), chu kỳ 4 s: mỗi bậc zoom chỉ làm mép ảnh nhích ~1 px.
+        const float ph = (float)((now - _t0) % 4000) / 4000.0f;
+        const uint16_t z = (uint16_t)(256 + lroundf(1.0f - cosf(6.2831853f * ph)));
         if (z != _zoom) {
             _zoom = z;
             lv_img_set_zoom(_img, z);

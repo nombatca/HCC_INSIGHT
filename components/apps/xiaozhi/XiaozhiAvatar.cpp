@@ -232,25 +232,21 @@ void XiaozhiAvatar::draw(lv_draw_ctx_t *ctx)
     lv_obj_get_coords(_obj, &a);
     const float w = (float)lv_area_get_width(&a);
     const float h = (float)lv_area_get_height(&a);
-    Painter p;
-    p.ctx = ctx;
-    p.s = fminf(w / DESIGN_W, h / DESIGN_H);
-    p.ox = a.x1 + (w - DESIGN_W * p.s) / 2.0f;
-    p.oy = a.y1 + (h - DESIGN_H * p.s) / 2.0f;
-
     const float t = _t;
     const bool speaking = _mode == Mode::Speaking;
     const bool listening = _mode == Mode::Listening;
-    const float breath = sinf(PI2 * t / 3.2f) * 3.0f;
-    float hx = (_mode == Mode::Idle || _mode == Mode::Sad) ? sinf(PI2 * t / 5.0f) * 4.0f : sinf(PI2 * t / 7.0f) * 1.5f;
-    float hy = breath;
-    if (listening) {
-        hy += 3.0f;  // hơi nghiêng về phía người nói
-    }
-    if (speaking) {
-        hy += _speak * 3.0f;
-    }
-    const float sway = sinf(PI2 * t / 2.6f) * 5.0f + hx * 0.5f;
+
+    // Không lắc / nhún: nhân vật đứng yên, chỉ "thở" bằng phóng to - thu nhỏ rất nhẹ (~0.8%) quanh tâm, chu kỳ 4 s.
+    const float breathe = 1.0f + 0.004f * (1.0f - cosf(PI2 * t / 4.0f));
+    Painter p;
+    p.ctx = ctx;
+    p.s = fminf(w / DESIGN_W, h / DESIGN_H) * breathe;
+    p.ox = a.x1 + (w - DESIGN_W * p.s) / 2.0f;
+    p.oy = a.y1 + (h - DESIGN_H * p.s) / 2.0f;
+    const float breath = 0.0f;
+    const float hx = 0.0f;
+    const float hy = 0.0f;
+    const float sway = 0.0f;
 
     // Mức mở mắt khi chớp (0.16 s)
     float open = 1.0f;
