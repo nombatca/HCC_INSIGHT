@@ -111,6 +111,9 @@ static const char *usidSummary(const UsidResult &u, bool scanned, char *buf, siz
     if (!scanned) {
         *color = C_GREY;
         snprintf(buf, n, "%d thanh ghi", (int)u.regs.size());
+    } else if (u.usid == 0) {
+        *color = C_GREY;
+        snprintf(buf, n, "Không quét");  // USID 0 là broadcast
     } else if (!u.responded) {
         *color = u.in_ref ? C_RED : C_GREY;
         snprintf(buf, n, "Không phản hồi");
@@ -195,6 +198,8 @@ static void renderTable(void)
     char line[200];
     if (!rep.scanned) {
         snprintf(line, sizeof(line), "USID 0x%X%s  -  dữ liệu tham chiếu, chưa scan", u.usid, ic);
+    } else if (u.usid == 0) {
+        snprintf(line, sizeof(line), "USID 0x0%s  -  broadcast, không quét được", ic);
     } else if (!u.responded) {
         snprintf(line, sizeof(line), "USID 0x%X%s  -  không phản hồi", u.usid, ic);
     } else {
@@ -239,6 +244,8 @@ static void renderTable(void)
         uint8_t st = ROW_NEUTRAL;
         if (!rep.scanned) {
             res = "Chưa scan";
+        } else if (u.usid == 0) {
+            res = "Không quét (USID 0)";
         } else if (!u.responded) {
             res = "Không phản hồi";
             st = ROW_FAIL;
@@ -303,7 +310,8 @@ static void renderReport(void)
     if (!s_v.have_models) {
         lv_label_set_text(s_v.empty,
                           "Chưa có dữ liệu RFFE trên thẻ SD.\n\n"
-                          "Tạo thư mục /rffe/<MODEL>/ trên thẻ và chép file .csv vào đó.\n"
+                          "Chép file JC_BUS2MM4_iPhone_RFFE_USID.csv vào /rffe/ trên thẻ,\n"
+                          "hoặc tạo thư mục /rffe/<MODEL>/ và chép file .csv vào đó.\n"
                           "Mỗi dòng: usid,reg,expected,mask,tên,ic   (vd: 0x5,0x00,0x38,0xFF,REG0,<IC>)\n\n"
                           "Không có dữ liệu vẫn SCAN được: các USID tìm thấy sẽ đọc thô 0x00..0x1F.");
     } else if (rep.scanned) {
@@ -319,7 +327,7 @@ static void renderReport(void)
 static void loadSelectedData(void)
 {
     s_v.ref.clear();
-    char info[160] = "";
+    char info[224] = "";
     if (s_v.have_data) {
         int skipped = 0;
         char err[96];
@@ -332,8 +340,13 @@ static void loadSelectedData(void)
                     ++usids;
                 }
             }
-            snprintf(info, sizeof(info), "%s/%s: %d thanh ghi, %d USID", s_v.model, s_v.data, (int)s_v.ref.size(),
-                     usids);
+            if (HCCRffe::isJcModel(s_v.model)) {
+                snprintf(info, sizeof(info), "%s / %s: %d linh kiện, %d USID  (JC BUS2MM4, kiểm 0x1F & 0x0F = USID)",
+                         s_v.model, s_v.data, (int)s_v.ref.size(), usids);
+            } else {
+                snprintf(info, sizeof(info), "%s/%s: %d thanh ghi, %d USID", s_v.model, s_v.data,
+                         (int)s_v.ref.size(), usids);
+            }
             if (skipped) {
                 size_t n = strlen(info);
                 snprintf(info + n, sizeof(info) - n, "  (bỏ %d dòng sai)", skipped);
@@ -355,7 +368,7 @@ static void loadSelectedData(void)
 
 static void populateData(void)
 {
-    char list[1024];
+    static char list[2048];
     int n = s_v.have_models ? HCCRffe::listData(s_v.model, list, sizeof(list)) : -1;
     s_v.have_data = n > 0;
     lv_dropdown_set_options(s_v.data_dd, s_v.have_data ? list : "(trống)");
@@ -368,7 +381,7 @@ static void populateData(void)
 
 static void populateModels(void)
 {
-    char list[1024];
+    static char list[2048];  // file JC có ~48 model
     const int n = HCCRffe::listModels(list, sizeof(list));
     s_v.have_models = n > 0;
     lv_dropdown_set_options(s_v.model_dd, s_v.have_models ? list : "(chưa có /rffe)");

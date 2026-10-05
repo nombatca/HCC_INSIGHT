@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,13 +151,185 @@ static int listDir(const char *path, bool want_dirs, const char *ext, char *out,
     return count;
 }
 
+// ==================== Dữ liệu JC BUS2MM4 (model -> đường RFFE -> linh kiện -> USID) ====================
+// File do người dùng trích từ JC BUS2MM4, chép vào /sdcard/rffe/. Dùng nguyên giá trị trong file, không suy
+// đoán thêm. File chỉ có USID (không có giá trị thanh ghi) nên mỗi linh kiện được kiểm bằng thanh ghi 0x1F:
+// bit[3:0] phải bằng USID (đúng điều kiện probeUsid() dùng để nhận thiết bị).
+
+static const char *JC_FILE = "JC_BUS2MM4_iPhone_RFFE_USID.csv";
+
+struct JcEntry {
+    std::string model;
+    std::string line;
+    std::string part;
+    uint8_t usid;
+};
+
+static std::vector<JcEntry> s_jc;
+static off_t s_jc_size = -1;
+static time_t s_jc_mtime = 0;
+
+// Tách một dòng CSV (RFC 4180): trường có thể nằm trong "..." với "" là một dấu ". Sửa tại chỗ.
+static int splitCsv(char *s, char **fields, int max)
+{
+    int n = 0;
+    while (n < max) {
+        char *out = s;
+        fields[n++] = out;
+        if (*s == '"') {
+            ++s;
+            while (*s) {
+                if (*s == '"' && s[1] == '"') {
+                    *out++ = '"';
+                    s += 2;
+                } else if (*s == '"') {
+                    ++s;
+                    break;
+                } else {
+                    *out++ = *s++;
+                }
+            }
+        }
+        while (*s && *s != ',') {
+            *out++ = *s++;
+        }
+        const bool more = (*s == ',');
+        *out = '\0';
+        if (!more) {
+            break;
+        }
+        s += 1;
+    }
+    return n;
+}
+
+// Nạp (hoặc giữ cache nếu file không đổi) bảng JC. Không có file: bảng rỗng.
+static void loadJc(void)
+{
+    char path[160];
+    snprintf(path, sizeof(path), "%s/%s", RFFE_DIR, JC_FILE);
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        s_jc.clear();
+        s_jc_size = -1;
+        return;
+    }
+    if (st.st_size == s_jc_size && st.st_mtime == s_jc_mtime) {
+        return;
+    }
+    s_jc.clear();
+    s_jc_size = st.st_size;
+    s_jc_mtime = st.st_mtime;
+    FILE *f = fopen(path, "r");
+    if (f == nullptr) {
+        return;
+    }
+    char line[256];
+    bool header_ok = false;
+    int bad = 0;
+    while (fgets(line, sizeof(line), f) != nullptr) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!header_ok) {
+            // Cột: model_id,type_code,rffe_line,device_part,usid_dec,usid_hex
+            header_ok = strstr(line, "model_id") != nullptr && strstr(line, "usid_hex") != nullptr;
+            if (!header_ok) {
+                break;
+            }
+            continue;
+        }
+        char *fld[6];
+        if (splitCsv(line, fld, 6) != 6 || fld[0][0] == '\0') {
+            ++bad;
+            continue;
+        }
+        char *end1 = nullptr, *end2 = nullptr;
+        const long dec = strtol(fld[4], &end1, 10);
+        const long hex = strtol(fld[5], &end2, 16);
+        if (*end1 != '\0' || *end2 != '\0' || dec != hex || dec < 0 || dec > 15) {
+            ++bad;  // USID hỏng / không khớp giữa 2 cột: bỏ, không tự sửa
+            continue;
+        }
+        s_jc.push_back({fld[0], fld[2], fld[3], static_cast<uint8_t>(dec)});
+    }
+    fclose(f);
+    ESP_LOGI(TAG, "%s: %d dòng%s, bỏ %d dòng lỗi", JC_FILE, (int)s_jc.size(), header_ok ? "" : " (sai dòng tiêu đề)",
+             bad);
+}
+
+bool isJcModel(const char *model)
+{
+    for (const JcEntry &e : s_jc) {
+        if (e.model == model) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *jcFileName(void)
+{
+    return JC_FILE;
+}
+
+// Thêm name vào danh sách dropdown nếu chưa có.
+static void appendUnique(std::vector<std::string> &names, const std::string &name)
+{
+    if (std::find(names.begin(), names.end(), name) == names.end()) {
+        names.push_back(name);
+    }
+}
+
+static int joinNames(const std::vector<std::string> &names, char *out, size_t out_size)
+{
+    out[0] = '\0';
+    size_t used = 0;
+    int count = 0;
+    for (const std::string &n : names) {
+        const size_t need = n.size() + (count ? 1 : 0);
+        if (used + need + 1 > out_size) {
+            break;
+        }
+        used += snprintf(out + used, out_size - used, "%s%s", count ? "\n" : "", n.c_str());
+        ++count;
+    }
+    return count;
+}
+
 int listModels(char *out, size_t out_size)
 {
-    return listDir(RFFE_DIR, true, nullptr, out, out_size);
+    out[0] = '\0';
+    if (!sdReady()) {
+        return -1;
+    }
+    loadJc();
+    std::vector<std::string> names;
+    for (const JcEntry &e : s_jc) {
+        appendUnique(names, e.model);  // giữ thứ tự trong file
+    }
+    char dirs[1024];
+    if (listDir(RFFE_DIR, true, nullptr, dirs, sizeof(dirs)) > 0) {
+        char *save = nullptr;
+        for (char *t = strtok_r(dirs, "\n", &save); t; t = strtok_r(nullptr, "\n", &save)) {
+            appendUnique(names, t);
+        }
+    }
+    if (names.empty()) {
+        return -1;
+    }
+    return joinNames(names, out, out_size);
 }
 
 int listData(const char *model, char *out, size_t out_size)
 {
+    if (isJcModel(model)) {
+        std::vector<std::string> lines;
+        for (const JcEntry &e : s_jc) {
+            if (e.model == model) {
+                appendUnique(lines, e.line);
+            }
+        }
+        return joinNames(lines, out, out_size);
+    }
     char path[160];
     snprintf(path, sizeof(path), "%s/%s", RFFE_DIR, model);
     return listDir(path, false, ".csv", out, out_size);
@@ -205,6 +378,28 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
 {
     out.clear();
     *skipped = 0;
+    if (isJcModel(model)) {
+        // Mỗi linh kiện trên đường RFFE đã chọn: kiểm 0x1F, bit[3:0] == USID theo file.
+        for (const JcEntry &e : s_jc) {
+            if (e.model != model || e.line != file) {
+                continue;
+            }
+            RefEntry r = {};
+            r.usid = e.usid;
+            r.reg = 0x1F;
+            r.expected = e.usid;
+            r.mask = 0x0F;
+            snprintf(r.name, sizeof(r.name), "%s", e.part.c_str());
+            snprintf(r.ic, sizeof(r.ic), "%s", e.part.c_str());
+            out.push_back(r);
+        }
+        if (out.empty()) {
+            snprintf(err, err_size, "Không có linh kiện cho %s / %s", model, file);
+            return false;
+        }
+        err[0] = '\0';
+        return true;
+    }
     if (!sdReady()) {
         snprintf(err, err_size, "Không đọc được thẻ SD");
         return false;
@@ -468,8 +663,10 @@ void buildPreview(const std::vector<RefEntry> &ref, Report &out)
             out.usids.push_back(u);
             it = out.usids.end() - 1;
         }
-        if (it->ic[0] == '\0' && e.ic[0] != '\0') {
-            snprintf(it->ic, sizeof(it->ic), "%s", e.ic);
+        if (e.ic[0] != '\0' && strstr(it->ic, e.ic) == nullptr) {
+            // Nhiều linh kiện cùng USID: ghép tên, cắt khi đầy.
+            const size_t n = strlen(it->ic);
+            snprintf(it->ic + n, sizeof(it->ic) - n, "%s%s", n ? "/" : "", e.ic);
         }
         addReg(*it, e.reg, &e);
     }
@@ -534,7 +731,7 @@ static void scanTask(void *)
     for (const UsidResult &u : rep.usids) {
         pass += u.pass;
         fail += u.fail;
-        missing += (u.in_ref && !u.responded) ? 1 : 0;
+        missing += (u.in_ref && !u.responded && u.usid != 0) ? 1 : 0;  // USID 0 (broadcast) không quét
     }
     if (!idle_ok) {
         snprintf(rep.message, sizeof(rep.message), "SDATA bị kéo lên khi nghỉ (pull-up / chạm nguồn) - không quét");

@@ -9,6 +9,9 @@
  *   mỗi dòng: usid,reg,expected[,mask[,tên[,ic]]]   (số hex 0x.. hoặc thập phân; dòng '#' là ghi chú)
  *   ví dụ:    0x5,0x00,0x38,0xFF,REG0,<tên IC theo nguồn của bạn>
  *   Cột ic (tùy chọn) gắn USID với IC RFFE của model; firmware chỉ hiển thị, không tự suy ra IC.
+ * Hoặc file JC BUS2MM4: /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv
+ *   (model_id,type_code,rffe_line,device_part,usid_dec,usid_hex): SELECT MODEL = model_id,
+ *   RFFE DATA = rffe_line; mỗi linh kiện kiểm 0x1F & 0x0F == USID. USID 0 (broadcast) không quét.
  *
  * SCAN: bus phải ở mức 0 khi nghỉ (không thì dừng). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
  * thanh ghi 0x1F đúng parity, bit[3:0] == USID đang hỏi và đọc lại hai lần cùng giá trị (không nối gì -> 0 USID).
@@ -65,11 +68,16 @@ struct Report {
 bool configured(void);
 // nullptr khi chân hợp lệ; ngược lại là lý do (chưa đặt chân, trùng chân, trùng SDIO Wi-Fi).
 const char *configError(void);
+// true nếu model lấy từ file JC BUS2MM4 (dữ liệu chỉ có USID theo đường RFFE, kiểm bằng thanh ghi 0x1F).
+bool isJcModel(const char *model);
+const char *jcFileName(void);
 int sclkPin(void);
 int sdataPin(void);
 
 // Danh sách cho lv_dropdown (ngăn cách '\n'). Trả số mục, -1 nếu không đọc được thẻ / thư mục.
+// Model = thư mục /sdcard/rffe/<MODEL>/ và các model trong /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv.
 int listModels(char *out, size_t out_size);
+// Model JC: danh sách đường RFFE của model; model thư mục: các file .csv.
 int listData(const char *model, char *out, size_t out_size);
 
 // Nạp file CSV tham chiếu. Trả false + err khi lỗi; dòng sai cú pháp bị bỏ qua (đếm vào *skipped).
