@@ -310,10 +310,35 @@ const char *jcSource(void)
     return s_jc_from_sd ? "thẻ SD" : "firmware";
 }
 
+// Tên hiển thị (chỉ đổi cách hiện, dữ liệu gốc giữ nguyên):
+//  - model: bỏ "IDS_" ở đầu và "_TYPE" ở cuối (IDS_iphxne16Pro_Max_TYPE -> iphxne16Pro_Max)
+//  - đường RFFE: bỏ ký tự rác ở cuối tên (không phải chữ, số, '_'), vd "SDR0@" -> "SDR0", "DATA[" -> "DATA".
+// Đã kiểm với bảng hiện có: không có hai model / hai đường cùng model bị trùng tên sau khi bỏ.
+static std::string jcModelName(const char *raw)
+{
+    std::string s(raw);
+    if (s.size() > 4 && strncasecmp(s.c_str(), "IDS_", 4) == 0) {
+        s.erase(0, 4);
+    }
+    if (s.size() > 5 && strcasecmp(s.c_str() + s.size() - 5, "_TYPE") == 0) {
+        s.erase(s.size() - 5);
+    }
+    return s;
+}
+
+static std::string jcLineName(const char *raw)
+{
+    std::string s(raw);
+    while (!s.empty() && !isalnum(static_cast<unsigned char>(s.back())) && s.back() != '_') {
+        s.pop_back();
+    }
+    return s.empty() ? std::string(raw) : s;
+}
+
 bool isJcModel(const char *model)
 {
     for (const JcEntry &e : s_jc) {
-        if (strcmp(e.model, model) == 0) {
+        if (jcModelName(e.model) == model) {
             return true;
         }
     }
@@ -356,7 +381,7 @@ int listModels(char *out, size_t out_size)
     loadJc(sd_ok);  // không có thẻ vẫn có bảng JC trong firmware
     std::vector<std::string> names;
     for (const JcEntry &e : s_jc) {
-        appendUnique(names, e.model);  // giữ thứ tự trong bảng
+        appendUnique(names, jcModelName(e.model));  // giữ thứ tự trong bảng
     }
     char dirs[1024];
     if (sd_ok && listDir(RFFE_DIR, true, nullptr, dirs, sizeof(dirs)) > 0) {
@@ -376,8 +401,8 @@ int listData(const char *model, char *out, size_t out_size)
     if (isJcModel(model)) {
         std::vector<std::string> lines;
         for (const JcEntry &e : s_jc) {
-            if (strcmp(e.model, model) == 0) {
-                appendUnique(lines, e.line);
+            if (jcModelName(e.model) == model) {
+                appendUnique(lines, jcLineName(e.line));
             }
         }
         return joinNames(lines, out, out_size);
@@ -433,7 +458,7 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
     if (isJcModel(model)) {
         // Mỗi linh kiện trên đường RFFE đã chọn: kiểm 0x1F, bit[3:0] == USID theo file.
         for (const JcEntry &e : s_jc) {
-            if (strcmp(e.model, model) != 0 || strcmp(e.line, file) != 0) {
+            if (jcModelName(e.model) != model || jcLineName(e.line) != file) {
                 continue;
             }
             RefEntry r = {};
