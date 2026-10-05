@@ -18,6 +18,7 @@
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "hcc_cores.h"
 #include "HCCUsbDisk.hpp"
+#include "rffe_jc_database.h"
 
 #ifndef CONFIG_HCC_RFFE_SCLK_GPIO
 #define CONFIG_HCC_RFFE_SCLK_GPIO -1
@@ -152,22 +153,43 @@ static int listDir(const char *path, bool want_dirs, const char *ext, char *out,
 }
 
 // ==================== Dữ liệu JC BUS2MM4 (model -> đường RFFE -> linh kiện -> USID) ====================
-// File do người dùng trích từ JC BUS2MM4, chép vào /sdcard/rffe/. Dùng nguyên giá trị trong file, không suy
-// đoán thêm. File chỉ có USID (không có giá trị thanh ghi) nên mỗi linh kiện được kiểm bằng thanh ghi 0x1F:
-// bit[3:0] phải bằng USID (đúng điều kiện probeUsid() dùng để nhận thiết bị).
+// Bảng người dùng trích từ JC BUS2MM4, nhúng sẵn trong firmware (rffe_jc_database.h). Nếu thẻ SD có
+// /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv thì dùng file đó (cập nhật không cần build lại). Dùng nguyên giá
+// trị, không suy đoán thêm. Dữ liệu chỉ có USID (không có giá trị thanh ghi) nên mỗi linh kiện được kiểm bằng
+// thanh ghi 0x1F: bit[3:0] phải bằng USID (đúng điều kiện probeUsid() dùng để nhận thiết bị).
 
 static const char *JC_FILE = "JC_BUS2MM4_iPhone_RFFE_USID.csv";
 
 struct JcEntry {
-    std::string model;
-    std::string line;
-    std::string part;
+    const char *model;
+    const char *line;
+    const char *part;
     uint8_t usid;
 };
 
 static std::vector<JcEntry> s_jc;
+static char *s_jc_buf = nullptr;  // nội dung file trên thẻ (các trường trỏ vào đây); nullptr = bảng firmware
+static bool s_jc_from_sd = false;
 static off_t s_jc_size = -1;
 static time_t s_jc_mtime = 0;
+
+static void useBuiltinJc(void)
+{
+    if (!s_jc_from_sd && !s_jc.empty()) {
+        return;
+    }
+    s_jc.clear();
+    free(s_jc_buf);
+    s_jc_buf = nullptr;
+    s_jc_from_sd = false;
+    s_jc_size = -1;
+    s_jc.reserve(HccJcRffeDb::kEntryCount);
+    for (size_t i = 0; i < HccJcRffeDb::kEntryCount; ++i) {
+        const HccJcRffeDb::Entry &e = HccJcRffeDb::kEntries[i];
+        s_jc.push_back({e.model_id, e.rffe_line, e.device_part, e.usid});
+    }
+    ESP_LOGI(TAG, "Bảng JC trong firmware: %d dòng", (int)s_jc.size());
+}
 
 // Tách một dòng CSV (RFC 4180): trường có thể nằm trong "..." với "" là một dấu ". Sửa tại chỗ.
 static int splitCsv(char *s, char **fields, int max)
@@ -203,32 +225,46 @@ static int splitCsv(char *s, char **fields, int max)
     return n;
 }
 
-// Nạp (hoặc giữ cache nếu file không đổi) bảng JC. Không có file: bảng rỗng.
-static void loadJc(void)
+static void trimRight(char *s)
+{
+    size_t n = strlen(s);
+    while (n > 0 && isspace(static_cast<unsigned char>(s[n - 1]))) {
+        s[--n] = '\0';
+    }
+}
+
+// Dùng file trên thẻ nếu có và hợp lệ (giữ cache khi file không đổi), nếu không thì bảng trong firmware.
+static void loadJc(bool sd_ok)
 {
     char path[160];
     snprintf(path, sizeof(path), "%s/%s", RFFE_DIR, JC_FILE);
     struct stat st;
-    if (stat(path, &st) != 0) {
-        s_jc.clear();
-        s_jc_size = -1;
+    if (!sd_ok || stat(path, &st) != 0 || st.st_size <= 0 || st.st_size > 512 * 1024) {
+        useBuiltinJc();
         return;
     }
-    if (st.st_size == s_jc_size && st.st_mtime == s_jc_mtime) {
+    if (s_jc_from_sd && st.st_size == s_jc_size && st.st_mtime == s_jc_mtime) {
         return;
     }
-    s_jc.clear();
-    s_jc_size = st.st_size;
-    s_jc_mtime = st.st_mtime;
-    FILE *f = fopen(path, "r");
-    if (f == nullptr) {
+    char *buf = static_cast<char *>(malloc(st.st_size + 1));
+    FILE *f = buf ? fopen(path, "rb") : nullptr;
+    const size_t got = f ? fread(buf, 1, st.st_size, f) : 0;
+    if (f) {
+        fclose(f);
+    }
+    if (got == 0) {
+        free(buf);
+        useBuiltinJc();
         return;
     }
-    char line[256];
+    buf[got] = '\0';
+
+    std::vector<JcEntry> rows;
     bool header_ok = false;
     int bad = 0;
-    while (fgets(line, sizeof(line), f) != nullptr) {
-        line[strcspn(line, "\r\n")] = '\0';
+    char *save = nullptr;
+    for (char *line = strtok_r(buf, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
+        line[strcspn(line, "\r")] = '\0';
         if (!header_ok) {
             // Cột: model_id,type_code,rffe_line,device_part,usid_dec,usid_hex
             header_ok = strstr(line, "model_id") != nullptr && strstr(line, "usid_hex") != nullptr;
@@ -242,6 +278,9 @@ static void loadJc(void)
             ++bad;
             continue;
         }
+        for (char *x : fld) {
+            trimRight(x);  // vài tên đường trong file có dấu cách thừa ở cuối
+        }
         char *end1 = nullptr, *end2 = nullptr;
         const long dec = strtol(fld[4], &end1, 10);
         const long hex = strtol(fld[5], &end2, 16);
@@ -249,17 +288,32 @@ static void loadJc(void)
             ++bad;  // USID hỏng / không khớp giữa 2 cột: bỏ, không tự sửa
             continue;
         }
-        s_jc.push_back({fld[0], fld[2], fld[3], static_cast<uint8_t>(dec)});
+        rows.push_back({fld[0], fld[2], fld[3], static_cast<uint8_t>(dec)});
     }
-    fclose(f);
-    ESP_LOGI(TAG, "%s: %d dòng%s, bỏ %d dòng lỗi", JC_FILE, (int)s_jc.size(), header_ok ? "" : " (sai dòng tiêu đề)",
-             bad);
+    ESP_LOGI(TAG, "%s trên thẻ: %d dòng%s, bỏ %d dòng lỗi", JC_FILE, (int)rows.size(),
+             header_ok ? "" : " (sai dòng tiêu đề)", bad);
+    if (rows.empty()) {
+        free(buf);
+        useBuiltinJc();
+        return;
+    }
+    s_jc.swap(rows);
+    free(s_jc_buf);
+    s_jc_buf = buf;
+    s_jc_from_sd = true;
+    s_jc_size = st.st_size;
+    s_jc_mtime = st.st_mtime;
+}
+
+const char *jcSource(void)
+{
+    return s_jc_from_sd ? "thẻ SD" : "firmware";
 }
 
 bool isJcModel(const char *model)
 {
     for (const JcEntry &e : s_jc) {
-        if (e.model == model) {
+        if (strcmp(e.model, model) == 0) {
             return true;
         }
     }
@@ -298,16 +352,14 @@ static int joinNames(const std::vector<std::string> &names, char *out, size_t ou
 int listModels(char *out, size_t out_size)
 {
     out[0] = '\0';
-    if (!sdReady()) {
-        return -1;
-    }
-    loadJc();
+    const bool sd_ok = sdReady();
+    loadJc(sd_ok);  // không có thẻ vẫn có bảng JC trong firmware
     std::vector<std::string> names;
     for (const JcEntry &e : s_jc) {
-        appendUnique(names, e.model);  // giữ thứ tự trong file
+        appendUnique(names, e.model);  // giữ thứ tự trong bảng
     }
     char dirs[1024];
-    if (listDir(RFFE_DIR, true, nullptr, dirs, sizeof(dirs)) > 0) {
+    if (sd_ok && listDir(RFFE_DIR, true, nullptr, dirs, sizeof(dirs)) > 0) {
         char *save = nullptr;
         for (char *t = strtok_r(dirs, "\n", &save); t; t = strtok_r(nullptr, "\n", &save)) {
             appendUnique(names, t);
@@ -324,7 +376,7 @@ int listData(const char *model, char *out, size_t out_size)
     if (isJcModel(model)) {
         std::vector<std::string> lines;
         for (const JcEntry &e : s_jc) {
-            if (e.model == model) {
+            if (strcmp(e.model, model) == 0) {
                 appendUnique(lines, e.line);
             }
         }
@@ -381,7 +433,7 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
     if (isJcModel(model)) {
         // Mỗi linh kiện trên đường RFFE đã chọn: kiểm 0x1F, bit[3:0] == USID theo file.
         for (const JcEntry &e : s_jc) {
-            if (e.model != model || e.line != file) {
+            if (strcmp(e.model, model) != 0 || strcmp(e.line, file) != 0) {
                 continue;
             }
             RefEntry r = {};
@@ -389,8 +441,8 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
             r.reg = 0x1F;
             r.expected = e.usid;
             r.mask = 0x0F;
-            snprintf(r.name, sizeof(r.name), "%s", e.part.c_str());
-            snprintf(r.ic, sizeof(r.ic), "%s", e.part.c_str());
+            snprintf(r.name, sizeof(r.name), "%s", e.part);
+            snprintf(r.ic, sizeof(r.ic), "%s", e.part);
             out.push_back(r);
         }
         if (out.empty()) {

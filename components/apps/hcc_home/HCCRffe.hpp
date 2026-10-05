@@ -1,15 +1,16 @@
 /*
- * HCCRffe: đọc thanh ghi thiết bị MIPI RFFE (bit-bang SCLK / SDATA) và so với dữ liệu tham chiếu trên thẻ SD.
+ * HCCRffe: đọc thanh ghi thiết bị MIPI RFFE (bit-bang SCLK / SDATA) và so với dữ liệu tham chiếu
+ * (bảng JC BUS2MM4 trong firmware hoặc file trên thẻ SD).
  *
  * Chân SCLK / SDATA đặt trong menuconfig (HCC RFFE), mặc định -1 = chưa nối: SCAN chỉ báo chưa cấu hình.
  * RFFE chạy mức 1,8 V; GPIO của board là 3,3 V nên phải qua mạch chuyển mức hai chiều.
  *
- * Dữ liệu tham chiếu (do người dùng cung cấp, firmware KHÔNG có sẵn bảng nào):
+ * Dữ liệu tham chiếu thêm (do người dùng cung cấp):
  *   /sdcard/rffe/<MODEL>/<DATA>.csv
  *   mỗi dòng: usid,reg,expected[,mask[,tên[,ic]]]   (số hex 0x.. hoặc thập phân; dòng '#' là ghi chú)
  *   ví dụ:    0x5,0x00,0x38,0xFF,REG0,<tên IC theo nguồn của bạn>
  *   Cột ic (tùy chọn) gắn USID với IC RFFE của model; firmware chỉ hiển thị, không tự suy ra IC.
- * Hoặc file JC BUS2MM4: /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv
+ * Bảng JC BUS2MM4 nhúng sẵn (rffe_jc_database.h); file /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv nếu có sẽ thay thế
  *   (model_id,type_code,rffe_line,device_part,usid_dec,usid_hex): SELECT MODEL = model_id,
  *   RFFE DATA = rffe_line; mỗi linh kiện kiểm 0x1F & 0x0F == USID. USID 0 (broadcast) không quét.
  *
@@ -71,11 +72,13 @@ const char *configError(void);
 // true nếu model lấy từ file JC BUS2MM4 (dữ liệu chỉ có USID theo đường RFFE, kiểm bằng thanh ghi 0x1F).
 bool isJcModel(const char *model);
 const char *jcFileName(void);
+// Nguồn bảng JC đang dùng: "firmware" (rffe_jc_database.h) hoặc "thẻ SD" (file CSV ghi đè).
+const char *jcSource(void);
 int sclkPin(void);
 int sdataPin(void);
 
 // Danh sách cho lv_dropdown (ngăn cách '\n'). Trả số mục, -1 nếu không đọc được thẻ / thư mục.
-// Model = thư mục /sdcard/rffe/<MODEL>/ và các model trong /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv.
+// Model = các model trong bảng JC (firmware / thẻ) và thư mục /sdcard/rffe/<MODEL>/.
 int listModels(char *out, size_t out_size);
 // Model JC: danh sách đường RFFE của model; model thư mục: các file .csv.
 int listData(const char *model, char *out, size_t out_size);
