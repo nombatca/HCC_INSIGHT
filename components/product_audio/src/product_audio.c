@@ -155,6 +155,18 @@ esp_err_t product_audio_codec_volume_set(int volume, int *volume_set)
     return ESP_OK;
 }
 
+// HCC: đặt độ nhạy micro (ES7210) sau khi thiết bị thu đã mở. product_audio_codec_set_fs() đặt gain lúc thiết bị
+// đang đóng (giữa close và open) nên có thể không có tác dụng.
+esp_err_t product_audio_codec_set_in_gain(float db)
+{
+    if (record_dev_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    int ret = esp_codec_dev_set_in_gain(record_dev_handle, db);
+    ESP_LOGI(TAG, "Mic gain %.1f dB -> %d", db, ret);
+    return ret == ESP_CODEC_DEV_OK ? ESP_OK : ESP_FAIL;
+}
+
 int product_audio_codec_volume_get(void)
 {
     return _vloume_intensity;

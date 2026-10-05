@@ -65,6 +65,11 @@ esp_err_t product_audio_codec_volume_set(int volume, int *volume_set);
 int product_audio_codec_volume_get(void);
 
 /**
+ * @brief Set microphone (ES7210) input gain in dB. Call after the record device is open (after set_fs).
+ */
+esp_err_t product_audio_codec_set_in_gain(float db);
+
+/**
  * @brief Stop I2S function.
  *
  * @return

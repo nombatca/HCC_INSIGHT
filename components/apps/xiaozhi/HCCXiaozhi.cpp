@@ -56,6 +56,7 @@ constexpr int SAMPLE_RATE = 16000;
 constexpr int FRAME_MS = 60;
 constexpr int FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS / 1000;  // 960
 constexpr int HELLO_TIMEOUT_MS = 10000;
+constexpr float MIC_GAIN_DB = 33.0f;  // ES7210: 0..37.5 dB
 constexpr int MAX_CHAT = 40;
 constexpr int PLAY_QUEUE_LEN = 96;   // ~5.8 s âm thanh 60 ms/khung
 constexpr int MAX_WS_MESSAGE = 64 * 1024;
@@ -655,6 +656,8 @@ void prepareAudio(void)
     product_audio_codec_set_fs(SAMPLE_RATE, 16, I2S_SLOT_MODE_STEREO);
     product_audio_codec_volume_set(product_audio_codec_volume_get(), nullptr);
     product_audio_codec_mute_set(false);
+    // Đo trên board: với gain mặc định đỉnh micro chỉ vài trăm (trên 32767) -> máy chủ không nhận ra lời nói.
+    product_audio_codec_set_in_gain(MIC_GAIN_DB);
 }
 
 void startListening(void)
