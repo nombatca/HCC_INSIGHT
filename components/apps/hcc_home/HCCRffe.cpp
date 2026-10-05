@@ -237,6 +237,7 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
         char *f_exp = nextField(&cur);
         char *f_mask = nextField(&cur);
         char *f_name = nextField(&cur);
+        char *f_ic = nextField(&cur);
         long usid, reg, exp, mask = 0xFF;
         const bool ok = parseNum(f_usid, 15, &usid) && parseNum(f_reg, 0xFF, &reg) &&
                         parseNum(f_exp, 0xFF, &exp) &&
@@ -257,6 +258,9 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
         if (f_name) {
             snprintf(e.name, sizeof(e.name), "%s", f_name);
         }
+        if (f_ic) {
+            snprintf(e.ic, sizeof(e.ic), "%s", f_ic);
+        }
         out.push_back(e);
         if (out.size() >= 512) {
             break;
@@ -264,7 +268,7 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
     }
     fclose(f);
     if (out.empty()) {
-        snprintf(err, err_size, "%s không có dòng hợp lệ (usid,reg,expected[,mask[,tên]])", file);
+        snprintf(err, err_size, "%s không có dòng hợp lệ (usid,reg,expected[,mask[,tên[,ic]]])", file);
         return false;
     }
     err[0] = '\0';
@@ -463,6 +467,9 @@ void buildPreview(const std::vector<RefEntry> &ref, Report &out)
             u.in_ref = true;
             out.usids.push_back(u);
             it = out.usids.end() - 1;
+        }
+        if (it->ic[0] == '\0' && e.ic[0] != '\0') {
+            snprintf(it->ic, sizeof(it->ic), "%s", e.ic);
         }
         addReg(*it, e.reg, &e);
     }

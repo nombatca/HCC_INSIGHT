@@ -6,8 +6,9 @@
  *
  * Dữ liệu tham chiếu (do người dùng cung cấp, firmware KHÔNG có sẵn bảng nào):
  *   /sdcard/rffe/<MODEL>/<DATA>.csv
- *   mỗi dòng: usid,reg,expected[,mask[,tên]]   (số hex 0x.. hoặc thập phân; dòng '#' là ghi chú)
- *   ví dụ:    0x5,0x00,0x38,0xFF,REG0
+ *   mỗi dòng: usid,reg,expected[,mask[,tên[,ic]]]   (số hex 0x.. hoặc thập phân; dòng '#' là ghi chú)
+ *   ví dụ:    0x5,0x00,0x38,0xFF,REG0,<tên IC theo nguồn của bạn>
+ *   Cột ic (tùy chọn) gắn USID với IC RFFE của model; firmware chỉ hiển thị, không tự suy ra IC.
  *
  * SCAN: bus phải ở mức 0 khi nghỉ (không thì dừng). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
  * thanh ghi 0x1F đúng parity, bit[3:0] == USID đang hỏi và đọc lại hai lần cùng giá trị (không nối gì -> 0 USID).
@@ -29,6 +30,7 @@ struct RefEntry {
     uint8_t expected;
     uint8_t mask;
     char name[24];
+    char ic[24];     // tên IC theo dữ liệu tham chiếu ("" nếu file không ghi)
 };
 
 struct RegResult {
@@ -45,6 +47,7 @@ struct UsidResult {
     uint8_t usid;
     bool responded;
     bool in_ref;     // USID có trong dữ liệu tham chiếu
+    char ic[24];     // IC của USID theo dữ liệu tham chiếu ("" nếu không có)
     uint8_t id_regs[3];  // giá trị thô 0x1D, 0x1E, 0x1F
     bool id_ok[3];
     int pass;

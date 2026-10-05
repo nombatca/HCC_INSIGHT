@@ -188,11 +188,15 @@ static void renderTable(void)
     lv_obj_clear_flag(s_v.id_line, LV_OBJ_FLAG_HIDDEN);
 
     const UsidResult &u = rep.usids[s_v.sel];
-    char line[160];
+    char ic[40] = "";
+    if (u.ic[0]) {
+        snprintf(ic, sizeof(ic), "  IC %s", u.ic);
+    }
+    char line[200];
     if (!rep.scanned) {
-        snprintf(line, sizeof(line), "USID 0x%X  -  dữ liệu tham chiếu, chưa scan", u.usid);
+        snprintf(line, sizeof(line), "USID 0x%X%s  -  dữ liệu tham chiếu, chưa scan", u.usid, ic);
     } else if (!u.responded) {
-        snprintf(line, sizeof(line), "USID 0x%X  -  không phản hồi", u.usid);
+        snprintf(line, sizeof(line), "USID 0x%X%s  -  không phản hồi", u.usid, ic);
     } else {
         char ids[3][8];
         for (int i = 0; i < 3; ++i) {
@@ -202,8 +206,8 @@ static void renderTable(void)
                 snprintf(ids[i], sizeof(ids[i]), "--");
             }
         }
-        snprintf(line, sizeof(line), "USID 0x%X   |   0x1D = %s   0x1E = %s   0x1F = %s   (giá trị thô)", u.usid, ids[0],
-                 ids[1], ids[2]);
+        snprintf(line, sizeof(line), "USID 0x%X%s   |   0x1D = %s   0x1E = %s   0x1F = %s   (giá trị thô)", u.usid, ic,
+                 ids[0], ids[1], ids[2]);
     }
     lv_label_set_text(s_v.id_line, line);
 
@@ -300,7 +304,7 @@ static void renderReport(void)
         lv_label_set_text(s_v.empty,
                           "Chưa có dữ liệu RFFE trên thẻ SD.\n\n"
                           "Tạo thư mục /rffe/<MODEL>/ trên thẻ và chép file .csv vào đó.\n"
-                          "Mỗi dòng: usid,reg,expected,mask,tên   (vd: 0x5,0x00,0x38,0xFF,REG0)\n\n"
+                          "Mỗi dòng: usid,reg,expected,mask,tên,ic   (vd: 0x5,0x00,0x38,0xFF,REG0,<IC>)\n\n"
                           "Không có dữ liệu vẫn SCAN được: các USID tìm thấy sẽ đọc thô 0x00..0x1F.");
     } else if (rep.scanned) {
         lv_label_set_text(s_v.empty, "Không có USID nào phản hồi.");
