@@ -9,9 +9,10 @@
  *   mỗi dòng: usid,reg,expected[,mask[,tên]]   (số hex 0x.. hoặc thập phân; dòng '#' là ghi chú)
  *   ví dụ:    0x5,0x00,0x38,0xFF,REG0
  *
- * SCAN: hỏi USID 1..15 (0 là broadcast) bằng lệnh Register Read 0x1D / 0x1E / 0x1F; thiết bị coi là có phản
- * hồi khi bit chẵn lẻ của dữ liệu đọc về đúng. USID có trong dữ liệu tham chiếu: đọc đúng các thanh ghi đó
- * (địa chỉ > 0x1F dùng Extended Register Read) và so (giá trị & mask) == (chuẩn & mask). USID không có tham
+ * SCAN: bus phải ở mức 0 khi nghỉ (không thì dừng). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
+ * thanh ghi 0x1F đúng parity, bit[3:0] == USID đang hỏi và đọc lại hai lần cùng giá trị (không nối gì -> 0 USID).
+ * Lưu ý board P4 WIFI6: GPIO14..19 và 54 là SDIO / reset của chip Wi-Fi C6 - firmware từ chối các chân này.
+ * USID có trong dữ liệu tham chiếu: đọc đúng các thanh ghi đó (địa chỉ > 0x1F dùng Extended Register Read) và so (giá trị & mask) == (chuẩn & mask). USID không có tham
  * chiếu: đọc thô 0x00..0x1F, không kết luận.
  */
 #pragma once
@@ -59,6 +60,8 @@ struct Report {
 };
 
 bool configured(void);
+// nullptr khi chân hợp lệ; ngược lại là lý do (chưa đặt chân, trùng chân, trùng SDIO Wi-Fi).
+const char *configError(void);
 int sclkPin(void);
 int sdataPin(void);
 

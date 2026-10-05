@@ -410,7 +410,7 @@ static void onScanClicked(lv_event_t *)
         return;
     }
     if (!HCCRffe::configured()) {
-        setStatus("Chưa cấu hình chân SCLK / SDATA (menuconfig > HCC RFFE)", C_ORANGE);
+        setStatus(HCCRffe::configError(), C_ORANGE);
         return;
     }
     if (!HCCRffe::startScan(s_v.ref)) {
@@ -469,7 +469,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
         snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d   |   bus 1,8 V qua mạch chuyển mức",
                  HCCRffe::sclkPin(), HCCRffe::sdataPin());
     } else {
-        snprintf(pins, sizeof(pins), "Chưa cấu hình chân SCLK / SDATA  (menuconfig > HCC RFFE)");
+        snprintf(pins, sizeof(pins), "%s", HCCRffe::configError());
     }
     lv_obj_t *pin_label =
         makeLabel(root, pins, HCCRffe::configured() ? C_MUTED : C_ORANGE, &lv_font_be_vietnam_16);

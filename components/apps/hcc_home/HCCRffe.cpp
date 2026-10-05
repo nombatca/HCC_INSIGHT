@@ -44,9 +44,48 @@ static volatile uint32_t s_serial = 0;
 static Report s_report;
 static std::vector<RefEntry> s_scan_ref;
 
+// Chân đang được board dùng cho việc khác: chọn trùng là phá chức năng đó.
+static bool pinBusy(int pin)
+{
+#ifdef CONFIG_ESP_HOSTED_SDIO_PIN_CLK
+    // SDIO tới chip Wi-Fi ESP32-C6 (esp_hosted).
+    const int sdio[] = {CONFIG_ESP_HOSTED_SDIO_PIN_CLK, CONFIG_ESP_HOSTED_SDIO_PIN_CMD, CONFIG_ESP_HOSTED_SDIO_PIN_D0,
+#ifdef CONFIG_ESP_HOSTED_SDIO_PIN_D1
+                        CONFIG_ESP_HOSTED_SDIO_PIN_D1,
+#endif
+#ifdef CONFIG_ESP_HOSTED_SDIO_PIN_D2
+                        CONFIG_ESP_HOSTED_SDIO_PIN_D2,
+#endif
+#ifdef CONFIG_ESP_HOSTED_SDIO_PIN_D3
+                        CONFIG_ESP_HOSTED_SDIO_PIN_D3,
+#endif
+                        CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE};
+    for (int p : sdio) {
+        if (p == pin) {
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+const char *configError(void)
+{
+    if (PIN_SCLK < 0 || PIN_SDATA < 0) {
+        return "Chưa cấu hình chân SCLK / SDATA (menuconfig > HCC RFFE)";
+    }
+    if (PIN_SCLK == PIN_SDATA) {
+        return "SCLK và SDATA trùng chân";
+    }
+    if (pinBusy(PIN_SCLK) || pinBusy(PIN_SDATA)) {
+        return "Chân RFFE trùng SDIO Wi-Fi (ESP32-C6) - chọn chân khác trong menuconfig";
+    }
+    return nullptr;
+}
+
 bool configured(void)
 {
-    return PIN_SCLK >= 0 && PIN_SDATA >= 0 && PIN_SCLK != PIN_SDATA;
+    return configError() == nullptr;
 }
 
 int sclkPin(void)
@@ -325,7 +364,7 @@ static bool readReg(uint8_t usid, uint16_t reg, uint8_t *value)
     esp_rom_delay_us(HALF_US);
     // Sequence Start Condition: xung SDATA lên-xuống khi SCLK ở mức thấp.
     sdata(1);
-    esp_rom_delay_us(HALF_US);
+    esp_rom_delay_us(HALF_US * 2);
     sdata(0);
     esp_rom_delay_us(HALF_US);
     if (reg <= 0x1F) {
@@ -359,6 +398,45 @@ static bool readReg(uint8_t usid, uint16_t reg, uint8_t *value)
 }
 
 // ==================== Quét ====================
+
+// Khi master thả SDATA (chỉ còn pull-down nội) bus phải ở mức 0. Nếu bị kéo lên (pull-up của mạch chuyển
+// mức, chạm nguồn) thì mọi lần đọc ra 0xFF + P=1 vẫn đúng parity lẻ -> sẽ sinh USID ảo, nên không quét.
+static bool busIdleLow(void)
+{
+    sclk(0);
+    sdata(0);
+    sdataDrive(false);
+    esp_rom_delay_us(50);
+    int highs = 0;
+    for (int i = 0; i < 16; ++i) {
+        highs += gpio_get_level(static_cast<gpio_num_t>(PIN_SDATA));
+        esp_rom_delay_us(5);
+    }
+    sdataDrive(true);
+    sdata(0);
+    return highs == 0;
+}
+
+// Chỉ nhận USID khi có thiết bị thật trả lời: thanh ghi 0x1F (bit[3:0] = USID của chính thiết bị theo spec
+// RFFE) đúng parity, 4 bit thấp trùng USID đang hỏi, và đọc lại lần hai ra cùng giá trị.
+static bool probeUsid(uint8_t usid, UsidResult &u)
+{
+    uint8_t r1 = 0, r2 = 0;
+    if (!readReg(usid, 0x1F, &r1) || (r1 & 0x0F) != usid) {
+        return false;
+    }
+    esp_rom_delay_us(20);
+    if (!readReg(usid, 0x1F, &r2) || r2 != r1) {
+        return false;
+    }
+    u.id_regs[2] = r1;
+    u.id_ok[2] = true;
+    u.id_ok[0] = readReg(usid, 0x1D, &u.id_regs[0]);
+    u.id_ok[1] = readReg(usid, 0x1E, &u.id_regs[1]);
+    ESP_LOGI(TAG, "USID 0x%X: 0x1F=0x%02X 0x1D=%s0x%02X 0x1E=%s0x%02X", usid, r1, u.id_ok[0] ? "" : "?",
+             u.id_regs[0], u.id_ok[1] ? "" : "?", u.id_regs[1]);
+    return true;
+}
 
 static void addReg(UsidResult &u, uint16_t reg, const RefEntry *ref)
 {
@@ -400,13 +478,14 @@ static void scanTask(void *)
     gpioInit();
 
     int found = 0;
-    for (uint8_t usid = 1; usid <= 15; ++usid) {
+    const bool idle_ok = busIdleLow();
+    if (!idle_ok) {
+        ESP_LOGW(TAG, "SDATA bị kéo lên khi bus nghỉ - bỏ quét");
+    }
+    for (uint8_t usid = 1; idle_ok && usid <= 15; ++usid) {  // USID 0 là broadcast
         UsidResult probe = {};
         probe.usid = usid;
-        for (int i = 0; i < 3; ++i) {
-            probe.id_ok[i] = readReg(usid, 0x1D + i, &probe.id_regs[i]);
-            probe.responded |= probe.id_ok[i];
-        }
+        probe.responded = probeUsid(usid, probe);
         auto it = std::find_if(rep.usids.begin(), rep.usids.end(),
                                [&](const UsidResult &u) { return u.usid == usid; });
         if (it == rep.usids.end()) {
@@ -450,7 +529,9 @@ static void scanTask(void *)
         fail += u.fail;
         missing += (u.in_ref && !u.responded) ? 1 : 0;
     }
-    if (found == 0) {
+    if (!idle_ok) {
+        snprintf(rep.message, sizeof(rep.message), "SDATA bị kéo lên khi nghỉ (pull-up / chạm nguồn) - không quét");
+    } else if (found == 0) {
         snprintf(rep.message, sizeof(rep.message), "Không có USID nào phản hồi (kiểm tra dây, nguồn 1,8 V, chuyển mức)");
     } else if (s_scan_ref.empty()) {
         snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID - chưa chọn dữ liệu để so", found);
