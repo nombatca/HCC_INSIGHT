@@ -1,0 +1,498 @@
+#include "HCCRffe.hpp"
+
+#include <ctype.h>
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <algorithm>
+#include <string>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_rom_sys.h"
+#include "esp_log.h"
+#include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
+#include "hcc_cores.h"
+#include "HCCUsbDisk.hpp"
+
+#ifndef CONFIG_HCC_RFFE_SCLK_GPIO
+#define CONFIG_HCC_RFFE_SCLK_GPIO -1
+#endif
+#ifndef CONFIG_HCC_RFFE_SDATA_GPIO
+#define CONFIG_HCC_RFFE_SDATA_GPIO -1
+#endif
+#ifndef CONFIG_HCC_RFFE_HALF_PERIOD_US
+#define CONFIG_HCC_RFFE_HALF_PERIOD_US 5
+#endif
+
+namespace HCCRffe {
+
+static const char *TAG = "HCCRffe";
+static const char *RFFE_DIR = BSP_SD_MOUNT_POINT "/rffe";
+
+static const int PIN_SCLK = CONFIG_HCC_RFFE_SCLK_GPIO;
+static const int PIN_SDATA = CONFIG_HCC_RFFE_SDATA_GPIO;
+static const uint32_t HALF_US = CONFIG_HCC_RFFE_HALF_PERIOD_US;
+
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_gpio_ready = false;
+static volatile bool s_busy = false;
+static volatile uint32_t s_serial = 0;
+static Report s_report;
+static std::vector<RefEntry> s_scan_ref;
+
+bool configured(void)
+{
+    return PIN_SCLK >= 0 && PIN_SDATA >= 0 && PIN_SCLK != PIN_SDATA;
+}
+
+int sclkPin(void)
+{
+    return PIN_SCLK;
+}
+
+int sdataPin(void)
+{
+    return PIN_SDATA;
+}
+
+// ==================== Thẻ SD ====================
+
+static bool sdReady(void)
+{
+    if (HCCUsbDisk::state() != HCCUsbDisk::State::Off) {
+        return false;  // thẻ đang giao cho máy tính (USB DISK)
+    }
+    const esp_err_t ret = bsp_sdcard_mount();
+    return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;  // INVALID_STATE: đã mount nơi khác
+}
+
+static int listDir(const char *path, bool want_dirs, const char *ext, char *out, size_t out_size)
+{
+    out[0] = '\0';
+    if (!sdReady()) {
+        return -1;
+    }
+    DIR *dir = opendir(path);
+    if (dir == nullptr) {
+        return -1;
+    }
+    std::vector<std::string> names;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (ent->d_name[0] == '.' || (ent->d_type == DT_DIR) != want_dirs) {
+            continue;
+        }
+        if (ext != nullptr) {
+            const size_t nl = strlen(ent->d_name), el = strlen(ext);
+            if (nl <= el || strcasecmp(ent->d_name + nl - el, ext) != 0) {
+                continue;
+            }
+        }
+        names.emplace_back(ent->d_name);
+    }
+    closedir(dir);
+    std::sort(names.begin(), names.end(), [](const std::string &a, const std::string &b) {
+        return strcasecmp(a.c_str(), b.c_str()) < 0;
+    });
+    size_t used = 0;
+    int count = 0;
+    for (const std::string &n : names) {
+        const size_t need = n.size() + (count ? 1 : 0);
+        if (used + need + 1 > out_size) {
+            break;
+        }
+        used += snprintf(out + used, out_size - used, "%s%s", count ? "\n" : "", n.c_str());
+        ++count;
+    }
+    return count;
+}
+
+int listModels(char *out, size_t out_size)
+{
+    return listDir(RFFE_DIR, true, nullptr, out, out_size);
+}
+
+int listData(const char *model, char *out, size_t out_size)
+{
+    char path[160];
+    snprintf(path, sizeof(path), "%s/%s", RFFE_DIR, model);
+    return listDir(path, false, ".csv", out, out_size);
+}
+
+// Tách trường kế tiếp (ngăn bởi ',' hoặc ';'), bỏ khoảng trắng hai đầu.
+static char *nextField(char **cursor)
+{
+    char *s = *cursor;
+    if (s == nullptr) {
+        return nullptr;
+    }
+    char *sep = strpbrk(s, ",;");
+    if (sep) {
+        *sep = '\0';
+        *cursor = sep + 1;
+    } else {
+        *cursor = nullptr;
+    }
+    while (isspace(static_cast<unsigned char>(*s))) {
+        ++s;
+    }
+    char *e = s + strlen(s);
+    while (e > s && isspace(static_cast<unsigned char>(e[-1]))) {
+        *--e = '\0';
+    }
+    return s;
+}
+
+static bool parseNum(const char *s, long max, long *out)
+{
+    if (s == nullptr || *s == '\0') {
+        return false;
+    }
+    char *end = nullptr;
+    const long v = strtol(s, &end, 0);
+    if (end == s || *end != '\0' || v < 0 || v > max) {
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+bool loadReference(const char *model, const char *file, std::vector<RefEntry> &out, int *skipped,
+                   char *err, size_t err_size)
+{
+    out.clear();
+    *skipped = 0;
+    if (!sdReady()) {
+        snprintf(err, err_size, "Không đọc được thẻ SD");
+        return false;
+    }
+    char path[200];
+    snprintf(path, sizeof(path), "%s/%s/%s", RFFE_DIR, model, file);
+    FILE *f = fopen(path, "r");
+    if (f == nullptr) {
+        snprintf(err, err_size, "Không mở được %s", file);
+        return false;
+    }
+    char line[160];
+    bool first = true;
+    while (fgets(line, sizeof(line), f) != nullptr) {
+        char *p = line;
+        if (first && (uint8_t)p[0] == 0xEF && (uint8_t)p[1] == 0xBB && (uint8_t)p[2] == 0xBF) {
+            p += 3;  // BOM UTF-8
+        }
+        while (isspace(static_cast<unsigned char>(*p))) {
+            ++p;
+        }
+        if (*p == '\0' || *p == '#') {
+            first = false;
+            continue;
+        }
+        p[strcspn(p, "\r\n")] = '\0';
+        char *cur = p;
+        char *f_usid = nextField(&cur);
+        char *f_reg = nextField(&cur);
+        char *f_exp = nextField(&cur);
+        char *f_mask = nextField(&cur);
+        char *f_name = nextField(&cur);
+        long usid, reg, exp, mask = 0xFF;
+        const bool ok = parseNum(f_usid, 15, &usid) && parseNum(f_reg, 0xFF, &reg) &&
+                        parseNum(f_exp, 0xFF, &exp) &&
+                        (f_mask == nullptr || *f_mask == '\0' || parseNum(f_mask, 0xFF, &mask));
+        if (!ok) {
+            if (!first) {  // dòng đầu không phải số = dòng tiêu đề cột
+                ++*skipped;
+            }
+            first = false;
+            continue;
+        }
+        first = false;
+        RefEntry e = {};
+        e.usid = static_cast<uint8_t>(usid);
+        e.reg = static_cast<uint16_t>(reg);
+        e.expected = static_cast<uint8_t>(exp);
+        e.mask = static_cast<uint8_t>(mask);
+        if (f_name) {
+            snprintf(e.name, sizeof(e.name), "%s", f_name);
+        }
+        out.push_back(e);
+        if (out.size() >= 512) {
+            break;
+        }
+    }
+    fclose(f);
+    if (out.empty()) {
+        snprintf(err, err_size, "%s không có dòng hợp lệ (usid,reg,expected[,mask[,tên]])", file);
+        return false;
+    }
+    err[0] = '\0';
+    return true;
+}
+
+// ==================== Bus RFFE (bit-bang) ====================
+// Master đổi SDATA ở cạnh lên SCLK, slave lấy mẫu ở cạnh xuống; khi đọc, slave đổi ở cạnh lên và master
+// lấy mẫu trước cạnh xuống. Bit chẵn lẻ: lẻ (tổng số bit 1 kể cả bit chẵn lẻ là số lẻ).
+
+static inline void sclk(int v)
+{
+    gpio_set_level(static_cast<gpio_num_t>(PIN_SCLK), v);
+}
+
+static inline void sdata(int v)
+{
+    gpio_set_level(static_cast<gpio_num_t>(PIN_SDATA), v);
+}
+
+static inline void sdataDrive(bool drive)
+{
+    gpio_set_direction(static_cast<gpio_num_t>(PIN_SDATA), drive ? GPIO_MODE_INPUT_OUTPUT : GPIO_MODE_INPUT);
+}
+
+static void gpioInit(void)
+{
+    if (s_gpio_ready) {
+        return;
+    }
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << (PIN_SCLK & 63);  // configured() đã kiểm tra chân >= 0
+    io.mode = GPIO_MODE_OUTPUT;
+    gpio_config(&io);
+    io.pin_bit_mask = 1ULL << (PIN_SDATA & 63);
+    io.mode = GPIO_MODE_INPUT_OUTPUT;
+    io.pull_down_en = GPIO_PULLDOWN_ENABLE;  // không có slave: đọc về 0 -> sai chẵn lẻ -> "không phản hồi"
+    gpio_config(&io);
+    sclk(0);
+    sdata(0);
+    s_gpio_ready = true;
+}
+
+static void writeBit(int b)
+{
+    sclk(1);
+    sdata(b);
+    esp_rom_delay_us(HALF_US);
+    sclk(0);
+    esp_rom_delay_us(HALF_US);
+}
+
+static int readBit(void)
+{
+    sclk(1);
+    esp_rom_delay_us(HALF_US);
+    const int v = gpio_get_level(static_cast<gpio_num_t>(PIN_SDATA));
+    sclk(0);
+    esp_rom_delay_us(HALF_US);
+    return v;
+}
+
+// Ghi n bit (MSB trước), trả số bit 1.
+static int writeBits(uint32_t value, int n)
+{
+    int ones = 0;
+    for (int i = n - 1; i >= 0; --i) {
+        const int b = (value >> i) & 1;
+        ones += b;
+        writeBit(b);
+    }
+    return ones;
+}
+
+// Bus park: master kéo SDATA xuống trong nửa chu kỳ đầu rồi thả ra ở cạnh xuống.
+static void busPark(bool release_after)
+{
+    sclk(1);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    sclk(0);
+    if (release_after) {
+        sdataDrive(false);
+    }
+    esp_rom_delay_us(HALF_US);
+}
+
+// Đọc 1 thanh ghi. Trả true khi bit chẵn lẻ của byte đọc về đúng.
+static bool readReg(uint8_t usid, uint16_t reg, uint8_t *value)
+{
+    int v = 0;
+    int ones = 0;
+    portENTER_CRITICAL(&s_mux);
+    sdataDrive(true);
+    sclk(0);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    // Sequence Start Condition: xung SDATA lên-xuống khi SCLK ở mức thấp.
+    sdata(1);
+    esp_rom_delay_us(HALF_US);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    if (reg <= 0x1F) {
+        // Register Read: USID[3:0] 011 A[4:0] P
+        const int c = writeBits(((uint32_t)usid << 8) | 0x60 | reg, 12);
+        writeBit((c & 1) ? 0 : 1);
+    } else {
+        // Extended Register Read (1 byte): USID[3:0] 0010 0000 P, A[7:0] P
+        const int c = writeBits(((uint32_t)usid << 8) | 0x20, 12);
+        writeBit((c & 1) ? 0 : 1);
+        const int a = writeBits(reg & 0xFF, 8);
+        writeBit((a & 1) ? 0 : 1);
+    }
+    busPark(true);
+    for (int i = 0; i < 8; ++i) {
+        const int b = readBit();
+        v = (v << 1) | b;
+        ones += b;
+    }
+    ones += readBit();  // bit chẵn lẻ của slave
+    // Bus park cuối: slave thả SDATA, master lấy lại bus và giữ mức thấp.
+    sclk(1);
+    esp_rom_delay_us(HALF_US);
+    sclk(0);
+    sdataDrive(true);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    portEXIT_CRITICAL(&s_mux);
+    *value = static_cast<uint8_t>(v);
+    return (ones & 1) == 1;
+}
+
+// ==================== Quét ====================
+
+static void addReg(UsidResult &u, uint16_t reg, const RefEntry *ref)
+{
+    RegResult r = {};
+    r.reg = reg;
+    if (ref) {
+        r.has_ref = true;
+        r.expected = ref->expected;
+        r.mask = ref->mask;
+        snprintf(r.name, sizeof(r.name), "%s", ref->name);
+    }
+    u.regs.push_back(r);
+}
+
+void buildPreview(const std::vector<RefEntry> &ref, Report &out)
+{
+    out = Report();
+    for (const RefEntry &e : ref) {
+        auto it = std::find_if(out.usids.begin(), out.usids.end(),
+                               [&](const UsidResult &u) { return u.usid == e.usid; });
+        if (it == out.usids.end()) {
+            UsidResult u = {};
+            u.usid = e.usid;
+            u.in_ref = true;
+            out.usids.push_back(u);
+            it = out.usids.end() - 1;
+        }
+        addReg(*it, e.reg, &e);
+    }
+    std::sort(out.usids.begin(), out.usids.end(),
+              [](const UsidResult &a, const UsidResult &b) { return a.usid < b.usid; });
+}
+
+static void scanTask(void *)
+{
+    Report rep;
+    buildPreview(s_scan_ref, rep);
+    rep.scanned = true;
+    gpioInit();
+
+    int found = 0;
+    for (uint8_t usid = 1; usid <= 15; ++usid) {
+        UsidResult probe = {};
+        probe.usid = usid;
+        for (int i = 0; i < 3; ++i) {
+            probe.id_ok[i] = readReg(usid, 0x1D + i, &probe.id_regs[i]);
+            probe.responded |= probe.id_ok[i];
+        }
+        auto it = std::find_if(rep.usids.begin(), rep.usids.end(),
+                               [&](const UsidResult &u) { return u.usid == usid; });
+        if (it == rep.usids.end()) {
+            if (!probe.responded) {
+                continue;
+            }
+            // Không có tham chiếu: đọc thô 0x00..0x1F, không kết luận.
+            for (uint16_t r = 0; r <= 0x1F; ++r) {
+                addReg(probe, r, nullptr);
+            }
+            rep.usids.push_back(probe);
+            it = rep.usids.end() - 1;
+        } else {
+            it->responded = probe.responded;
+            memcpy(it->id_regs, probe.id_regs, sizeof(it->id_regs));
+            memcpy(it->id_ok, probe.id_ok, sizeof(it->id_ok));
+        }
+        if (it->responded) {
+            ++found;
+        }
+        for (RegResult &r : it->regs) {
+            r.read_ok = it->responded && readReg(usid, r.reg, &r.value);
+            if (!r.read_ok) {
+                ++it->no_read;
+            } else if (r.has_ref) {
+                if ((r.value & r.mask) == (r.expected & r.mask)) {
+                    ++it->pass;
+                } else {
+                    ++it->fail;
+                }
+            }
+        }
+        vTaskDelay(1);
+    }
+    std::sort(rep.usids.begin(), rep.usids.end(),
+              [](const UsidResult &a, const UsidResult &b) { return a.usid < b.usid; });
+
+    int pass = 0, fail = 0, missing = 0;
+    for (const UsidResult &u : rep.usids) {
+        pass += u.pass;
+        fail += u.fail;
+        missing += (u.in_ref && !u.responded) ? 1 : 0;
+    }
+    if (found == 0) {
+        snprintf(rep.message, sizeof(rep.message), "Không có USID nào phản hồi (kiểm tra dây, nguồn 1,8 V, chuyển mức)");
+    } else if (s_scan_ref.empty()) {
+        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID - chưa chọn dữ liệu để so", found);
+    } else {
+        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID   PASS %d   FAIL %d   USID thiếu %d",
+                 found, pass, fail, missing);
+    }
+    ESP_LOGI(TAG, "%s", rep.message);
+
+    s_report = std::move(rep);
+    s_serial = s_serial + 1;
+    s_busy = false;
+    vTaskDelete(nullptr);
+}
+
+bool startScan(const std::vector<RefEntry> &ref)
+{
+    if (s_busy || !configured()) {
+        return false;
+    }
+    s_busy = true;
+    s_scan_ref = ref;
+    if (xTaskCreatePinnedToCore(scanTask, "hcc_rffe", 6144, nullptr, 5, nullptr, HCC_CORE_WORK) != pdPASS) {
+        s_busy = false;
+        return false;
+    }
+    return true;
+}
+
+bool busy(void)
+{
+    return s_busy;
+}
+
+uint32_t reportSerial(void)
+{
+    return s_serial;
+}
+
+const Report &report(void)
+{
+    return s_report;
+}
+
+}  // namespace HCCRffe

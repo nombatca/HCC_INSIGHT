@@ -20,6 +20,7 @@
 // HCCMemory.cpp: operator new dùng PSRAM cho khối lớn; in RAM còn trống.
 void hccMemoryReport(const char *where);
 #include "HCCViText.hpp"
+#include "HCCRffeView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
@@ -926,7 +927,7 @@ void HCCHome::showHome()
     lv_obj_align(rffe_button, LV_ALIGN_TOP_LEFT, 494, 96);
     lv_obj_add_event_cb(
         rffe_button,
-        onModuleClicked,
+        onRffeClicked,
         LV_EVENT_CLICKED,
         this
     );
@@ -2319,6 +2320,17 @@ void HCCHome::onI2CClicked(lv_event_t *event)
     }
 
     app->showI2C();
+}
+
+void HCCHome::onRffeClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr) {
+        return;
+    }
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCRffeView::show(app->_screen, onBackClicked, app);
 }
 
 void HCCHome::onEepromClicked(lv_event_t *event)

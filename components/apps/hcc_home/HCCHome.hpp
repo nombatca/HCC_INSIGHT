@@ -87,6 +87,7 @@ private:
     static void onRebootClicked(lv_event_t *event);
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
+    static void onRffeClicked(lv_event_t *event);
     static void onBackClicked(lv_event_t *event);
     static void onRecoveryClicked(lv_event_t *event);
     // IPHONE HARDWARE CHECK (trong màn USB HUB).

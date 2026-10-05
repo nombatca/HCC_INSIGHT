@@ -57,3 +57,28 @@ menu "Video Configuration"
             Select this option, enable camera sensor picture horizontal flip.
 
 endmenu
+
+menu "HCC RFFE"
+
+    config HCC_RFFE_SCLK_GPIO
+        int "RFFE SCLK GPIO (-1 = not connected)"
+        default -1
+        range -1 54
+        help
+            GPIO driving MIPI RFFE SCLK. RFFE is a 1.8 V bus: use a level shifter.
+
+    config HCC_RFFE_SDATA_GPIO
+        int "RFFE SDATA GPIO (-1 = not connected)"
+        default -1
+        range -1 54
+        help
+            GPIO for bidirectional MIPI RFFE SDATA (1.8 V bus, needs a bidirectional level shifter).
+
+    config HCC_RFFE_HALF_PERIOD_US
+        int "RFFE SCLK half period (us)"
+        default 5
+        range 1 100
+        help
+            Bit-bang half period. 5 us gives about 100 kHz SCLK.
+
+endmenu
