@@ -1,7 +1,10 @@
 /*
  * XiaozhiImageAvatar: avatar nhân vật từ bộ ảnh PNG trên thẻ SD, thư mục /sdcard/xiaozhi/avatar/:
- *   base.png (bắt buộc), blink.png, talk1.png, talk2.png, smile.png, sad.png, surprised.png (tùy chọn).
+ *   base.png (bắt buộc); tùy chọn: blink1.png (mắt khép hờ), blink2.png (mắt nhắm), talk1..talk4.png (miệng hé
+ *   dần -> mở to), smile.png, sad.png, surprised.png, smile_talk1.png, smile_talk2.png (vừa cười vừa nói).
+ *   Bộ 7 ảnh cũ (blink.png, talk1.png, talk2.png...) vẫn dùng được.
  *
+ * - Mỗi khung ~577 KB PSRAM (370x520 RGB565+alpha), đủ 12 khung ~7 MB.
  * - Nạp ở nền (task trên nhân WORK), giải mã + co giãn "phủ kín" về đúng kích thước vùng avatar,
  *   lưu cache trong PSRAM (RGB565 + alpha). Cache giữ lại sau khi đóng app; lần mở sau chỉ nạp lại khi
  *   kích thước / thời gian sửa của file đổi, hoặc vùng avatar đổi kích thước.
@@ -56,11 +59,12 @@ private:
     float _mic_target = 0;
 
     int _cur_frame = -1;
-    int _mouth = 0;             // 0 ngậm, 1 hé, 2 mở
+    int _mouth = 0;             // 0 ngậm .. 4 mở to
     uint32_t _mouth_since = 0;  // ms
     uint32_t _t0 = 0;
     uint32_t _next_blink = 0;
     uint32_t _blink_until = 0;
+    uint32_t _blink_start = 0;
     uint32_t _last_zoom_ms = 0;
     uint16_t _zoom = 256;
     lv_opa_t _glow = 0;

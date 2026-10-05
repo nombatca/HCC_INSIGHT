@@ -1,7 +1,7 @@
 /*
  * XiaozhiImageAvatar: xem XiaozhiImageAvatar.hpp.
  *
- * Bộ nhớ: mỗi khung w*h*3 byte (370x520 ~ 577 KB), tối đa 7 khung ~ 4 MB PSRAM. Khi nạp lại (file đổi), bộ
+ * Bộ nhớ: mỗi khung w*h*3 byte (370x520 ~ 577 KB), đủ 12 khung ~ 7 MB PSRAM. Khi nạp lại (file đổi), bộ
  * mới được dựng song song rồi mới thay bộ cũ trên luồng LVGL, nên lúc đó tạm dùng gấp đôi.
  *
  * Luồng: create() -> (luồng LVGL) chụp chữ ký bộ đang có -> task "xz_avatar" (nhân WORK) kiểm tra thẻ SD,
@@ -34,8 +34,18 @@ const char *TAG = "XzAvatarImg";
 
 #define AVATAR_DIR BSP_SD_MOUNT_POINT "/xiaozhi/avatar"
 
-enum FrameId : int { F_BASE, F_BLINK, F_TALK1, F_TALK2, F_SMILE, F_SAD, F_SURPRISED, F_COUNT };
-const char *const FRAME_NAMES[F_COUNT] = {"base", "blink", "talk1", "talk2", "smile", "sad", "surprised"};
+// Bộ 12 ảnh + "blink" của bộ 7 ảnh cũ (dùng như blink2 khi không có blink2.png).
+enum FrameId : int {
+    F_BASE,
+    F_BLINK1, F_BLINK2,                    // mắt khép hờ, mắt nhắm
+    F_TALK1, F_TALK2, F_TALK3, F_TALK4,    // miệng hé dần -> mở to
+    F_SMILE, F_SAD, F_SURPRISED,
+    F_SMILE_TALK1, F_SMILE_TALK2,          // vừa cười vừa nói (hé, mở)
+    F_BLINK_OLD,
+    F_COUNT
+};
+const char *const FRAME_NAMES[F_COUNT] = {"base",  "blink1", "blink2",    "talk1",       "talk2",       "talk3", "talk4",
+                                          "smile", "sad",    "surprised", "smile_talk1", "smile_talk2", "blink"};
 
 struct FileSig {
     bool exists;
@@ -173,6 +183,10 @@ void loadTask(void *arg)
     for (int i = 0; i < F_COUNT; ++i) {
         set->sig[i] = sig[i];
         if (!sig[i].exists) {
+            continue;
+        }
+        if (i == F_BLINK_OLD && sig[F_BLINK2].exists) {
+            set->sig[i].exists = false;  // đã có blink2.png: không nạp blink.png cũ (tiết kiệm PSRAM)
             continue;
         }
         char path[96];
@@ -356,33 +370,7 @@ void XiaozhiImageAvatar::setEmotion(const char *emotion)
 int XiaozhiImageAvatar::pickFrame(void)
 {
     const uint32_t now = lv_tick_get();
-    auto has = [](int id) { return s_active.data[id] != nullptr; };
-
-    // Miệng: ngưỡng có trễ (lên 0.08 / 0.30, xuống 0.05 / 0.22), giữ mỗi trạng thái tối thiểu 80 ms.
-    int want = 0;
-    if (_mode == Mode::Speaking) {
-        const float up1 = 0.08f, up2 = 0.30f, dn1 = 0.05f, dn2 = 0.22f;
-        if (_mouth == 2) {
-            want = _speak > dn2 ? 2 : (_speak > dn1 ? 1 : 0);
-        } else if (_mouth == 1) {
-            want = _speak > up2 ? 2 : (_speak > dn1 ? 1 : 0);
-        } else {
-            want = _speak > up2 ? 2 : (_speak > up1 ? 1 : 0);
-        }
-    }
-    if (want != _mouth && now - _mouth_since >= 80) {
-        _mouth = want;
-        _mouth_since = now;
-    }
-    int talk = -1;
-    if (_mouth == 1) {
-        talk = has(F_TALK1) ? F_TALK1 : (has(F_TALK2) ? F_TALK2 : -1);
-    } else if (_mouth == 2) {
-        talk = has(F_TALK2) ? F_TALK2 : (has(F_TALK1) ? F_TALK1 : -1);
-    }
-    if (talk >= 0) {
-        return talk;
-    }
+    auto has = [](int id) { return id >= 0 && s_active.data[id] != nullptr; };
 
     // Nét mặt lúc không mấp máy môi.
     int rest = F_BASE;
@@ -392,14 +380,57 @@ int XiaozhiImageAvatar::pickFrame(void)
         rest = _emotion_frame;
     }
 
-    // Chớp mắt: chỉ trên base (blink.png vẽ từ base).
-    if (rest == F_BASE && has(F_BLINK)) {
+    // Miệng: 5 mức (0 = ngậm .. 4 = mở to) theo âm lượng, ngưỡng có trễ (xuống thấp hơn lên 0.04),
+    // giữ mỗi mức tối thiểu 60 ms để không nhấp nháy.
+    static const float UP[4] = {0.06f, 0.16f, 0.30f, 0.48f};
+    int want = 0;
+    if (_mode == Mode::Speaking) {
+        for (int i = 0; i < 4; ++i) {
+            const float th = (i < _mouth) ? UP[i] - 0.04f : UP[i];
+            if (_speak > th) {
+                want = i + 1;
+            }
+        }
+    }
+    if (want != _mouth && now - _mouth_since >= 60) {
+        _mouth = want;
+        _mouth_since = now;
+    }
+    if (_mouth > 0) {
+        // Đang cười và có ảnh vừa cười vừa nói: mức 1-2 -> smile_talk1, 3-4 -> smile_talk2.
+        if (rest == F_SMILE && (has(F_SMILE_TALK1) || has(F_SMILE_TALK2))) {
+            const int pref = _mouth <= 2 ? F_SMILE_TALK1 : F_SMILE_TALK2;
+            return has(pref) ? pref : (pref == F_SMILE_TALK1 ? F_SMILE_TALK2 : F_SMILE_TALK1);
+        }
+        // Chia đều 4 mức cho các ảnh talk đang có (bộ cũ chỉ có talk1/talk2 vẫn chạy đúng).
+        int talks[4];
+        int n = 0;
+        for (int id = F_TALK1; id <= F_TALK4; ++id) {
+            if (has(id)) {
+                talks[n++] = id;
+            }
+        }
+        if (n > 0) {
+            const int idx = (_mouth * n + 3) / 4 - 1;  // làm tròn lên
+            return talks[idx < 0 ? 0 : (idx >= n ? n - 1 : idx)];
+        }
+    }
+
+    // Chớp mắt (chỉ trên base): mở -> khép hờ -> nhắm -> khép hờ -> mở, mỗi bước ~40 ms.
+    const int closed = has(F_BLINK2) ? F_BLINK2 : (has(F_BLINK_OLD) ? F_BLINK_OLD : -1);
+    const int half = has(F_BLINK1) ? F_BLINK1 : -1;
+    if (rest == F_BASE && (closed >= 0 || half >= 0)) {
         if (now >= _next_blink) {
-            _blink_until = now + 130;
-            _next_blink = (esp_random() % 100 < 15) ? now + 350 : now + randRange(2500, 6000);
+            _blink_start = now;
+            _blink_until = now + 160;
+            _next_blink = (esp_random() % 100 < 15) ? now + 400 : now + randRange(2500, 6000);
         }
         if (now < _blink_until) {
-            return F_BLINK;
+            const uint32_t t = now - _blink_start;
+            if (half >= 0 && closed >= 0) {
+                return (t < 40 || t >= 120) ? half : closed;
+            }
+            return closed >= 0 ? closed : half;
         }
     }
     return rest;
