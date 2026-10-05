@@ -255,6 +255,7 @@ void XiaozhiApp::buildUi(lv_obj_t *screen)
     lv_obj_set_flex_grow(_chat, 1);
     lv_obj_set_flex_flow(_chat, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_gap(_chat, 10, 0);
+    lv_obj_set_style_pad_bottom(_chat, 8, 0);
     lv_obj_set_scroll_dir(_chat, LV_DIR_VER);
     lv_obj_add_flag(_chat, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -347,6 +348,15 @@ void XiaozhiApp::rebuildChat(void)
         lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
         return;
     }
+    // Bề rộng chữ tối đa của một bong bóng: 80% khung chat trừ lề trong. Đặt bề rộng nhãn CỐ ĐỊNH theo chữ thật
+    // (trước đây dùng LV_SIZE_CONTENT + max_width: LVGL tính chiều cao theo dòng chưa xuống hàng nên dòng cuối
+    // bị cắt mất).
+    lv_obj_update_layout(_chat);
+    lv_coord_t max_text_w = lv_obj_get_content_width(_chat) * 8 / 10 - 28;
+    if (max_text_w < 120) {
+        max_text_w = 120;
+    }
+    const lv_font_t *font = &lv_font_be_vietnam_18;
     lv_obj_t *last = nullptr;
     for (const auto &line : lines) {
         lv_obj_t *row = lv_obj_create(_chat);
@@ -363,16 +373,17 @@ void XiaozhiApp::rebuildChat(void)
         lv_obj_set_style_pad_hor(bubble, 14, 0);
         lv_obj_set_style_pad_ver(bubble, 10, 0);
         lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_style_max_width(bubble, LV_PCT(80), 0);
-        lv_obj_t *l = makeLabel(bubble, &lv_font_be_vietnam_18, COLOR_TEXT, line.text.c_str());
+        lv_point_t sz;
+        lv_txt_get_size(&sz, line.text.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_obj_t *l = makeLabel(bubble, font, COLOR_TEXT, line.text.c_str());
         lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_max_width(l, 480, 0);
-        lv_obj_set_width(l, LV_SIZE_CONTENT);
+        lv_obj_set_width(l, sz.x + 2 < max_text_w ? sz.x + 2 : max_text_w);
+        lv_obj_set_height(l, LV_SIZE_CONTENT);
         last = row;
     }
     if (last != nullptr) {
         lv_obj_update_layout(_chat);
-        lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+        lv_obj_scroll_to_y(_chat, LV_COORD_MAX, LV_ANIM_OFF);  // xuống hẳn đáy, thấy trọn dòng cuối
     }
 }
 
