@@ -26,7 +26,8 @@ static const lv_color_t C_GREY = lv_color_hex(0x5B6B78);
 
 enum RowState : uint8_t { ROW_NEUTRAL, ROW_PASS, ROW_FAIL, ROW_WARN };
 
-static const int TABLE_COLS = 6;
+static const int TABLE_COLS = 6;  // bảng thanh ghi (dữ liệu CSV thư mục)
+static const int MAP_COLS = 2;    // bảng DEVICE / PART | STATUS (dữ liệu JC)
 
 struct View {
     lv_obj_t *root = nullptr;
@@ -38,6 +39,8 @@ struct View {
     lv_obj_t *id_line = nullptr;
     lv_obj_t *table = nullptr;
     lv_obj_t *empty = nullptr;
+    lv_obj_t *box_title = nullptr;
+    lv_obj_t *map_table = nullptr;  // DEVICE / PART | STATUS
     lv_obj_t *scan_btn = nullptr;
     lv_obj_t *status = nullptr;
     lv_timer_t *timer = nullptr;
@@ -149,8 +152,9 @@ static void onTableDraw(lv_event_t *e)
     if (dsc == nullptr || dsc->part != LV_PART_ITEMS) {
         return;
     }
-    const uint32_t row = dsc->id / TABLE_COLS;
-    const uint32_t col = dsc->id % TABLE_COLS;
+    const uint32_t cols = (lv_event_get_target(e) == s_v.map_table) ? MAP_COLS : TABLE_COLS;
+    const uint32_t row = dsc->id / cols;
+    const uint32_t col = dsc->id % cols;
     if (row == 0) {
         if (dsc->rect_dsc) {
             dsc->rect_dsc->bg_color = lv_color_hex(0x1B2A36);
@@ -169,9 +173,114 @@ static void onTableDraw(lv_event_t *e)
         return;
     }
     const uint8_t st = s_v.row_state[row - 1];
-    if (col == 5 || (col == 2 && st == ROW_FAIL)) {
+    if (col == cols - 1 || (cols == TABLE_COLS && col == 2 && st == ROW_FAIL)) {
         dsc->label_dsc->color = st == ROW_PASS ? C_GREEN : st == ROW_FAIL ? C_RED : st == ROW_WARN ? C_ORANGE : C_MUTED;
     }
+}
+
+// Đổi bố cục: JC = bảng DEVICE / PART | STATUS chiếm cả khung, không có hàng thẻ USID.
+// Hai bảng riêng (không đổi số cột của một bảng: lv_table_set_col_cnt của LVGL 8.4 lỗi khi giảm cột
+// mà còn ô trống).
+static void setTableMode(bool mapping)
+{
+    if (mapping) {
+        lv_obj_add_flag(s_v.chips, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_v.id_line, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_v.table, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(s_v.chips, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Danh sách linh kiện theo thứ tự trong bảng JC; USID chỉ dùng nội bộ để tìm kết quả scan.
+static void renderMapping(void)
+{
+    const Report &rep = s_v.report;
+    lv_obj_add_flag(s_v.empty, LV_OBJ_FLAG_HIDDEN);
+
+    int extra = 0;
+    for (const UsidResult &u : rep.usids) {
+        extra += (!u.in_ref && u.responded) ? 1 : 0;
+    }
+    lv_table_set_row_cnt(s_v.map_table, (uint16_t)(s_v.ref.size() + extra + 1));
+    lv_table_set_cell_value(s_v.map_table, 0, 0, "DEVICE / PART");
+    lv_table_set_cell_value(s_v.map_table, 0, 1, "STATUS");
+    s_v.row_state.assign(s_v.ref.size() + extra, ROW_NEUTRAL);
+
+    int ok = 0, bad = 0, skip = 0;
+    uint16_t row = 1;
+    for (const HCCRffe::RefEntry &e : s_v.ref) {
+        const UsidResult *u = nullptr;
+        for (const UsidResult &x : rep.usids) {
+            if (x.usid == e.usid) {
+                u = &x;
+                break;
+            }
+        }
+        const RegResult *r = nullptr;
+        if (u) {
+            for (const RegResult &x : u->regs) {
+                if (x.reg == e.reg && strcmp(x.name, e.name) == 0) {
+                    r = &x;
+                    break;
+                }
+            }
+        }
+        const char *res;
+        uint8_t st = ROW_NEUTRAL;
+        if (!rep.scanned) {
+            res = "Chưa scan";
+        } else if (e.usid == 0) {
+            res = "Không quét được";  // USID 0 trong bảng = broadcast
+            ++skip;
+        } else if (u == nullptr || !u->responded) {
+            res = "KHÔNG PHẢN HỒI";
+            st = ROW_FAIL;
+            ++bad;
+        } else if (r == nullptr || !r->read_ok) {
+            res = "Lỗi đọc";
+            st = ROW_WARN;
+            ++bad;
+        } else if ((r->value & r->mask) == (r->expected & r->mask)) {
+            res = "OK";
+            st = ROW_PASS;
+            ++ok;
+        } else {
+            res = "SAI";
+            st = ROW_FAIL;
+            ++bad;
+        }
+        lv_table_set_cell_value(s_v.map_table, row, 0, e.name);
+        lv_table_set_cell_value(s_v.map_table, row, 1, res);
+        s_v.row_state[row - 1] = st;
+        ++row;
+    }
+    // Thiết bị trả lời nhưng không có trong bảng của model / đường này.
+    for (const UsidResult &u : rep.usids) {
+        if (u.in_ref || !u.responded) {
+            continue;
+        }
+        lv_table_set_cell_value_fmt(s_v.map_table, row, 0, "(thiết bị lạ, USID 0x%X)", u.usid);
+        lv_table_set_cell_value(s_v.map_table, row, 1, "Không có trong dữ liệu");
+        s_v.row_state[row - 1] = ROW_WARN;
+        ++row;
+    }
+
+    char sum[128];
+    if (rep.scanned) {
+        snprintf(sum, sizeof(sum), "OK %d / %d   lỗi %d%s", ok, (int)s_v.ref.size(), bad, extra ? "   có thiết bị lạ" : "");
+        if (skip) {
+            const size_t n = strlen(sum);
+            snprintf(sum + n, sizeof(sum) - n, "   không quét được %d", skip);
+        }
+    } else {
+        snprintf(sum, sizeof(sum), "%d linh kiện - bấm SCAN", (int)s_v.ref.size());
+    }
+    lv_label_set_text(s_v.summary, sum);
+    lv_obj_scroll_to_y(s_v.map_table, 0, LV_ANIM_OFF);
+    lv_obj_invalidate(s_v.map_table);
 }
 
 static void renderTable(void)
@@ -273,6 +382,16 @@ static void renderReport(void)
     if (s_v.chips == nullptr) {
         return;
     }
+    const bool mapping = s_v.have_data && HCCRffe::isJcModel(s_v.model) && !s_v.ref.empty();
+    setTableMode(mapping);
+    if (mapping) {
+        char t[160];
+        snprintf(t, sizeof(t), "%s / %s", s_v.model, s_v.data);
+        lv_label_set_text(s_v.box_title, t);
+        renderMapping();
+        return;
+    }
+    lv_label_set_text(s_v.box_title, "KẾT QUẢ SCAN THEO USID");
     const Report &rep = s_v.report;
     lv_obj_clean(s_v.chips);
     if (s_v.sel >= (int)rep.usids.size()) {
@@ -327,6 +446,9 @@ static void renderReport(void)
 static void loadSelectedData(void)
 {
     s_v.ref.clear();
+    if (!s_v.waiting_scan) {
+        setStatus("Sẵn sàng", C_CYAN);  // kết quả cũ không còn thuộc model / đường đang chọn
+    }
     char info[224] = "";
     if (s_v.have_data) {
         int skipped = 0;
@@ -341,8 +463,8 @@ static void loadSelectedData(void)
                 }
             }
             if (HCCRffe::isJcModel(s_v.model)) {
-                snprintf(info, sizeof(info), "%s / %s: %d linh kiện, %d USID  (JC BUS2MM4 - %s, kiểm 0x1F & 0x0F = USID)",
-                         s_v.model, s_v.data, (int)s_v.ref.size(), usids, HCCRffe::jcSource());
+                snprintf(info, sizeof(info), "%s / %s: %d linh kiện  (JC BUS2MM4 - %s)", s_v.model, s_v.data,
+                         (int)s_v.ref.size(), HCCRffe::jcSource());
             } else {
                 snprintf(info, sizeof(info), "%s/%s: %d thanh ghi, %d USID", s_v.model, s_v.data,
                          (int)s_v.ref.size(), usids);
@@ -430,12 +552,13 @@ static void onScanClicked(lv_event_t *)
         setStatus(HCCRffe::configError(), C_ORANGE);
         return;
     }
+    // Ghi số thứ tự trước khi chạy: task scan (nhân khác) có thể xong trước khi startScan() trả về.
+    s_v.seen_serial = HCCRffe::reportSerial();
     if (!HCCRffe::startScan(s_v.ref)) {
         setStatus("Không khởi động được scan", C_RED);
         return;
     }
     s_v.waiting_scan = true;
-    s_v.seen_serial = HCCRffe::reportSerial();
     lv_obj_add_state(s_v.scan_btn, LV_STATE_DISABLED);
     setStatus("Đang scan USID 0x1..0xF...", C_CYAN);
 }
@@ -522,8 +645,8 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     lv_obj_set_style_pad_all(box, 12, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *box_title = makeLabel(box, "KẾT QUẢ SCAN THEO USID", C_CYAN, &lv_font_be_vietnam_16);
-    lv_obj_align(box_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    s_v.box_title = makeLabel(box, "KẾT QUẢ SCAN THEO USID", C_CYAN, &lv_font_be_vietnam_16);
+    lv_obj_align(s_v.box_title, LV_ALIGN_TOP_LEFT, 0, 0);
     s_v.summary = makeLabel(box, "", C_MUTED, &lv_font_be_vietnam_14);
     lv_obj_align(s_v.summary, LV_ALIGN_TOP_RIGHT, 0, 2);
 
@@ -562,6 +685,28 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     lv_obj_set_style_pad_left(s_v.table, 10, LV_PART_ITEMS);
     lv_obj_set_style_pad_right(s_v.table, 6, LV_PART_ITEMS);
     lv_obj_add_event_cb(s_v.table, onTableDraw, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+
+    s_v.map_table = lv_table_create(box);
+    lv_table_set_col_cnt(s_v.map_table, MAP_COLS);
+    lv_table_set_col_width(s_v.map_table, 0, 600);
+    lv_table_set_col_width(s_v.map_table, 1, 342);
+    lv_obj_set_size(s_v.map_table, 942, 300);
+    lv_obj_align(s_v.map_table, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_set_style_bg_color(s_v.map_table, C_PANEL, 0);
+    lv_obj_set_style_border_width(s_v.map_table, 0, 0);
+    lv_obj_set_style_pad_all(s_v.map_table, 0, 0);
+    lv_obj_set_style_bg_color(s_v.map_table, C_PANEL, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(s_v.map_table, C_TEXT, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(s_v.map_table, &lv_font_be_vietnam_18, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(s_v.map_table, C_BORDER, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(s_v.map_table, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_side(s_v.map_table, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS);
+    lv_obj_set_style_pad_top(s_v.map_table, 8, LV_PART_ITEMS);
+    lv_obj_set_style_pad_bottom(s_v.map_table, 8, LV_PART_ITEMS);
+    lv_obj_set_style_pad_left(s_v.map_table, 14, LV_PART_ITEMS);
+    lv_obj_set_style_pad_right(s_v.map_table, 8, LV_PART_ITEMS);
+    lv_obj_add_event_cb(s_v.map_table, onTableDraw, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+    lv_obj_add_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
 
     s_v.empty = makeLabel(box, "", C_MUTED, &lv_font_be_vietnam_16);
     lv_obj_set_width(s_v.empty, 900);

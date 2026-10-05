@@ -13,7 +13,7 @@
  * Bảng JC BUS2MM4 nhúng sẵn (rffe_jc_database.h); file /sdcard/rffe/JC_BUS2MM4_iPhone_RFFE_USID.csv nếu có sẽ thay thế
  *   (model_id,type_code,rffe_line,device_part,usid_dec,usid_hex): SELECT MODEL = model_id,
  *   RFFE DATA = rffe_line; mỗi linh kiện kiểm 0x1F & 0x0F == USID. USID 0 (broadcast) không quét.
- *   Tên hiển thị: model bỏ "IDS_" / "_TYPE", đường RFFE bỏ ký tự rác ở cuối (@, &, [ ...).
+ *   Tên hiển thị: model "IP 15 PROMAX"..., đường RFFE bỏ ký tự rác ở cuối (@ & [, DATA3 -> DATA ...).
  *
  * SCAN: bus phải ở mức 0 khi nghỉ (không thì dừng). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
  * thanh ghi 0x1F đúng parity, bit[3:0] == USID đang hỏi và đọc lại hai lần cùng giá trị (không nối gì -> 0 USID).

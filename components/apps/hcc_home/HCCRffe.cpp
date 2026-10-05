@@ -311,9 +311,10 @@ const char *jcSource(void)
 }
 
 // Tên hiển thị (chỉ đổi cách hiện, dữ liệu gốc giữ nguyên):
-//  - model: bỏ "IDS_" ở đầu và "_TYPE" ở cuối (IDS_iphxne16Pro_Max_TYPE -> iphxne16Pro_Max)
-//  - đường RFFE: bỏ ký tự rác ở cuối tên (không phải chữ, số, '_'), vd "SDR0@" -> "SDR0", "DATA[" -> "DATA".
-// Đã kiểm với bảng hiện có: không có hai model / hai đường cùng model bị trùng tên sau khi bỏ.
+//  - model: IDS_iphxne15Pro_Max_TYPE -> "IP 15 PROMAX", IDS_IPHXNE7PLUS_INTEL -> "IP 7 PLUS INTEL"
+//  - đường RFFE: bỏ ký tự rác do trích xuất để lại ở cuối tên: ký tự lạ (@ & [ ...) và một ký tự dính sau
+//    phần tên chuẩn cuối cùng (DATA3 -> DATA, SDR0B -> SDR0, SDAT4 -> SDAT, RFFEe -> RFFE, R9 -> R ...).
+// Đã kiểm với bảng hiện có: không có hai model / hai đường cùng model bị trùng tên sau khi đổi.
 static std::string jcModelName(const char *raw)
 {
     std::string s(raw);
@@ -323,7 +324,29 @@ static std::string jcModelName(const char *raw)
     if (s.size() > 5 && strcasecmp(s.c_str() + s.size() - 5, "_TYPE") == 0) {
         s.erase(s.size() - 5);
     }
-    return s;
+    if (s.size() > 6 && strncasecmp(s.c_str(), "iphxne", 6) == 0) {
+        s.erase(0, 6);
+    }
+    std::string out = "IP ";
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = static_cast<char>(toupper(static_cast<unsigned char>(s[i])));
+        // Số liền chữ dài (15Pro, 7PLUS, 12Mini) -> thêm dấu cách; giữ 6S, SE3, XS.
+        if (i > 0 && isdigit(static_cast<unsigned char>(s[i - 1])) && isalpha(static_cast<unsigned char>(s[i]))) {
+            size_t n = 0;
+            while (i + n < s.size() && isalpha(static_cast<unsigned char>(s[i + n]))) {
+                ++n;
+            }
+            if (n >= 3) {
+                out += ' ';
+            }
+        }
+        out += (c == '_') ? ' ' : c;
+    }
+    const size_t pm = out.find("PRO MAX");
+    if (pm != std::string::npos) {
+        out.erase(pm + 3, 1);  // "PRO MAX" -> "PROMAX"
+    }
+    return out;
 }
 
 static std::string jcLineName(const char *raw)
@@ -331,6 +354,29 @@ static std::string jcLineName(const char *raw)
     std::string s(raw);
     while (!s.empty() && !isalnum(static_cast<unsigned char>(s.back())) && s.back() != '_') {
         s.pop_back();
+    }
+    const size_t us = s.rfind('_');
+    if (us != std::string::npos && us + 1 < s.size()) {
+        static const char *const STEMS[] = {"SDATA", "DATA", "SDAT", "SDR0", "BUFFER", "RFFE", "R", "K"};
+        const std::string last = s.substr(us + 1);
+        bool exact = (last == "SDR");
+        for (const char *st : STEMS) {
+            exact = exact || last == st;
+        }
+        if (!exact) {
+            bool cut = false;
+            for (const char *st : STEMS) {
+                const size_t n = strlen(st);
+                if (last.size() == n + 1 && last.compare(0, n, st) == 0) {
+                    s.pop_back();
+                    cut = true;
+                    break;
+                }
+            }
+            if (!cut && last.size() == 4 && last.compare(0, 3, "SDR") == 0 && last[3] != '0') {
+                s.pop_back();  // SDR2 / SDR9 / SDR5 -> SDR (SDR0 là tên thật)
+            }
+        }
     }
     return s.empty() ? std::string(raw) : s;
 }
