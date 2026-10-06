@@ -744,11 +744,21 @@ static bool busIdleLow(void)
 static bool probeUsid(uint8_t usid, UsidResult &u)
 {
     uint8_t r1 = 0, r2 = 0;
-    if (!readReg(usid, 0x1F, &r1) || (r1 & 0x0F) != usid) {
+    const bool p1 = readReg(usid, 0x1F, &r1);
+    if (!p1 || (r1 & 0x0F) != usid) {
+        if (p1) {
+            // Chẩn đoán: có byte đúng parity nhưng 0x1F[3:0] khác USID đang hỏi -> không nhận (chống USID ảo).
+            uint8_t a = 0, b = 0;
+            const bool pa = readReg(usid, 0x1D, &a);
+            const bool pb = readReg(usid, 0x1E, &b);
+            ESP_LOGW(TAG, "USID 0x%X: 0x1F=0x%02X đúng parity nhưng [3:0]=0x%X != USID (0x1D=%s0x%02X 0x1E=%s0x%02X) - bỏ",
+                     usid, r1, r1 & 0x0F, pa ? "" : "?", a, pb ? "" : "?", b);
+        }
         return false;
     }
     esp_rom_delay_us(20);
     if (!readReg(usid, 0x1F, &r2) || r2 != r1) {
+        ESP_LOGW(TAG, "USID 0x%X: 0x1F lần 1 = 0x%02X, lần 2 = 0x%02X - không ổn định, bỏ", usid, r1, r2);
         return false;
     }
     u.id_regs[2] = r1;
