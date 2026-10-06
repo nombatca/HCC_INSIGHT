@@ -133,6 +133,14 @@ static esp_err_t bsp_i2c_device_probe(uint8_t addr)
 
 esp_err_t bsp_sdcard_mount(void)
 {
+    /* Đã mount: trả INVALID_STATE (các app coi là "thẻ sẵn sàng"). Với IDF 5.5, mount lần hai không tự báo
+     * INVALID_STATE: host đã init bị "skip", thẻ bị init lại rồi mount_to_vfs lỗi, và nhánh cleanup gọi
+     * host deinit -> làm hỏng lần mount đang dùng (và host SDMMC dùng chung với SDIO Wi-Fi). */
+    if (bsp_sdcard != NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     const esp_vfs_fat_sdmmc_mount_config_t mount_config = {
 #ifdef CONFIG_BSP_SD_FORMAT_ON_MOUNT_FAIL
         .format_if_mount_failed = true,
