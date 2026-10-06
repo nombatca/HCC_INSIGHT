@@ -27,7 +27,6 @@ static const lv_color_t C_GREY = lv_color_hex(0x5B6B78);
 enum RowState : uint8_t { ROW_NEUTRAL, ROW_PASS, ROW_FAIL, ROW_WARN };
 
 static const int TABLE_COLS = 6;  // bảng thanh ghi (dữ liệu CSV thư mục)
-static const int MAP_COLS = 2;    // bảng DEVICE / PART | STATUS (dữ liệu JC)
 
 struct View {
     lv_obj_t *root = nullptr;
@@ -40,7 +39,7 @@ struct View {
     lv_obj_t *table = nullptr;
     lv_obj_t *empty = nullptr;
     lv_obj_t *box_title = nullptr;
-    lv_obj_t *map_table = nullptr;  // DEVICE / PART | STATUS
+    lv_obj_t *tiles = nullptr;  // các ô DEVICE / PART (dữ liệu JC)
     lv_obj_t *scan_btn = nullptr;
     lv_obj_t *status = nullptr;
     lv_timer_t *timer = nullptr;
@@ -152,7 +151,7 @@ static void onTableDraw(lv_event_t *e)
     if (dsc == nullptr || dsc->part != LV_PART_ITEMS) {
         return;
     }
-    const uint32_t cols = (lv_event_get_target(e) == s_v.map_table) ? MAP_COLS : TABLE_COLS;
+    const uint32_t cols = TABLE_COLS;
     const uint32_t row = dsc->id / cols;
     const uint32_t col = dsc->id % cols;
     if (row == 0) {
@@ -178,39 +177,53 @@ static void onTableDraw(lv_event_t *e)
     }
 }
 
-// Đổi bố cục: JC = bảng DEVICE / PART | STATUS chiếm cả khung, không có hàng thẻ USID.
-// Hai bảng riêng (không đổi số cột của một bảng: lv_table_set_col_cnt của LVGL 8.4 lỗi khi giảm cột
-// mà còn ô trống).
+// Đổi bố cục: JC = các ô DEVICE / PART chiếm cả khung (ẩn hàng thẻ USID và bảng thanh ghi).
 static void setTableMode(bool mapping)
 {
     if (mapping) {
         lv_obj_add_flag(s_v.chips, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_v.id_line, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_v.table, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_v.tiles, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_clear_flag(s_v.chips, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_v.tiles, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-// Danh sách linh kiện theo thứ tự trong bảng JC; USID chỉ dùng nội bộ để tìm kết quả scan.
+// Mỗi linh kiện của model / đường RFFE đang chọn là một ô mang tên, theo thứ tự trong bảng JC:
+// xám = chưa scan, xanh = tìm thấy, đỏ = không thấy / sai, cam = lỗi đọc. USID chỉ dùng nội bộ để tìm kết quả.
+enum TileState : uint8_t { TILE_IDLE, TILE_OK, TILE_FAIL, TILE_WARN, TILE_SKIP, TILE_EXTRA };
+
+static void addTile(const char *name, const char *sub, TileState st)
+{
+    static const uint32_t BG[] = {0x2A3A47, 0x1F8A4C, 0xB3261E, 0xC77700, 0x1A242D, 0x8A5A00};
+    lv_obj_t *t = lv_obj_create(s_v.tiles);
+    lv_obj_remove_style_all(t);
+    lv_obj_set_size(t, 178, 64);
+    lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(t, lv_color_hex(BG[st]), 0);
+    lv_obj_set_style_radius(t, 10, 0);
+    lv_obj_set_style_border_width(t, st == TILE_SKIP ? 1 : 0, 0);
+    lv_obj_set_style_border_color(t, C_BORDER, 0);
+    lv_obj_clear_flag(t, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *n = makeLabel(t, name, st == TILE_SKIP ? C_MUTED : C_TEXT, &lv_font_be_vietnam_18);
+    lv_obj_set_width(n, 166);
+    lv_label_set_long_mode(n, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(n, LV_ALIGN_TOP_MID, 0, 9);
+    lv_obj_t *l = makeLabel(t, sub, (st == TILE_IDLE || st == TILE_SKIP) ? C_MUTED : C_TEXT, &lv_font_be_vietnam_14);
+    lv_obj_align(l, LV_ALIGN_BOTTOM_MID, 0, -7);
+}
+
 static void renderMapping(void)
 {
     const Report &rep = s_v.report;
     lv_obj_add_flag(s_v.empty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clean(s_v.tiles);
 
-    int extra = 0;
-    for (const UsidResult &u : rep.usids) {
-        extra += (!u.in_ref && u.responded) ? 1 : 0;
-    }
-    lv_table_set_row_cnt(s_v.map_table, (uint16_t)(s_v.ref.size() + extra + 1));
-    lv_table_set_cell_value(s_v.map_table, 0, 0, "DEVICE / PART");
-    lv_table_set_cell_value(s_v.map_table, 0, 1, "STATUS");
-    s_v.row_state.assign(s_v.ref.size() + extra, ROW_NEUTRAL);
-
-    int ok = 0, bad = 0, skip = 0;
-    uint16_t row = 1;
+    int ok = 0, bad = 0, skip = 0, extra = 0;
     for (const HCCRffe::RefEntry &e : s_v.ref) {
         const UsidResult *u = nullptr;
         for (const UsidResult &x : rep.usids) {
@@ -228,59 +241,50 @@ static void renderMapping(void)
                 }
             }
         }
-        const char *res;
-        uint8_t st = ROW_NEUTRAL;
         if (!rep.scanned) {
-            res = "Chưa scan";
+            addTile(e.name, "Chưa scan", TILE_IDLE);
         } else if (e.usid == 0) {
-            res = "Không quét được";  // USID 0 trong bảng = broadcast
+            addTile(e.name, "Không quét được", TILE_SKIP);  // USID 0 trong bảng = broadcast
             ++skip;
         } else if (u == nullptr || !u->responded) {
-            res = "KHÔNG PHẢN HỒI";
-            st = ROW_FAIL;
+            addTile(e.name, "Không thấy", TILE_FAIL);
             ++bad;
         } else if (r == nullptr || !r->read_ok) {
-            res = "Lỗi đọc";
-            st = ROW_WARN;
+            addTile(e.name, "Lỗi đọc", TILE_WARN);
             ++bad;
         } else if ((r->value & r->mask) == (r->expected & r->mask)) {
-            res = "OK";
-            st = ROW_PASS;
+            addTile(e.name, "OK", TILE_OK);
             ++ok;
         } else {
-            res = "SAI";
-            st = ROW_FAIL;
+            addTile(e.name, "Sai", TILE_FAIL);
             ++bad;
         }
-        lv_table_set_cell_value(s_v.map_table, row, 0, e.name);
-        lv_table_set_cell_value(s_v.map_table, row, 1, res);
-        s_v.row_state[row - 1] = st;
-        ++row;
     }
     // Thiết bị trả lời nhưng không có trong bảng của model / đường này.
     for (const UsidResult &u : rep.usids) {
         if (u.in_ref || !u.responded) {
             continue;
         }
-        lv_table_set_cell_value_fmt(s_v.map_table, row, 0, "(thiết bị lạ, USID 0x%X)", u.usid);
-        lv_table_set_cell_value(s_v.map_table, row, 1, "Không có trong dữ liệu");
-        s_v.row_state[row - 1] = ROW_WARN;
-        ++row;
+        char sub[32];
+        snprintf(sub, sizeof(sub), "USID 0x%X", u.usid);
+        addTile("Thiết bị lạ", sub, TILE_EXTRA);
+        ++extra;
     }
 
     char sum[128];
     if (rep.scanned) {
-        snprintf(sum, sizeof(sum), "OK %d / %d   lỗi %d%s", ok, (int)s_v.ref.size(), bad, extra ? "   có thiết bị lạ" : "");
+        int n = snprintf(sum, sizeof(sum), "Thấy %d / %d   không thấy %d", ok, (int)s_v.ref.size(), bad);
         if (skip) {
-            const size_t n = strlen(sum);
-            snprintf(sum + n, sizeof(sum) - n, "   không quét được %d", skip);
+            n += snprintf(sum + n, sizeof(sum) - n, "   không quét được %d", skip);
+        }
+        if (extra) {
+            snprintf(sum + n, sizeof(sum) - n, "   lạ %d", extra);
         }
     } else {
         snprintf(sum, sizeof(sum), "%d linh kiện - bấm SCAN", (int)s_v.ref.size());
     }
     lv_label_set_text(s_v.summary, sum);
-    lv_obj_scroll_to_y(s_v.map_table, 0, LV_ANIM_OFF);
-    lv_obj_invalidate(s_v.map_table);
+    lv_obj_scroll_to_y(s_v.tiles, 0, LV_ANIM_OFF);
 }
 
 static void renderTable(void)
@@ -600,6 +604,15 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, onRootDeleted, LV_EVENT_DELETE, nullptr);
+    // Vùng app thật nhỏ hơn màn hình (thanh trạng thái Brookesia): khung kết quả co theo chiều cao này
+    // để không đè lên nút BACK / SCAN.
+    lv_obj_update_layout(root);
+    lv_coord_t root_h = lv_obj_get_height(root);
+    if (root_h < 360 || root_h > 600) {
+        root_h = 520;
+    }
+    const lv_coord_t box_h = root_h - 162 - 84;  // 84 = nút 48 + lề dưới 22 + khoảng cách 14
+    const lv_coord_t inner_h = box_h - 24;        // trừ pad 12 trên + dưới
 
     lv_obj_t *title = makeLabel(root, "RFFE", C_TEXT, &lv_font_be_vietnam_28);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 14);
@@ -636,7 +649,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
 
     /* Khung kết quả (theo USID) */
     lv_obj_t *box = lv_obj_create(root);
-    lv_obj_set_size(box, 968, 352);
+    lv_obj_set_size(box, 968, box_h);
     lv_obj_align(box, LV_ALIGN_TOP_LEFT, 28, 162);
     lv_obj_set_style_bg_color(box, C_PANEL, 0);
     lv_obj_set_style_border_color(box, C_BORDER, 0);
@@ -669,7 +682,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     for (int c = 0; c < TABLE_COLS; ++c) {
         lv_table_set_col_width(s_v.table, c, COL_W[c]);
     }
-    lv_obj_set_size(s_v.table, 942, 210);
+    lv_obj_set_size(s_v.table, 942, inner_h - 118);
     lv_obj_align(s_v.table, LV_ALIGN_TOP_LEFT, 0, 118);
     lv_obj_set_style_bg_color(s_v.table, C_PANEL, 0);
     lv_obj_set_style_border_width(s_v.table, 0, 0);
@@ -686,27 +699,16 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     lv_obj_set_style_pad_right(s_v.table, 6, LV_PART_ITEMS);
     lv_obj_add_event_cb(s_v.table, onTableDraw, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 
-    s_v.map_table = lv_table_create(box);
-    lv_table_set_col_cnt(s_v.map_table, MAP_COLS);
-    lv_table_set_col_width(s_v.map_table, 0, 600);
-    lv_table_set_col_width(s_v.map_table, 1, 342);
-    lv_obj_set_size(s_v.map_table, 942, 300);
-    lv_obj_align(s_v.map_table, LV_ALIGN_TOP_LEFT, 0, 28);
-    lv_obj_set_style_bg_color(s_v.map_table, C_PANEL, 0);
-    lv_obj_set_style_border_width(s_v.map_table, 0, 0);
-    lv_obj_set_style_pad_all(s_v.map_table, 0, 0);
-    lv_obj_set_style_bg_color(s_v.map_table, C_PANEL, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(s_v.map_table, C_TEXT, LV_PART_ITEMS);
-    lv_obj_set_style_text_font(s_v.map_table, &lv_font_be_vietnam_18, LV_PART_ITEMS);
-    lv_obj_set_style_border_color(s_v.map_table, C_BORDER, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(s_v.map_table, 1, LV_PART_ITEMS);
-    lv_obj_set_style_border_side(s_v.map_table, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS);
-    lv_obj_set_style_pad_top(s_v.map_table, 8, LV_PART_ITEMS);
-    lv_obj_set_style_pad_bottom(s_v.map_table, 8, LV_PART_ITEMS);
-    lv_obj_set_style_pad_left(s_v.map_table, 14, LV_PART_ITEMS);
-    lv_obj_set_style_pad_right(s_v.map_table, 8, LV_PART_ITEMS);
-    lv_obj_add_event_cb(s_v.map_table, onTableDraw, LV_EVENT_DRAW_PART_BEGIN, nullptr);
-    lv_obj_add_flag(s_v.map_table, LV_OBJ_FLAG_HIDDEN);
+    s_v.tiles = lv_obj_create(box);
+    lv_obj_remove_style_all(s_v.tiles);
+    lv_obj_set_size(s_v.tiles, 944, inner_h - 30);
+    lv_obj_align(s_v.tiles, LV_ALIGN_TOP_LEFT, 0, 30);
+    lv_obj_set_flex_flow(s_v.tiles, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(s_v.tiles, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(s_v.tiles, 10, 0);
+    lv_obj_set_style_pad_row(s_v.tiles, 10, 0);
+    lv_obj_set_scroll_dir(s_v.tiles, LV_DIR_VER);
+    lv_obj_add_flag(s_v.tiles, LV_OBJ_FLAG_HIDDEN);
 
     s_v.empty = makeLabel(box, "", C_MUTED, &lv_font_be_vietnam_16);
     lv_obj_set_width(s_v.empty, 900);
