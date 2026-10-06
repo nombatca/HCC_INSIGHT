@@ -2,7 +2,7 @@
  * HCCRffe: đọc thanh ghi thiết bị MIPI RFFE (bit-bang SCLK / SDATA) và so với dữ liệu tham chiếu
  * (bảng JC BUS2MM4 trong firmware hoặc file trên thẻ SD).
  *
- * Chân SCLK / SDATA đặt trong menuconfig (HCC RFFE), mặc định -1 = chưa nối: SCAN chỉ báo chưa cấu hình.
+ * Chân SCLK / SDATA đặt trong menuconfig (HCC RFFE), mặc định SCLK = GPIO2, SDATA = GPIO3 (-1 = chưa nối).
  * RFFE chạy mức 1,8 V; GPIO của board là 3,3 V nên phải qua mạch chuyển mức hai chiều.
  *
  * Dữ liệu tham chiếu thêm (do người dùng cung cấp):

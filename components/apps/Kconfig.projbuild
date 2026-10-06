@@ -62,14 +62,14 @@ menu "HCC RFFE"
 
     config HCC_RFFE_SCLK_GPIO
         int "RFFE SCLK GPIO (-1 = not connected)"
-        default -1
+        default 2
         range -1 54
         help
             GPIO driving MIPI RFFE SCLK. RFFE is a 1.8 V bus: use a level shifter.
 
     config HCC_RFFE_SDATA_GPIO
         int "RFFE SDATA GPIO (-1 = not connected)"
-        default -1
+        default 3
         range -1 54
         help
             GPIO for bidirectional MIPI RFFE SDATA (1.8 V bus, needs a bidirectional level shifter).
