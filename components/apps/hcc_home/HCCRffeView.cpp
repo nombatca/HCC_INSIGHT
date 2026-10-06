@@ -2,9 +2,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <vector>
 
 #include "HCCRffe.hpp"
+#include "HCCRffeImage.hpp"
 
 namespace HCCRffeView {
 
@@ -40,6 +42,19 @@ struct View {
     lv_obj_t *empty = nullptr;
     lv_obj_t *box_title = nullptr;
     lv_obj_t *tiles = nullptr;  // các ô DEVICE / PART (dữ liệu JC)
+    // Màn xem ảnh testpoint (trên lv_layer_top, không phải con của root)
+    lv_obj_t *viewer = nullptr;
+    lv_obj_t *v_scroll = nullptr;
+    lv_obj_t *v_img = nullptr;
+    lv_obj_t *v_title = nullptr;
+    lv_obj_t *v_msg = nullptr;
+    lv_obj_t *v_zoom_lbl = nullptr;
+    std::vector<std::string> imgs;
+    int img_idx = 0;
+    int zoom = 1;
+    bool img_waiting = false;
+    uint32_t img_serial = 0;
+    char img_info[32] = "";
     lv_obj_t *scan_btn = nullptr;
     lv_obj_t *status = nullptr;
     lv_timer_t *timer = nullptr;
@@ -567,8 +582,222 @@ static void onScanClicked(lv_event_t *)
     setStatus("Đang scan USID 0x1..0xF...", C_CYAN);
 }
 
+// ==================== Ảnh testpoint (toàn màn hình) ====================
+// Ảnh trên thẻ: /rffe/img/<MODEL>/*.jpg|png (xem HCCRffeImage.hpp). Lớp phủ đặt trên lv_layer_top() để
+// phủ cả màn hình (che thanh trạng thái); các nút điều khiển nổi trên ảnh.
+
+static lv_obj_t *makeOverlayButton(lv_obj_t *parent, const char *text, int w, lv_event_cb_t cb)
+{
+    lv_obj_t *b = makeButton(parent, text, lv_color_hex(0x000000), w, 48, cb, nullptr);
+    lv_obj_set_style_bg_opa(b, LV_OPA_60, 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    return b;
+}
+
+static void viewerSetMessage(const char *msg)
+{
+    if (s_v.v_msg == nullptr) {
+        return;
+    }
+    if (msg && msg[0]) {
+        lv_label_set_text(s_v.v_msg, msg);
+        lv_obj_clear_flag(s_v.v_msg, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_v.v_msg, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void viewerUpdateTitle(void)
+{
+    if (s_v.v_title == nullptr) {
+        return;
+    }
+    char t[200];
+    if (s_v.imgs.empty()) {
+        snprintf(t, sizeof(t), "%s  -  ẢNH TESTPOINT", s_v.model);
+    } else {
+        const std::string &p = s_v.imgs[s_v.img_idx];
+        const size_t slash = p.rfind('/');
+        snprintf(t, sizeof(t), "%s   %d / %d   %s%s", s_v.model, s_v.img_idx + 1, (int)s_v.imgs.size(),
+                 p.c_str() + (slash == std::string::npos ? 0 : slash + 1), s_v.img_info);
+    }
+    lv_label_set_text(s_v.v_title, t);
+}
+
+// Gỡ ảnh khỏi lv_img trước khi bộ đệm bị giải phóng / thay.
+static void viewerDetachImage(void)
+{
+    if (s_v.v_img) {
+        const void *src = lv_img_get_src(s_v.v_img);
+        if (src) {
+            lv_img_cache_invalidate_src(src);
+        }
+        lv_obj_add_flag(s_v.v_img, LV_OBJ_FLAG_HIDDEN);
+        lv_img_set_src(s_v.v_img, nullptr);
+    }
+}
+
+static void viewerLoadCurrent(void)
+{
+    if (s_v.imgs.empty() || HCCRffeImage::busy()) {
+        return;
+    }
+    viewerDetachImage();
+    s_v.img_info[0] = '\0';
+    viewerUpdateTitle();
+    s_v.img_serial = HCCRffeImage::serial();
+    if (HCCRffeImage::startLoad(s_v.imgs[s_v.img_idx].c_str(), 1024 * s_v.zoom, 600 * s_v.zoom)) {
+        s_v.img_waiting = true;
+        viewerSetMessage("Đang tải ảnh...");
+    } else {
+        viewerSetMessage("Không giải mã được ảnh");
+    }
+}
+
+// Gọi từ timer: hiện ảnh khi task giải mã xong.
+static void viewerPoll(void)
+{
+    if (!s_v.img_waiting || HCCRffeImage::busy() || HCCRffeImage::serial() == s_v.img_serial) {
+        return;
+    }
+    s_v.img_waiting = false;
+    if (s_v.viewer == nullptr) {
+        HCCRffeImage::release();  // màn xem ảnh đã đóng trong lúc giải mã
+        return;
+    }
+    const lv_img_dsc_t *dsc = nullptr;
+    int sw = 0, sh = 0;
+    char err[128];
+    if (!HCCRffeImage::result(&dsc, &sw, &sh, err, sizeof(err))) {
+        viewerSetMessage(err);
+        return;
+    }
+    snprintf(s_v.img_info, sizeof(s_v.img_info), "   (%dx%d)", sw, sh);
+    viewerUpdateTitle();
+    viewerSetMessage(nullptr);
+    lv_img_set_src(s_v.v_img, dsc);
+    lv_obj_clear_flag(s_v.v_img, LV_OBJ_FLAG_HIDDEN);
+    // Ảnh nhỏ hơn màn hình: đặt giữa; lớn hơn (phóng to): kéo để xem, bắt đầu ở giữa ảnh.
+    const int w = dsc->header.w, h = dsc->header.h;
+    lv_obj_set_pos(s_v.v_img, w < 1024 ? (1024 - w) / 2 : 0, h < 600 ? (600 - h) / 2 : 0);
+    lv_obj_update_layout(s_v.v_scroll);
+    lv_obj_scroll_to(s_v.v_scroll, w > 1024 ? (w - 1024) / 2 : 0, h > 600 ? (h - 600) / 2 : 0, LV_ANIM_OFF);
+}
+
+static void viewerClose(void)
+{
+    if (s_v.viewer == nullptr) {
+        return;
+    }
+    viewerDetachImage();
+    lv_obj_del(s_v.viewer);
+    s_v.viewer = nullptr;
+    s_v.v_img = nullptr;
+    s_v.v_scroll = nullptr;
+    s_v.v_title = nullptr;
+    s_v.v_msg = nullptr;
+    s_v.v_zoom_lbl = nullptr;
+    HCCRffeImage::release();  // nếu còn đang giải mã, viewerPoll sẽ giải phóng khi xong
+}
+
+static void onViewerClose(lv_event_t *)
+{
+    viewerClose();
+}
+
+static void onViewerPrev(lv_event_t *)
+{
+    if (s_v.imgs.size() > 1 && !HCCRffeImage::busy()) {
+        s_v.img_idx = (s_v.img_idx + (int)s_v.imgs.size() - 1) % (int)s_v.imgs.size();
+        viewerLoadCurrent();
+    }
+}
+
+static void onViewerNext(lv_event_t *)
+{
+    if (s_v.imgs.size() > 1 && !HCCRffeImage::busy()) {
+        s_v.img_idx = (s_v.img_idx + 1) % (int)s_v.imgs.size();
+        viewerLoadCurrent();
+    }
+}
+
+static void onViewerZoom(lv_event_t *)
+{
+    if (s_v.imgs.empty() || HCCRffeImage::busy()) {
+        return;
+    }
+    s_v.zoom = (s_v.zoom == 1) ? 2 : 1;
+    lv_label_set_text(s_v.v_zoom_lbl, s_v.zoom == 1 ? "PHÓNG TO" : "THU NHỎ");
+    viewerLoadCurrent();
+}
+
+static void onImageClicked(lv_event_t *)
+{
+    if (s_v.viewer) {
+        return;
+    }
+    s_v.imgs.clear();
+    s_v.img_idx = 0;
+    s_v.zoom = 1;
+    std::string folder;
+    char err[160] = "";
+    const bool have = s_v.have_models &&
+                      HCCRffeImage::list(s_v.model, s_v.have_data ? s_v.data : "", s_v.imgs, folder, err, sizeof(err));
+
+    lv_obj_t *ov = lv_obj_create(lv_layer_top());
+    s_v.viewer = ov;
+    lv_obj_remove_style_all(ov);
+    lv_obj_set_size(ov, 1024, 600);
+    lv_obj_set_pos(ov, 0, 0);
+    lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
+    lv_obj_add_flag(ov, LV_OBJ_FLAG_CLICKABLE);  // chặn chạm xuống màn RFFE bên dưới
+    lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_v.v_scroll = lv_obj_create(ov);
+    lv_obj_remove_style_all(s_v.v_scroll);
+    lv_obj_set_size(s_v.v_scroll, 1024, 600);
+    lv_obj_set_scrollbar_mode(s_v.v_scroll, LV_SCROLLBAR_MODE_OFF);
+    s_v.v_img = lv_img_create(s_v.v_scroll);
+    lv_obj_add_flag(s_v.v_img, LV_OBJ_FLAG_HIDDEN);
+
+    s_v.v_msg = makeLabel(ov, "", C_MUTED, &lv_font_be_vietnam_20);
+    lv_obj_set_width(s_v.v_msg, 900);
+    lv_label_set_long_mode(s_v.v_msg, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(s_v.v_msg, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_v.v_msg);
+
+    s_v.v_title = makeLabel(ov, "", C_TEXT, &lv_font_be_vietnam_16);
+    lv_obj_set_style_bg_color(s_v.v_title, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_v.v_title, LV_OPA_60, 0);
+    lv_obj_set_style_pad_all(s_v.v_title, 8, 0);
+    lv_obj_set_style_radius(s_v.v_title, 8, 0);
+    lv_obj_set_width(s_v.v_title, 1000);
+    lv_label_set_long_mode(s_v.v_title, LV_LABEL_LONG_DOT);
+    lv_obj_align(s_v.v_title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *b_close = makeOverlayButton(ov, "ĐÓNG", 120, onViewerClose);
+    lv_obj_align(b_close, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
+    lv_obj_t *b_zoom = makeOverlayButton(ov, "PHÓNG TO", 140, onViewerZoom);
+    lv_obj_align(b_zoom, LV_ALIGN_BOTTOM_RIGHT, -144, -12);
+    s_v.v_zoom_lbl = lv_obj_get_child(b_zoom, 0);
+    lv_obj_t *b_next = makeOverlayButton(ov, ">", 70, onViewerNext);
+    lv_obj_align(b_next, LV_ALIGN_BOTTOM_RIGHT, -296, -12);
+    lv_obj_t *b_prev = makeOverlayButton(ov, "<", 70, onViewerPrev);
+    lv_obj_align(b_prev, LV_ALIGN_BOTTOM_RIGHT, -378, -12);
+
+    viewerUpdateTitle();
+    if (!have) {
+        viewerSetMessage(err[0] ? err : "Chưa có ảnh cho model này");
+        return;
+    }
+    viewerLoadCurrent();
+}
+
 static void onTimer(lv_timer_t *)
 {
+    viewerPoll();
     if (!s_v.waiting_scan || HCCRffe::busy() || HCCRffe::reportSerial() == s_v.seen_serial) {
         return;
     }
@@ -583,6 +812,7 @@ static void onTimer(lv_timer_t *)
 
 static void onRootDeleted(lv_event_t *)
 {
+    viewerClose();  // lớp phủ ảnh nằm trên lv_layer_top, phải xóa riêng
     if (s_v.timer) {
         lv_timer_del(s_v.timer);
     }
@@ -722,9 +952,12 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     lv_obj_align(s_v.scan_btn, LV_ALIGN_BOTTOM_LEFT, 184, -22);
     lv_obj_set_style_bg_color(s_v.scan_btn, C_GREY, LV_STATE_DISABLED);
 
+    lv_obj_t *img_btn = makeButton(root, "ẢNH TESTPOINT", lv_color_hex(0x6A4BC4), 210, 48, onImageClicked, nullptr);
+    lv_obj_align(img_btn, LV_ALIGN_BOTTOM_LEFT, 380, -22);
+
     s_v.status = makeLabel(root, "Sẵn sàng", C_CYAN, &lv_font_be_vietnam_16);
-    lv_obj_align(s_v.status, LV_ALIGN_BOTTOM_LEFT, 388, -36);
-    lv_obj_set_width(s_v.status, 610);
+    lv_obj_align(s_v.status, LV_ALIGN_BOTTOM_LEFT, 608, -36);
+    lv_obj_set_width(s_v.status, 400);
     lv_label_set_long_mode(s_v.status, LV_LABEL_LONG_DOT);
 
     populateModels();
