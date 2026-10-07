@@ -309,7 +309,7 @@ static void renderMapping(void)
             snprintf(sum + n, sizeof(sum) - n, "   lạ %d", extra);
         }
     } else {
-        snprintf(sum, sizeof(sum), "%d linh kiện - bấm SCAN", (int)s_v.ref.size());
+        sum[0] = '\0';
     }
     lv_label_set_text(s_v.summary, sum);
     lv_obj_scroll_to_y(s_v.tiles, 0, LV_ANIM_OFF);
@@ -495,7 +495,7 @@ static void loadSelectedData(void)
                 }
             }
             if (HCCRffe::isJcModel(s_v.model)) {
-                snprintf(info, sizeof(info), "%s / %s: %d linh kiện", s_v.model, s_v.data, (int)s_v.ref.size());
+                info[0] = '\0';  // tên model / đường đã hiện ở tiêu đề khung ô
             } else {
                 snprintf(info, sizeof(info), "%s/%s: %d thanh ghi, %d USID", s_v.model, s_v.data,
                          (int)s_v.ref.size(), usids);
@@ -1042,7 +1042,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
 
     char pins[160];
     if (HCCRffe::configured()) {
-        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d (tự đảo nếu nối ngược)   |   bus 1,8 V qua chuyển mức",
+        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d (tự đảo nếu nối ngược)",
                  HCCRffe::sclkPin(), HCCRffe::sdataPin());
     } else {
         snprintf(pins, sizeof(pins), "%s", HCCRffe::configError());
