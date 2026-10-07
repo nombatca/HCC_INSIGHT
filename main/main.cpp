@@ -146,10 +146,10 @@ extern "C" void app_main(void)
         return;
     }
 
-    Browser *browser = new Browser();
-    assert(browser != nullptr && "Failed to create browser");
-    if (phone->installApp(browser) < 0) {
-        ESP_LOGE(TAG, "Failed to install browser");
+    HCCNews *news = new HCCNews();
+    assert(news != nullptr && "Failed to create news");
+    if (phone->installApp(news) < 0) {
+        ESP_LOGE(TAG, "Failed to install news");
         bsp_display_unlock();
         return;
     }

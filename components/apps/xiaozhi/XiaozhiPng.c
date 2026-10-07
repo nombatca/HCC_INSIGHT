@@ -205,6 +205,9 @@ static void upscale_bilinear(const uint8_t *src, int sw, int sh, double scale, d
     }
 }
 
+// f: đã đọc xong 8 byte chữ ký PNG; hàm luôn đóng f.
+static uint8_t *load_cover_file(FILE *f, int dst_w, int dst_h, int *src_w, int *src_h, char *err, size_t err_len);
+
 uint8_t *xz_png_load_cover(const char *path, int dst_w, int dst_h, int *src_w, int *src_h, char *err, size_t err_len)
 {
     if (dst_w <= 0 || dst_h <= 0) {
@@ -216,6 +219,41 @@ uint8_t *xz_png_load_cover(const char *path, int dst_w, int dst_h, int *src_w, i
         set_err(err, err_len, "không mở được hoặc không phải PNG");
         return NULL;
     }
+    return load_cover_file(f, dst_w, dst_h, src_w, src_h, err, err_len);
+}
+
+bool xz_png_size_mem(const uint8_t *data, size_t len, int *w, int *h)
+{
+    if (data == NULL || len < 24 || png_sig_cmp((png_const_bytep)data, 0, 8) != 0 || memcmp(data + 12, "IHDR", 4) != 0) {
+        return false;
+    }
+    *w = (int)(((uint32_t)data[16] << 24) | ((uint32_t)data[17] << 16) | ((uint32_t)data[18] << 8) | data[19]);
+    *h = (int)(((uint32_t)data[20] << 24) | ((uint32_t)data[21] << 16) | ((uint32_t)data[22] << 8) | data[23]);
+    return *w > 0 && *h > 0;
+}
+
+uint8_t *xz_png_load_cover_mem(const uint8_t *data, size_t len, int dst_w, int dst_h, int *src_w, int *src_h,
+                               char *err, size_t err_len)
+{
+    if (dst_w <= 0 || dst_h <= 0) {
+        set_err(err, err_len, "khung đích không hợp lệ");
+        return NULL;
+    }
+    if (data == NULL || len < 8 || png_sig_cmp((png_const_bytep)data, 0, 8) != 0) {
+        set_err(err, err_len, "không phải PNG");
+        return NULL;
+    }
+    FILE *f = fmemopen((void *)data, len, "rb");
+    if (f == NULL) {
+        set_err(err, err_len, "thiếu bộ nhớ");
+        return NULL;
+    }
+    fseek(f, 8, SEEK_SET);
+    return load_cover_file(f, dst_w, dst_h, src_w, src_h, err, err_len);
+}
+
+static uint8_t *load_cover_file(FILE *f, int dst_w, int dst_h, int *src_w, int *src_h, char *err, size_t err_len)
+{
     err_ctx_t ectx = {err, err_len};
     png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, &ectx, on_png_error, on_png_warning);
     png_infop info = png != NULL ? png_create_info_struct(png) : NULL;

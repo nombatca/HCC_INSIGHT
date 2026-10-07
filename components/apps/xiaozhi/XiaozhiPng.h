@@ -24,6 +24,11 @@ bool xz_png_size(const char *path, int *w, int *h);
 // *src_w / *src_h (có thể NULL) nhận kích thước ảnh gốc. err nhận mô tả lỗi.
 uint8_t *xz_png_load_cover(const char *path, int dst_w, int dst_h, int *src_w, int *src_h, char *err, size_t err_len);
 
+// Như trên nhưng đọc PNG từ bộ nhớ (vd tải qua mạng).
+bool xz_png_size_mem(const uint8_t *data, size_t len, int *w, int *h);
+uint8_t *xz_png_load_cover_mem(const uint8_t *data, size_t len, int dst_w, int dst_h, int *src_w, int *src_h,
+                               char *err, size_t err_len);
+
 void xz_png_free(void *buf);
 
 #ifdef __cplusplus
