@@ -299,7 +299,7 @@ static void renderMapping(void)
         ++extra;
     }
 
-    char sum[128];
+    char sum[160];
     if (rep.scanned) {
         int n = snprintf(sum, sizeof(sum), "Thấy %d / %d   không thấy %d", ok, (int)s_v.ref.size(), bad);
         if (skip) {
@@ -448,7 +448,7 @@ static void renderReport(void)
         lv_obj_center(l);
     }
 
-    char sum[128];
+    char sum[160];
     if (rep.scanned) {
         snprintf(sum, sizeof(sum), "%s", rep.message);
     } else if (!rep.usids.empty()) {
@@ -1043,7 +1043,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
 
     char pins[160];
     if (HCCRffe::configured()) {
-        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d   |   bus 1,8 V qua mạch chuyển mức",
+        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d (tự đảo nếu nối ngược)   |   bus 1,8 V qua chuyển mức",
                  HCCRffe::sclkPin(), HCCRffe::sdataPin());
     } else {
         snprintf(pins, sizeof(pins), "%s", HCCRffe::configError());

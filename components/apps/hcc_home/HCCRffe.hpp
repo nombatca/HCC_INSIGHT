@@ -15,7 +15,8 @@
  *   RFFE DATA = rffe_line; mỗi linh kiện kiểm 0x1F & 0x0F == USID. USID 0 (broadcast) không quét.
  *   Tên hiển thị: model "IP 15 PROMAX"..., đường RFFE bỏ ký tự rác ở cuối (@ & [, DATA3 -> DATA ...).
  *
- * SCAN: bus phải ở mức 0 khi nghỉ (không thì dừng). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
+ * SCAN: tự đảo chiều SCLK <-> SDATA: chiều đầu không thấy USID nào thì thử chiều ngược lại (nối ngược dây vẫn quét được).
+ * Bus phải ở mức 0 khi nghỉ (không thì bỏ chiều đó). Hỏi USID 1..15 (0 là broadcast); USID chỉ được nhận khi
  * thanh ghi 0x1F đúng parity, bit[3:0] == USID đang hỏi và đọc lại hai lần cùng giá trị (không nối gì -> 0 USID).
  * Lưu ý board P4 WIFI6: GPIO14..19 và 54 là SDIO / reset của chip Wi-Fi C6 - firmware từ chối các chân này.
  * USID có trong dữ liệu tham chiếu: đọc đúng các thanh ghi đó (địa chỉ > 0x1F dùng Extended Register Read) và so (giá trị & mask) == (chuẩn & mask). USID không có tham
@@ -63,7 +64,7 @@ struct UsidResult {
 
 struct Report {
     bool scanned = false;      // false: chỉ là bản xem trước dữ liệu tham chiếu
-    char message[96] = "";
+    char message[160] = "";
     std::vector<UsidResult> usids;
 };
 
@@ -75,8 +76,11 @@ bool isJcModel(const char *model);
 const char *jcFileName(void);
 // Nguồn bảng JC đang dùng: "firmware" (rffe_jc_database.h) hoặc "thẻ SD" (file CSV ghi đè).
 const char *jcSource(void);
+// Chân SCLK / SDATA đang dùng (sau lần quét gần nhất; có thể đã đảo so với menuconfig).
 int sclkPin(void);
 int sdataPin(void);
+// true khi lần quét gần nhất tìm thấy USID với SCLK / SDATA đảo so với menuconfig (dây nối ngược).
+bool pinsSwapped(void);
 
 // Danh sách cho lv_dropdown (ngăn cách '\n'). Trả số mục, -1 nếu không đọc được thẻ / thư mục.
 // Model = các model trong bảng JC (firmware / thẻ) và thư mục /sdcard/rffe/<MODEL>/.

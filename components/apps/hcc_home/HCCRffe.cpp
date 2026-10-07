@@ -41,6 +41,10 @@ static const uint32_t HALF_US = CONFIG_HCC_RFFE_HALF_PERIOD_US;
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_gpio_ready = false;
+// Chân đang dùng cho SCLK / SDATA. Nối ngược hai dây thì lần quét tự thử đảo chiều; chiều nào tìm thấy USID
+// được giữ cho lần quét sau.
+static int s_pin_clk = PIN_SCLK;
+static int s_pin_dat = PIN_SDATA;
 static volatile bool s_busy = false;
 static volatile uint32_t s_serial = 0;
 static Report s_report;
@@ -92,12 +96,17 @@ bool configured(void)
 
 int sclkPin(void)
 {
-    return PIN_SCLK;
+    return s_pin_clk;
 }
 
 int sdataPin(void)
 {
-    return PIN_SDATA;
+    return s_pin_dat;
+}
+
+bool pinsSwapped(void)
+{
+    return s_pin_clk != PIN_SCLK;
 }
 
 // ==================== Thẻ SD ====================
@@ -599,35 +608,46 @@ bool loadReference(const char *model, const char *file, std::vector<RefEntry> &o
 
 static inline void sclk(int v)
 {
-    gpio_set_level(static_cast<gpio_num_t>(PIN_SCLK), v);
+    gpio_set_level(static_cast<gpio_num_t>(s_pin_clk), v);
 }
 
 static inline void sdata(int v)
 {
-    gpio_set_level(static_cast<gpio_num_t>(PIN_SDATA), v);
+    gpio_set_level(static_cast<gpio_num_t>(s_pin_dat), v);
 }
 
 static inline void sdataDrive(bool drive)
 {
-    gpio_set_direction(static_cast<gpio_num_t>(PIN_SDATA), drive ? GPIO_MODE_INPUT_OUTPUT : GPIO_MODE_INPUT);
+    gpio_set_direction(static_cast<gpio_num_t>(s_pin_dat), drive ? GPIO_MODE_INPUT_OUTPUT : GPIO_MODE_INPUT);
 }
 
+// Cả hai chân cấu hình giống nhau (vào / ra, pull-down) để đổi vai SCLK <-> SDATA chỉ cần đổi s_pin_clk / s_pin_dat.
+// Pull-down: không có slave thì SDATA đọc về 0 -> sai chẵn lẻ -> "không phản hồi".
 static void gpioInit(void)
 {
     if (s_gpio_ready) {
         return;
     }
     gpio_config_t io = {};
-    io.pin_bit_mask = 1ULL << (PIN_SCLK & 63);  // configured() đã kiểm tra chân >= 0
-    io.mode = GPIO_MODE_OUTPUT;
-    gpio_config(&io);
-    io.pin_bit_mask = 1ULL << (PIN_SDATA & 63);
+    io.pin_bit_mask = (1ULL << (PIN_SCLK & 63)) | (1ULL << (PIN_SDATA & 63));  // configured() đã kiểm tra chân >= 0
     io.mode = GPIO_MODE_INPUT_OUTPUT;
-    io.pull_down_en = GPIO_PULLDOWN_ENABLE;  // không có slave: đọc về 0 -> sai chẵn lẻ -> "không phản hồi"
+    io.pull_down_en = GPIO_PULLDOWN_ENABLE;
     gpio_config(&io);
+    gpio_set_level(static_cast<gpio_num_t>(PIN_SCLK), 0);
+    gpio_set_level(static_cast<gpio_num_t>(PIN_SDATA), 0);
+    s_gpio_ready = true;
+}
+
+// Đặt chiều chân: swapped = SCLK ra chân SDATA cấu hình và ngược lại. Cả hai chân về mức 0, đang lái ra.
+static void setOrientation(bool swapped)
+{
+    s_pin_clk = swapped ? PIN_SDATA : PIN_SCLK;
+    s_pin_dat = swapped ? PIN_SCLK : PIN_SDATA;
+    gpio_set_direction(static_cast<gpio_num_t>(s_pin_clk), GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_direction(static_cast<gpio_num_t>(s_pin_dat), GPIO_MODE_INPUT_OUTPUT);
     sclk(0);
     sdata(0);
-    s_gpio_ready = true;
+    esp_rom_delay_us(50);
 }
 
 static void writeBit(int b)
@@ -643,7 +663,7 @@ static int readBit(void)
 {
     sclk(1);
     esp_rom_delay_us(HALF_US);
-    const int v = gpio_get_level(static_cast<gpio_num_t>(PIN_SDATA));
+    const int v = gpio_get_level(static_cast<gpio_num_t>(s_pin_dat));
     sclk(0);
     esp_rom_delay_us(HALF_US);
     return v;
@@ -731,7 +751,7 @@ static bool busIdleLow(void)
     esp_rom_delay_us(50);
     int highs = 0;
     for (int i = 0; i < 16; ++i) {
-        highs += gpio_get_level(static_cast<gpio_num_t>(PIN_SDATA));
+        highs += gpio_get_level(static_cast<gpio_num_t>(s_pin_dat));
         esp_rom_delay_us(5);
     }
     sdataDrive(true);
@@ -814,15 +834,38 @@ static void scanTask(void *)
     rep.scanned = true;
     gpioInit();
 
+    // Dò USID theo chiều chân lần trước; không thấy USID nào thì đảo SCLK <-> SDATA và dò lại (nối ngược dây).
+    // Mỗi chiều dùng cùng điều kiện nhận USID (0x1F đúng parity, [3:0] == USID, đọc lại khớp) nên đảo chiều
+    // không sinh USID ảo; cả hai chiều không thấy -> 0 USID.
+    UsidResult probes[16] = {};
+    bool idle_ok = false;
     int found = 0;
-    const bool idle_ok = busIdleLow();
-    if (!idle_ok) {
-        ESP_LOGW(TAG, "SDATA bị kéo lên khi bus nghỉ - bỏ quét");
+    const bool first = pinsSwapped();
+    for (int attempt = 0; attempt < 2 && found == 0; ++attempt) {
+        const bool sw = (attempt == 0) ? first : !first;
+        setOrientation(sw);
+        const bool idle = busIdleLow();
+        if (!idle) {
+            ESP_LOGW(TAG, "SCLK GPIO%d / SDATA GPIO%d: SDATA bị kéo lên khi bus nghỉ - bỏ chiều này", s_pin_clk,
+                     s_pin_dat);
+            continue;
+        }
+        idle_ok = true;
+        for (uint8_t usid = 1; usid <= 15; ++usid) {  // USID 0 là broadcast
+            probes[usid] = UsidResult();
+            probes[usid].usid = usid;
+            probes[usid].responded = probeUsid(usid, probes[usid]);
+            found += probes[usid].responded ? 1 : 0;
+        }
+        ESP_LOGI(TAG, "SCLK GPIO%d / SDATA GPIO%d%s: %d USID", s_pin_clk, s_pin_dat, sw ? " (đảo)" : "", found);
+        vTaskDelay(1);
     }
-    for (uint8_t usid = 1; idle_ok && usid <= 15; ++usid) {  // USID 0 là broadcast
-        UsidResult probe = {};
-        probe.usid = usid;
-        probe.responded = probeUsid(usid, probe);
+    if (found == 0) {
+        setOrientation(false);  // không thấy gì: trở về chiều cấu hình
+    }
+
+    for (uint8_t usid = 1; idle_ok && usid <= 15; ++usid) {
+        UsidResult probe = probes[usid];
         auto it = std::find_if(rep.usids.begin(), rep.usids.end(),
                                [&](const UsidResult &u) { return u.usid == usid; });
         if (it == rep.usids.end()) {
@@ -839,9 +882,6 @@ static void scanTask(void *)
             it->responded = probe.responded;
             memcpy(it->id_regs, probe.id_regs, sizeof(it->id_regs));
             memcpy(it->id_ok, probe.id_ok, sizeof(it->id_ok));
-        }
-        if (it->responded) {
-            ++found;
         }
         for (RegResult &r : it->regs) {
             r.read_ok = it->responded && readReg(usid, r.reg, &r.value);
@@ -867,14 +907,15 @@ static void scanTask(void *)
         missing += (u.in_ref && !u.responded && u.usid != 0) ? 1 : 0;  // USID 0 (broadcast) không quét
     }
     if (!idle_ok) {
-        snprintf(rep.message, sizeof(rep.message), "SDATA bị kéo lên khi nghỉ (pull-up / chạm nguồn) - không quét");
+        snprintf(rep.message, sizeof(rep.message), "SDATA bị kéo lên khi nghỉ ở cả hai chiều chân (pull-up / chạm nguồn) - không quét");
     } else if (found == 0) {
-        snprintf(rep.message, sizeof(rep.message), "Không có USID nào phản hồi (kiểm tra dây, nguồn 1,8 V, chuyển mức)");
+        snprintf(rep.message, sizeof(rep.message), "Không có USID nào phản hồi (đã thử cả hai chiều SCLK/SDATA; kiểm tra nguồn 1,8 V, chuyển mức)");
     } else if (s_scan_ref.empty()) {
-        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID - chưa chọn dữ liệu để so", found);
+        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID%s - chưa chọn dữ liệu để so", found,
+                 pinsSwapped() ? " (dây đảo)" : "");
     } else {
-        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID   PASS %d   FAIL %d   USID thiếu %d",
-                 found, pass, fail, missing);
+        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d USID%s   PASS %d   FAIL %d   USID thiếu %d",
+                 found, pinsSwapped() ? " (dây đảo)" : "", pass, fail, missing);
     }
     ESP_LOGI(TAG, "%s", rep.message);
 
