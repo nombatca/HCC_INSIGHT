@@ -11,6 +11,8 @@
 #include "esp_log.h"
 #include <stdlib.h>
 #include "esp_check.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_idf_version.h"
 #include "esp_spiffs.h"
 #include "esp_lcd_panel_ops.h"
@@ -601,6 +603,76 @@ err:
     return ret;
 }
 
+/* Đa điểm cho app (zoom hai ngón): bọc read_data của driver, chép mọi điểm sau mỗi lần đọc.
+ * esp_lcd_touch lật / đảo toạ độ ở bước get, nên ở đây áp lại đúng các cờ đó. */
+static esp_err_t (*s_touch_read_orig)(esp_lcd_touch_handle_t tp) = NULL;
+static portMUX_TYPE s_touch_mt_lock = portMUX_INITIALIZER_UNLOCKED;
+static int16_t s_touch_mt_x[CONFIG_ESP_LCD_TOUCH_MAX_POINTS];
+static int16_t s_touch_mt_y[CONFIG_ESP_LCD_TOUCH_MAX_POINTS];
+static uint8_t s_touch_mt_n = 0;
+static TickType_t s_touch_mt_tick = 0;
+
+static esp_err_t bsp_touch_read_wrap(esp_lcd_touch_handle_t tp)
+{
+    const esp_err_t ret = s_touch_read_orig(tp);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    int16_t x[CONFIG_ESP_LCD_TOUCH_MAX_POINTS], y[CONFIG_ESP_LCD_TOUCH_MAX_POINTS];
+    uint8_t n;
+    portENTER_CRITICAL(&tp->data.lock);
+    n = tp->data.points;
+    if (n > CONFIG_ESP_LCD_TOUCH_MAX_POINTS) {
+        n = CONFIG_ESP_LCD_TOUCH_MAX_POINTS;
+    }
+    for (int i = 0; i < n; i++) {
+        x[i] = (int16_t)tp->data.coords[i].x;
+        y[i] = (int16_t)tp->data.coords[i].y;
+    }
+    portEXIT_CRITICAL(&tp->data.lock);
+    for (int i = 0; i < n; i++) {
+        if (tp->config.flags.mirror_x && tp->set_mirror_x == NULL) {
+            x[i] = (int16_t)(tp->config.x_max - x[i]);
+        }
+        if (tp->config.flags.mirror_y && tp->set_mirror_y == NULL) {
+            y[i] = (int16_t)(tp->config.y_max - y[i]);
+        }
+        if (tp->config.flags.swap_xy && tp->set_swap_xy == NULL) {
+            const int16_t t = x[i];
+            x[i] = y[i];
+            y[i] = t;
+        }
+    }
+    portENTER_CRITICAL(&s_touch_mt_lock);
+    s_touch_mt_n = n;
+    for (int i = 0; i < n; i++) {
+        s_touch_mt_x[i] = x[i];
+        s_touch_mt_y[i] = y[i];
+    }
+    s_touch_mt_tick = xTaskGetTickCount();
+    portEXIT_CRITICAL(&s_touch_mt_lock);
+    return ret;
+}
+
+int bsp_touch_get_points(int16_t *x, int16_t *y, int max_points)
+{
+    int n;
+    portENTER_CRITICAL(&s_touch_mt_lock);
+    n = s_touch_mt_n;
+    if ((xTaskGetTickCount() - s_touch_mt_tick) > pdMS_TO_TICKS(150)) {
+        n = 0;  // không có lần đọc mới (chế độ ngắt, đã nhả tay)
+    }
+    if (n > max_points) {
+        n = max_points;
+    }
+    for (int i = 0; i < n; i++) {
+        x[i] = s_touch_mt_x[i];
+        y[i] = s_touch_mt_y[i];
+    }
+    portEXIT_CRITICAL(&s_touch_mt_lock);
+    return n;
+}
+
 esp_err_t bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t *ret_touch)
 {
     const bsp_touch_config_t default_config = {
@@ -650,7 +722,12 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t
     }
     tp_io_config.scl_speed_hz = CONFIG_BSP_I2C_CLK_SPEED_HZ;
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle), TAG, "");
-    return esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch);
+    ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch), TAG, "GT911 init failed");
+    if (*ret_touch != NULL && (*ret_touch)->read_data != NULL && s_touch_read_orig == NULL) {
+        s_touch_read_orig = (*ret_touch)->read_data;
+        (*ret_touch)->read_data = bsp_touch_read_wrap;
+    }
+    return ESP_OK;
 }
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)

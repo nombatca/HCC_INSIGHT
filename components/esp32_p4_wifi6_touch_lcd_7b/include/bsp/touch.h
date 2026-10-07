@@ -50,6 +50,14 @@ typedef struct {
  */
 esp_err_t bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t *ret_touch);
 
+/**
+ * @brief Đọc các điểm chạm hiện tại (đa điểm, tối đa CONFIG_ESP_LCD_TOUCH_MAX_POINTS) theo toạ độ màn hình
+ *
+ * LVGL 8 chỉ nhận một điểm; BSP bọc hàm read_data của driver touch để lưu lại mọi điểm (dùng cho zoom hai
+ * ngón). Toạ độ đã lật / đảo giống esp_lcd_touch. Trả về 0 nếu không chạm hoặc dữ liệu cũ hơn 150 ms.
+ */
+int bsp_touch_get_points(int16_t *x, int16_t *y, int max_points);
+
 #ifdef __cplusplus
 }
 #endif

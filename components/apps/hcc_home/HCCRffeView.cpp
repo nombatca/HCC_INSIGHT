@@ -1,12 +1,16 @@
 #include "HCCRffeView.hpp"
 
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
+#include <strings.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
 #include "HCCRffe.hpp"
 #include "HCCRffeImage.hpp"
+#include "bsp/touch.h"
 
 namespace HCCRffeView {
 
@@ -48,11 +52,20 @@ struct View {
     lv_obj_t *v_img = nullptr;
     lv_obj_t *v_title = nullptr;
     lv_obj_t *v_msg = nullptr;
-    lv_obj_t *v_zoom_lbl = nullptr;
+    lv_timer_t *v_timer = nullptr;  // zoom hai ngón
     std::vector<std::string> imgs;
     int img_idx = 0;
-    int zoom = 1;
+    float z = 1.0f;        // kích thước hiển thị / "vừa màn hình"
+    float dl = 1.0f;       // độ phân giải ảnh đang giải mã / "vừa màn hình"
+    int fit_w = 0, fit_h = 0, src_w = 0, src_h = 0;
     bool img_waiting = false;
+    bool reload = false;   // lần giải mã đang chờ là đổi độ phân giải (không phải ảnh mới)
+    float load_dl = 1.0f;
+    float keep_cx = 0, keep_cy = 0;
+    int pan_x = 0, pan_y = 0;
+    bool pinching = false;
+    int pinch_idle = 0;
+    float p_d0 = 1, p_z0 = 1, p_cx = 0, p_cy = 0;
     uint32_t img_serial = 0;
     char img_info[32] = "";
     lv_obj_t *scan_btn = nullptr;
@@ -585,6 +598,18 @@ static void onScanClicked(lv_event_t *)
 // ==================== Ảnh testpoint (toàn màn hình) ====================
 // Ảnh trên thẻ: /rffe/img/<MODEL>/*.jpg|png (xem HCCRffeImage.hpp). Lớp phủ đặt trên lv_layer_top() để
 // phủ cả màn hình (che thanh trạng thái); các nút điều khiển nổi trên ảnh.
+//
+// Zoom hai ngón: LVGL 8 chỉ nhận một điểm chạm nên đọc đa điểm qua bsp_touch_get_points() (timer 30 ms).
+//  - z  : kích thước hiển thị / kích thước "vừa màn hình" (1 .. 4)
+//  - dl : độ phân giải của ảnh đang giải mã / "vừa màn hình". Khi chụm tay: đổi lv_img zoom ngay
+//         (= z / dl). Khi thả tay: giải mã lại ở độ phân giải gần z (không vượt ảnh gốc) cho nét.
+// Một ngón: kéo để di chuyển. Vị trí ảnh tự quản lý (pan_x / pan_y = phần ảnh đã trượt ra ngoài màn bên
+// trái / trên); không dùng cuộn của LVGL vì lv_img zoom không làm đổi kích thước đối tượng.
+
+static const int SCR_W = 1024, SCR_H = 600;
+static const float Z_MAX = 4.0f;
+static const size_t HIRES_MAX_BYTES = 12 * 1024 * 1024;
+static const int LV_IMG_MAX_DIM = 2047;  // lv_img_header_t w / h: 11 bit
 
 static lv_obj_t *makeOverlayButton(lv_obj_t *parent, const char *text, int w, lv_event_cb_t cb)
 {
@@ -613,19 +638,19 @@ static void viewerUpdateTitle(void)
     if (s_v.v_title == nullptr) {
         return;
     }
-    char t[200];
+    char t[220];
     if (s_v.imgs.empty()) {
         snprintf(t, sizeof(t), "%s  -  ẢNH TESTPOINT", s_v.model);
     } else {
         const std::string &p = s_v.imgs[s_v.img_idx];
         const size_t slash = p.rfind('/');
-        snprintf(t, sizeof(t), "%s   %d / %d   %s%s", s_v.model, s_v.img_idx + 1, (int)s_v.imgs.size(),
-                 p.c_str() + (slash == std::string::npos ? 0 : slash + 1), s_v.img_info);
+        snprintf(t, sizeof(t), "%s   %d / %d   %s%s   %d%%", s_v.model, s_v.img_idx + 1, (int)s_v.imgs.size(),
+                 p.c_str() + (slash == std::string::npos ? 0 : slash + 1), s_v.img_info, (int)(s_v.z * 100 + 0.5f));
     }
     lv_label_set_text(s_v.v_title, t);
 }
 
-// Gỡ ảnh khỏi lv_img trước khi bộ đệm bị giải phóng / thay.
+// Gỡ ảnh khỏi lv_img trước khi bộ đệm bị giải phóng.
 static void viewerDetachImage(void)
 {
     if (s_v.v_img) {
@@ -638,6 +663,103 @@ static void viewerDetachImage(void)
     }
 }
 
+// Góc trên trái của ảnh trên màn hình: ảnh nhỏ hơn màn thì đặt giữa, lớn hơn thì trượt theo pan.
+static void viewerImageOrigin(int *ox, int *oy)
+{
+    const int disp_w = (int)(s_v.fit_w * s_v.z + 0.5f), disp_h = (int)(s_v.fit_h * s_v.z + 0.5f);
+    *ox = disp_w < SCR_W ? (SCR_W - disp_w) / 2 : -s_v.pan_x;
+    *oy = disp_h < SCR_H ? (SCR_H - disp_h) / 2 : -s_v.pan_y;
+}
+
+// Giới hạn pan trong ảnh rồi đặt vị trí lv_img.
+static void viewerPlaceImage(void)
+{
+    const int disp_w = (int)(s_v.fit_w * s_v.z + 0.5f), disp_h = (int)(s_v.fit_h * s_v.z + 0.5f);
+    const int max_x = disp_w > SCR_W ? disp_w - SCR_W : 0, max_y = disp_h > SCR_H ? disp_h - SCR_H : 0;
+    s_v.pan_x = s_v.pan_x < 0 ? 0 : (s_v.pan_x > max_x ? max_x : s_v.pan_x);
+    s_v.pan_y = s_v.pan_y < 0 ? 0 : (s_v.pan_y > max_y ? max_y : s_v.pan_y);
+    int ox, oy;
+    viewerImageOrigin(&ox, &oy);
+    lv_obj_set_pos(s_v.v_img, ox, oy);
+}
+
+// Điểm trên ảnh (đơn vị ảnh "vừa màn hình") đang nằm dưới điểm (ax, ay) của màn hình.
+static void viewerContentAt(int ax, int ay, float *cx, float *cy)
+{
+    const float z = s_v.z > 0 ? s_v.z : 1.0f;
+    int ox, oy;
+    viewerImageOrigin(&ox, &oy);
+    *cx = (ax - ox) / z;
+    *cy = (ay - oy) / z;
+}
+
+// Đặt mức zoom z, giữ điểm ảnh (cx, cy) nằm dưới điểm màn hình (ax, ay).
+static void viewerApplyZoom(float z, int ax, int ay, float cx, float cy)
+{
+    if (s_v.v_img == nullptr || s_v.fit_w <= 0) {
+        return;
+    }
+    if (z < 1.0f) {
+        z = 1.0f;
+    }
+    if (z > Z_MAX) {
+        z = Z_MAX;
+    }
+    s_v.z = z;
+    int lz = (int)(256.0f * z / s_v.dl + 0.5f);
+    if (lz < 16) {
+        lz = 16;
+    }
+    lv_img_set_zoom(s_v.v_img, (uint16_t)lz);
+    // Điểm ảnh (cx, cy) ở toạ độ cx * z trong ảnh đã phóng -> pan để nó nằm dưới (ax, ay).
+    s_v.pan_x = (int)(cx * z - ax + 0.5f);
+    s_v.pan_y = (int)(cy * z - ay + 0.5f);
+    viewerPlaceImage();
+    viewerUpdateTitle();
+}
+
+static bool viewerIsPng(void)
+{
+    const std::string &p = s_v.imgs[s_v.img_idx];
+    const size_t dot = p.rfind('.');
+    return dot != std::string::npos && strcasecmp(p.c_str() + dot, ".png") == 0;
+}
+
+static void viewerStartLoad(float dl, bool reload)
+{
+    s_v.img_serial = HCCRffeImage::serial();
+    s_v.load_dl = dl;
+    s_v.reload = reload;
+    const int w = (int)(s_v.fit_w > 0 ? s_v.fit_w * dl : SCR_W);
+    const int h = (int)(s_v.fit_h > 0 ? s_v.fit_h * dl : SCR_H);
+    if (HCCRffeImage::startLoad(s_v.imgs[s_v.img_idx].c_str(), reload ? w : SCR_W, reload ? h : SCR_H)) {
+        s_v.img_waiting = true;
+    }
+}
+
+// Sau khi thả tay: giải mã lại ở độ phân giải gần mức zoom (không vượt ảnh gốc, giới hạn bộ nhớ).
+static void viewerMaybeReload(void)
+{
+    if (s_v.imgs.empty() || s_v.fit_w <= 0 || s_v.img_waiting || HCCRffeImage::busy()) {
+        return;
+    }
+    float dl_max = std::min((float)s_v.src_w / s_v.fit_w, (float)s_v.src_h / s_v.fit_h);
+    const float bpp = viewerIsPng() ? 3.0f : 2.0f;
+    const float mem_max = sqrtf(HIRES_MAX_BYTES / (bpp * s_v.fit_w * s_v.fit_h));
+    // LVGL 8: lv_img_header_t chỉ có 11 bit cho rộng / cao -> ảnh tối đa 2047 px mỗi chiều.
+    const float lv_max = std::min((float)LV_IMG_MAX_DIM / s_v.fit_w, (float)LV_IMG_MAX_DIM / s_v.fit_h);
+    dl_max = std::min(std::min(std::min(dl_max, mem_max), lv_max), Z_MAX);
+    if (dl_max < 1.0f) {
+        dl_max = 1.0f;
+    }
+    const float target = std::min(std::max(s_v.z, 1.0f), dl_max);
+    if (fabsf(target / s_v.dl - 1.0f) < 0.2f) {
+        return;
+    }
+    viewerContentAt(SCR_W / 2, SCR_H / 2, &s_v.keep_cx, &s_v.keep_cy);
+    viewerStartLoad(target, true);
+}
+
 static void viewerLoadCurrent(void)
 {
     if (s_v.imgs.empty() || HCCRffeImage::busy()) {
@@ -645,17 +767,15 @@ static void viewerLoadCurrent(void)
     }
     viewerDetachImage();
     s_v.img_info[0] = '\0';
+    s_v.z = 1.0f;
+    s_v.dl = 1.0f;
+    s_v.fit_w = s_v.fit_h = 0;
     viewerUpdateTitle();
-    s_v.img_serial = HCCRffeImage::serial();
-    if (HCCRffeImage::startLoad(s_v.imgs[s_v.img_idx].c_str(), 1024 * s_v.zoom, 600 * s_v.zoom)) {
-        s_v.img_waiting = true;
-        viewerSetMessage("Đang tải ảnh...");
-    } else {
-        viewerSetMessage("Không giải mã được ảnh");
-    }
+    viewerStartLoad(1.0f, false);
+    viewerSetMessage(s_v.img_waiting ? "Đang tải ảnh..." : "Không giải mã được ảnh");
 }
 
-// Gọi từ timer: hiện ảnh khi task giải mã xong.
+// Gọi từ timer: chuyển sang ảnh vừa giải mã xong.
 static void viewerPoll(void)
 {
     if (!s_v.img_waiting || HCCRffeImage::busy() || HCCRffeImage::serial() == s_v.img_serial) {
@@ -670,25 +790,76 @@ static void viewerPoll(void)
     int sw = 0, sh = 0;
     char err[128];
     if (!HCCRffeImage::result(&dsc, &sw, &sh, err, sizeof(err))) {
-        viewerSetMessage(err);
+        if (!s_v.reload) {
+            viewerSetMessage(err);
+        }  // lỗi khi giải mã lại (thiếu bộ nhớ...): giữ ảnh đang hiện
         return;
     }
-    snprintf(s_v.img_info, sizeof(s_v.img_info), "   (%dx%d)", sw, sh);
-    viewerUpdateTitle();
-    viewerSetMessage(nullptr);
-    lv_img_set_src(s_v.v_img, dsc);
+    const int new_w = dsc->header.w, new_h = dsc->header.h;
+    // Đổi nguồn: bỏ cache ảnh cũ, commit (giải phóng ảnh cũ), gán ảnh mới (địa chỉ dsc thay đổi).
+    const void *old = lv_img_get_src(s_v.v_img);
+    if (old) {
+        lv_img_cache_invalidate_src(old);
+    }
+    HCCRffeImage::commit();
+    const lv_img_dsc_t *cur = HCCRffeImage::current();
+    lv_img_cache_invalidate_src(cur);
+    lv_img_set_src(s_v.v_img, cur);
+    lv_img_set_pivot(s_v.v_img, 0, 0);  // phóng từ góc trên trái; vị trí do viewerPlaceImage đặt
     lv_obj_clear_flag(s_v.v_img, LV_OBJ_FLAG_HIDDEN);
-    // Ảnh nhỏ hơn màn hình: đặt giữa; lớn hơn (phóng to): kéo để xem, bắt đầu ở giữa ảnh.
-    const int w = dsc->header.w, h = dsc->header.h;
-    lv_obj_set_pos(s_v.v_img, w < 1024 ? (1024 - w) / 2 : 0, h < 600 ? (600 - h) / 2 : 0);
-    lv_obj_update_layout(s_v.v_scroll);
-    lv_obj_scroll_to(s_v.v_scroll, w > 1024 ? (w - 1024) / 2 : 0, h > 600 ? (h - 600) / 2 : 0, LV_ANIM_OFF);
+    viewerSetMessage(nullptr);
+    if (s_v.reload) {
+        s_v.dl = (float)new_w / s_v.fit_w;
+        viewerApplyZoom(s_v.z, SCR_W / 2, SCR_H / 2, s_v.keep_cx, s_v.keep_cy);
+    } else {
+        s_v.fit_w = new_w;
+        s_v.fit_h = new_h;
+        s_v.src_w = sw;
+        s_v.src_h = sh;
+        s_v.dl = 1.0f;
+        snprintf(s_v.img_info, sizeof(s_v.img_info), "   (%dx%d)", sw, sh);
+        viewerApplyZoom(1.0f, SCR_W / 2, SCR_H / 2, new_w / 2.0f, new_h / 2.0f);
+    }
+}
+
+// Timer 30 ms: zoom hai ngón.
+static void viewerPinchTick(lv_timer_t *)
+{
+    if (s_v.viewer == nullptr || s_v.fit_w <= 0) {
+        return;
+    }
+    int16_t x[2], y[2];
+    const int n = bsp_touch_get_points(x, y, 2);
+    if (n >= 2) {
+        const float dx = x[1] - x[0], dy = y[1] - y[0];
+        const float d = sqrtf(dx * dx + dy * dy);
+        const int ax = (x[0] + x[1]) / 2, ay = (y[0] + y[1]) / 2;
+        if (d < 20.0f) {
+            return;
+        }
+        if (!s_v.pinching) {
+            s_v.pinching = true;
+            s_v.p_d0 = d;
+            s_v.p_z0 = s_v.z;
+            viewerContentAt(ax, ay, &s_v.p_cx, &s_v.p_cy);
+        } else {
+            viewerApplyZoom(s_v.p_z0 * d / s_v.p_d0, ax, ay, s_v.p_cx, s_v.p_cy);
+        }
+        s_v.pinch_idle = 0;
+    } else if (s_v.pinching && ++s_v.pinch_idle >= 3) {
+        s_v.pinching = false;
+        viewerMaybeReload();
+    }
 }
 
 static void viewerClose(void)
 {
     if (s_v.viewer == nullptr) {
         return;
+    }
+    if (s_v.v_timer) {
+        lv_timer_del(s_v.v_timer);
+        s_v.v_timer = nullptr;
     }
     viewerDetachImage();
     lv_obj_del(s_v.viewer);
@@ -697,7 +868,7 @@ static void viewerClose(void)
     s_v.v_scroll = nullptr;
     s_v.v_title = nullptr;
     s_v.v_msg = nullptr;
-    s_v.v_zoom_lbl = nullptr;
+    s_v.pinching = false;
     HCCRffeImage::release();  // nếu còn đang giải mã, viewerPoll sẽ giải phóng khi xong
 }
 
@@ -722,14 +893,35 @@ static void onViewerNext(lv_event_t *)
     }
 }
 
-static void onViewerZoom(lv_event_t *)
+// VỪA MÀN: về toàn ảnh (và bỏ bản độ phân giải cao).
+static void onViewerFit(lv_event_t *)
 {
-    if (s_v.imgs.empty() || HCCRffeImage::busy()) {
+    if (s_v.fit_w <= 0) {
         return;
     }
-    s_v.zoom = (s_v.zoom == 1) ? 2 : 1;
-    lv_label_set_text(s_v.v_zoom_lbl, s_v.zoom == 1 ? "PHÓNG TO" : "THU NHỎ");
-    viewerLoadCurrent();
+    viewerApplyZoom(1.0f, SCR_W / 2, SCR_H / 2, s_v.fit_w / 2.0f, s_v.fit_h / 2.0f);
+    viewerMaybeReload();
+}
+
+// Kéo một ngón (không áp dụng khi đang chụm hai ngón).
+static void onViewerDrag(lv_event_t *e)
+{
+    if (s_v.pinching || s_v.fit_w <= 0) {
+        return;
+    }
+    lv_indev_t *indev = lv_indev_get_act();
+    if (indev == nullptr) {
+        return;
+    }
+    lv_point_t v;
+    lv_indev_get_vect(indev, &v);
+    if (v.x == 0 && v.y == 0) {
+        return;
+    }
+    (void)e;
+    s_v.pan_x -= v.x;
+    s_v.pan_y -= v.y;
+    viewerPlaceImage();
 }
 
 static void onImageClicked(lv_event_t *)
@@ -739,7 +931,6 @@ static void onImageClicked(lv_event_t *)
     }
     s_v.imgs.clear();
     s_v.img_idx = 0;
-    s_v.zoom = 1;
     std::string folder;
     char err[160] = "";
     const bool have = s_v.have_models &&
@@ -748,7 +939,7 @@ static void onImageClicked(lv_event_t *)
     lv_obj_t *ov = lv_obj_create(lv_layer_top());
     s_v.viewer = ov;
     lv_obj_remove_style_all(ov);
-    lv_obj_set_size(ov, 1024, 600);
+    lv_obj_set_size(ov, SCR_W, SCR_H);
     lv_obj_set_pos(ov, 0, 0);
     lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
@@ -757,8 +948,10 @@ static void onImageClicked(lv_event_t *)
 
     s_v.v_scroll = lv_obj_create(ov);
     lv_obj_remove_style_all(s_v.v_scroll);
-    lv_obj_set_size(s_v.v_scroll, 1024, 600);
-    lv_obj_set_scrollbar_mode(s_v.v_scroll, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(s_v.v_scroll, SCR_W, SCR_H);
+    lv_obj_clear_flag(s_v.v_scroll, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_v.v_scroll, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_v.v_scroll, onViewerDrag, LV_EVENT_PRESSING, nullptr);
     s_v.v_img = lv_img_create(s_v.v_scroll);
     lv_obj_add_flag(s_v.v_img, LV_OBJ_FLAG_HIDDEN);
 
@@ -779,13 +972,14 @@ static void onImageClicked(lv_event_t *)
 
     lv_obj_t *b_close = makeOverlayButton(ov, "ĐÓNG", 120, onViewerClose);
     lv_obj_align(b_close, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
-    lv_obj_t *b_zoom = makeOverlayButton(ov, "PHÓNG TO", 140, onViewerZoom);
-    lv_obj_align(b_zoom, LV_ALIGN_BOTTOM_RIGHT, -144, -12);
-    s_v.v_zoom_lbl = lv_obj_get_child(b_zoom, 0);
+    lv_obj_t *b_fit = makeOverlayButton(ov, "VỪA MÀN", 140, onViewerFit);
+    lv_obj_align(b_fit, LV_ALIGN_BOTTOM_RIGHT, -144, -12);
     lv_obj_t *b_next = makeOverlayButton(ov, ">", 70, onViewerNext);
     lv_obj_align(b_next, LV_ALIGN_BOTTOM_RIGHT, -296, -12);
     lv_obj_t *b_prev = makeOverlayButton(ov, "<", 70, onViewerPrev);
     lv_obj_align(b_prev, LV_ALIGN_BOTTOM_RIGHT, -378, -12);
+
+    s_v.v_timer = lv_timer_create(viewerPinchTick, 30, nullptr);
 
     viewerUpdateTitle();
     if (!have) {

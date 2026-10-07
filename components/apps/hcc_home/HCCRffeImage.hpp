@@ -31,10 +31,13 @@ bool busy(void);
 uint32_t serial(void);
 
 // Lấy kết quả lần giải mã gần nhất (chỉ gọi khi !busy()). Trả false + err nếu lỗi.
-// dsc trỏ vào bộ đệm do module giữ; còn hợp lệ tới lần startLoad() / release() kế tiếp.
+// Ảnh đang hiện (current) vẫn hợp lệ trong lúc giải mã ảnh mới. Sau khi lv_img đã chuyển sang ảnh mới,
+// gọi commit(): ảnh cũ được giải phóng, ảnh mới thành current.
 bool result(const lv_img_dsc_t **dsc, int *src_w, int *src_h, char *err, size_t err_size);
+void commit(void);
+const lv_img_dsc_t *current(void);
 
-// Giải phóng bộ đệm ảnh (gọi khi đóng màn xem ảnh, sau khi không còn lv_img nào dùng nó).
+// Giải phóng mọi bộ đệm ảnh (gọi khi đóng màn xem ảnh, sau khi không còn lv_img nào dùng chúng).
 void release(void);
 
 }  // namespace HCCRffeImage

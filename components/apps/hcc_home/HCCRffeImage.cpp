@@ -32,11 +32,15 @@ static volatile uint32_t s_serial = 0;
 static char s_path[256];
 static int s_max_w = 0, s_max_h = 0;
 
-// Kết quả (chỉ đọc khi !s_busy).
-static uint8_t *s_buf = nullptr;
-static bool s_buf_png = false;  // true: bộ đệm của XiaozhiPng (xz_png_free)
-static lv_img_dsc_t s_dsc;
-static int s_src_w = 0, s_src_h = 0;
+// Hai bộ đệm: s_cur đang hiện trên lv_img, s_new vừa giải mã xong (chờ UI commit). Nhờ vậy ảnh cũ vẫn
+// hiện trong lúc giải mã lại ở độ phân giải khác (zoom). Chỉ đọc / ghi khi !s_busy.
+struct Slot {
+    uint8_t *buf = nullptr;
+    bool png = false;  // true: bộ đệm của XiaozhiPng (xz_png_free)
+    lv_img_dsc_t dsc = {};
+    int src_w = 0, src_h = 0;
+};
+static Slot s_cur, s_new;
 static bool s_ok = false;
 static char s_err[96] = "";
 
@@ -135,22 +139,24 @@ bool list(const char *model, const char *line, std::vector<std::string> &out, st
 // Khung vừa ảnh (giữ tỉ lệ, không cắt, không phóng quá 1:1 trừ khi ảnh nhỏ hơn 1/2 khung).
 static void fitSize(int sw, int sh, int max_w, int max_h, int *dw, int *dh)
 {
+    // LVGL 8: lv_img_header_t chỉ có 11 bit cho rộng / cao -> tối đa 2047 px.
+    max_w = std::min(max_w, 2047);
+    max_h = std::min(max_h, 2047);
     double k = std::min((double)max_w / sw, (double)max_h / sh);
     *dw = std::max(1, (int)(sw * k));
     *dh = std::max(1, (int)(sh * k));
 }
 
-static void freeBuf(void)
+static void freeSlot(Slot &sl)
 {
-    if (s_buf) {
-        if (s_buf_png) {
-            xz_png_free(s_buf);
+    if (sl.buf) {
+        if (sl.png) {
+            xz_png_free(sl.buf);
         } else {
-            heap_caps_free(s_buf);
+            heap_caps_free(sl.buf);
         }
     }
-    s_buf = nullptr;
-    s_ok = false;
+    sl = Slot();
 }
 
 static bool loadPng(const char *path, int max_w, int max_h)
@@ -167,16 +173,16 @@ static bool loadPng(const char *path, int max_w, int max_h)
     if (buf == nullptr) {
         return false;
     }
-    s_buf = buf;
-    s_buf_png = true;
-    s_src_w = sw;
-    s_src_h = sh;
-    memset(&s_dsc, 0, sizeof(s_dsc));
-    s_dsc.header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
-    s_dsc.header.w = dw;
-    s_dsc.header.h = dh;
-    s_dsc.data_size = (uint32_t)dw * dh * LV_IMG_PX_SIZE_ALPHA_BYTE;
-    s_dsc.data = buf;
+    s_new.buf = buf;
+    s_new.png = true;
+    s_new.src_w = sw;
+    s_new.src_h = sh;
+    memset(&s_new.dsc, 0, sizeof(s_new.dsc));
+    s_new.dsc.header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+    s_new.dsc.header.w = dw;
+    s_new.dsc.header.h = dh;
+    s_new.dsc.data_size = (uint32_t)dw * dh * LV_IMG_PX_SIZE_ALPHA_BYTE;
+    s_new.dsc.data = buf;
     return true;
 }
 
@@ -302,16 +308,16 @@ static bool loadJpg(const char *path, int max_w, int max_h)
         }
     }
     heap_caps_free(raw);
-    s_buf = (uint8_t *)dst;
-    s_buf_png = false;
-    s_src_w = sw;
-    s_src_h = sh;
-    memset(&s_dsc, 0, sizeof(s_dsc));
-    s_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    s_dsc.header.w = dw;
-    s_dsc.header.h = dh;
-    s_dsc.data_size = (uint32_t)dw * dh * 2;
-    s_dsc.data = s_buf;
+    s_new.buf = (uint8_t *)dst;
+    s_new.png = false;
+    s_new.src_w = sw;
+    s_new.src_h = sh;
+    memset(&s_new.dsc, 0, sizeof(s_new.dsc));
+    s_new.dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    s_new.dsc.header.w = dw;
+    s_new.dsc.header.h = dh;
+    s_new.dsc.data_size = (uint32_t)dw * dh * 2;
+    s_new.dsc.data = s_new.buf;
     return true;
 }
 
@@ -322,7 +328,8 @@ static void loadTask(void *)
     const bool png = dot && strcasecmp(dot, ".png") == 0;
     s_ok = png ? loadPng(s_path, s_max_w, s_max_h) : loadJpg(s_path, s_max_w, s_max_h);
     if (s_ok) {
-        ESP_LOGI(TAG, "%s: %dx%d -> %dx%d", s_path, s_src_w, s_src_h, (int)s_dsc.header.w, (int)s_dsc.header.h);
+        ESP_LOGI(TAG, "%s: %dx%d -> %dx%d", s_path, s_new.src_w, s_new.src_h, (int)s_new.dsc.header.w,
+                 (int)s_new.dsc.header.h);
     } else {
         ESP_LOGW(TAG, "%s: %s", s_path, s_err);
     }
@@ -336,7 +343,8 @@ bool startLoad(const char *path, int max_w, int max_h)
     if (s_busy) {
         return false;
     }
-    freeBuf();  // UI đã gỡ ảnh cũ khỏi lv_img trước khi gọi
+    freeSlot(s_new);  // kết quả chưa commit của lần trước (không còn dùng)
+    s_ok = false;
     snprintf(s_path, sizeof(s_path), "%s", path);
     s_max_w = max_w;
     s_max_h = max_h;
@@ -361,20 +369,38 @@ uint32_t serial(void)
 
 bool result(const lv_img_dsc_t **dsc, int *src_w, int *src_h, char *err, size_t err_size)
 {
-    if (!s_ok || s_buf == nullptr) {
+    if (!s_ok || s_new.buf == nullptr) {
         snprintf(err, err_size, "%s", s_err[0] ? s_err : "Chưa có ảnh");
         return false;
     }
-    *dsc = &s_dsc;
-    *src_w = s_src_w;
-    *src_h = s_src_h;
+    *dsc = &s_new.dsc;
+    *src_w = s_new.src_w;
+    *src_h = s_new.src_h;
     return true;
+}
+
+void commit(void)
+{
+    if (s_busy || s_new.buf == nullptr) {
+        return;
+    }
+    freeSlot(s_cur);
+    s_cur = s_new;
+    s_new = Slot();
+    s_cur.dsc.data = s_cur.buf;
+}
+
+const lv_img_dsc_t *current(void)
+{
+    return s_cur.buf ? &s_cur.dsc : nullptr;
 }
 
 void release(void)
 {
     if (!s_busy) {
-        freeBuf();
+        freeSlot(s_new);
+        freeSlot(s_cur);
+        s_ok = false;
     }
 }
 
