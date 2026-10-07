@@ -495,8 +495,7 @@ static void loadSelectedData(void)
                 }
             }
             if (HCCRffe::isJcModel(s_v.model)) {
-                snprintf(info, sizeof(info), "%s / %s: %d linh kiện  (JC BUS2MM4 - %s)", s_v.model, s_v.data,
-                         (int)s_v.ref.size(), HCCRffe::jcSource());
+                snprintf(info, sizeof(info), "%s / %s: %d linh kiện", s_v.model, s_v.data, (int)s_v.ref.size());
             } else {
                 snprintf(info, sizeof(info), "%s/%s: %d thanh ghi, %d USID", s_v.model, s_v.data,
                          (int)s_v.ref.size(), usids);
