@@ -21,6 +21,7 @@
 void hccMemoryReport(const char *where);
 #include "HCCViText.hpp"
 #include "HCCRffeView.hpp"
+#include "HCCI2CScopeView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
@@ -755,6 +756,10 @@ void HCCHome::detachScreenObjects()
     // eepromTask result never writes to freed LVGL objects.
     _eeprom_status_label = nullptr;
     _eeprom_result_label = nullptr;
+    // Kết quả I2C SCAN (lv_async_call) cũng không được ghi vào màn đã xoá.
+    _scan_status_label = nullptr;
+    _scan_result_label = nullptr;
+    _scan_button = nullptr;
     _eeprom_button = nullptr;
     _eeprom_program_button = nullptr;
     _eeprom_file_dropdown = nullptr;
@@ -2333,6 +2338,32 @@ void HCCHome::onRffeClicked(lv_event_t *event)
     HCCRffeView::show(app->_screen, onBackClicked, app);
 }
 
+void HCCHome::onI2CScopeClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr) {
+        return;
+    }
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCI2CScopeView::show(app->_screen, onI2CScopeBack, app, i2cBusForScope, app);
+}
+
+void HCCHome::onI2CScopeBack(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app != nullptr) {
+        app->showI2C();
+    }
+}
+
+// Gọi từ task chụp sóng (nhân 0): dùng chung bus GPIO4/5 với I2C SCANNER / EEPROM.
+void *HCCHome::i2cBusForScope(void *user)
+{
+    HCCHome *app = static_cast<HCCHome *>(user);
+    return app != nullptr ? static_cast<void *>(app->ensureI2CBus()) : nullptr;
+}
+
 void HCCHome::onEepromClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
@@ -2997,6 +3028,16 @@ void HCCHome::showI2C()
         0
     );
 
+    lv_obj_t *scope_button = lv_btn_create(_screen);
+    lv_obj_set_size(scope_button, 180, 60);
+    lv_obj_align(scope_button, LV_ALIGN_TOP_LEFT, 224, 105);
+    lv_obj_set_style_bg_color(scope_button, lv_color_hex(0x7A4FD8), 0);
+    lv_obj_add_event_cb(scope_button, onI2CScopeClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *scope_label = lv_label_create(scope_button);
+    lv_label_set_text(scope_label, "XEM SÓNG");
+    lv_obj_center(scope_label);
+    lv_obj_set_style_text_font(scope_label, &lv_font_be_vietnam_18, 0);
+
     _scan_status_label = lv_label_create(_screen);
     lv_label_set_text(
         _scan_status_label,
@@ -3005,8 +3046,8 @@ void HCCHome::showI2C()
     lv_obj_align(
         _scan_status_label,
         LV_ALIGN_TOP_LEFT,
-        240,
-        120
+        424,
+        122
     );
     lv_obj_set_style_text_color(
         _scan_status_label,
@@ -3255,75 +3296,35 @@ void HCCHome::performScan()
         return;
     }
 
-    snprintf(
-        _scan_result,
-        sizeof(_scan_result),
-        "Testing 0x18..."
-    );
-
-    esp_err_t probe_ret =
-        i2c_master_probe(
-            bus,
-            0x18,
-            20
-        );
-
-    if (probe_ret == ESP_OK) {
-
-        snprintf(
-            _scan_result,
-            sizeof(_scan_result),
-            "0x18 ACK"
-        );
-
-        snprintf(
-            _scan_status,
-            sizeof(_scan_status),
-            "I2C OK"
-        );
-
-    } else if (probe_ret == ESP_ERR_NOT_FOUND) {
-
-        snprintf(
-            _scan_result,
-            sizeof(_scan_result),
-            "0x18 NACK"
-        );
-
-        snprintf(
-            _scan_status,
-            sizeof(_scan_status),
-            "Bus OK - device absent"
-        );
-
-    } else if (probe_ret == ESP_ERR_TIMEOUT) {
-
-        snprintf(
-            _scan_result,
-            sizeof(_scan_result),
-            "0x18 TIMEOUT"
-        );
-
-        snprintf(
-            _scan_status,
-            sizeof(_scan_status),
-            "I2C BUS TIMEOUT"
-        );
-
+    // Quét toàn dải địa chỉ 7 bit hợp lệ 0x08..0x77 (bỏ địa chỉ dành riêng).
+    int found = 0;
+    size_t len = 0;
+    _scan_result[0] = '\0';
+    for (uint16_t addr = 0x08; addr <= 0x77; ++addr) {
+        const esp_err_t probe_ret = i2c_master_probe(bus, addr, 20);
+        if (probe_ret == ESP_OK) {
+            if (len < sizeof(_scan_result)) {
+                len += snprintf(_scan_result + len, sizeof(_scan_result) - len, "%s0x%02X",
+                                found == 0 ? "" : (found % 8 == 0 ? "\n" : "   "), addr);
+            }
+            ++found;
+        } else if (probe_ret == ESP_ERR_TIMEOUT) {
+            snprintf(_scan_result, sizeof(_scan_result),
+                     "TIMEOUT tại 0x%02X: SCL / SDA bị giữ mức 0 hoặc thiếu điện trở kéo lên.\n"
+                     "Bấm XEM SÓNG để xem mức trên dây.", addr);
+            snprintf(_scan_status, sizeof(_scan_status), "I2C BUS TIMEOUT");
+            return;
+        } else if (probe_ret != ESP_ERR_NOT_FOUND) {
+            snprintf(_scan_result, sizeof(_scan_result), "Lỗi probe 0x%02X: %s", addr, esp_err_to_name(probe_ret));
+            snprintf(_scan_status, sizeof(_scan_status), "I2C probe error");
+            return;
+        }
+    }
+    if (found == 0) {
+        snprintf(_scan_result, sizeof(_scan_result), "Không có thiết bị nào trả ACK (0x08 - 0x77)");
+        snprintf(_scan_status, sizeof(_scan_status), "Bus OK - 0 thiết bị");
     } else {
-
-        snprintf(
-            _scan_result,
-            sizeof(_scan_result),
-            "%s",
-            esp_err_to_name(probe_ret)
-        );
-
-        snprintf(
-            _scan_status,
-            sizeof(_scan_status),
-            "I2C probe error"
-        );
+        snprintf(_scan_status, sizeof(_scan_status), "Tìm thấy %d thiết bị", found);
     }
 }
 
