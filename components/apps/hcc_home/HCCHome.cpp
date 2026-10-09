@@ -23,6 +23,7 @@ void hccMemoryReport(const char *where);
 #include "HCCRffeView.hpp"
 #include "HCCI2CScopeView.hpp"
 #include "HCCSpmiView.hpp"
+#include "HCCEepromView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
@@ -2413,10 +2414,13 @@ void *HCCHome::i2cBusForScope(void *user)
 void HCCHome::onEepromClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
-    if (app == nullptr) {
+    if (app == nullptr || app->_screen == nullptr) {
         return;
     }
-    app->showEeprom();
+    // EEPROM TOOL mới (HCCEepromView); dùng chung bus I2C GPIO4/5 với I2C SCANNER.
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCEepromView::show(app->_screen, onBackClicked, app, i2cBusForScope, app);
 }
 
 // Shared setup for both EEPROM operations: mark busy, show status, disable both buttons.

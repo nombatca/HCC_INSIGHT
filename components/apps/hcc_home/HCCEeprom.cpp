@@ -39,45 +39,139 @@ size_t HCCEeprom::putMemAddress(uint8_t *buf, const Config &cfg, uint32_t mem_ad
     return 1;
 }
 
+esp_err_t HCCEeprom::addDeviceAt(i2c_master_bus_handle_t bus, const Config &cfg, uint16_t dev_addr,
+                                 i2c_master_dev_handle_t *out_dev)
+{
+    Config c = cfg;
+    c.device_address = dev_addr;
+    return addDevice(bus, c, out_dev);
+}
+
+// Chip địa chỉ ô nhớ 1 byte nhưng > 256 B (24C04/08/16): bit A8..A10 nằm ở bit thấp địa chỉ thiết bị.
+uint16_t HCCEeprom::blockAddress(const Config &cfg, uint32_t mem_addr)
+{
+    if (cfg.address_width >= 2 || cfg.total_size <= 256) {
+        return cfg.device_address;
+    }
+    uint16_t mask = static_cast<uint16_t>((cfg.total_size / 256) - 1) & 0x07;
+    return static_cast<uint16_t>((cfg.device_address & ~mask) | ((mem_addr >> 8) & mask));
+}
+
+esp_err_t HCCEeprom::read(i2c_master_bus_handle_t bus, const Config &cfg, uint32_t offset,
+                          uint8_t *out, size_t len, Progress cb, void *user)
+{
+    if (bus == nullptr || out == nullptr || len == 0 || offset + len > cfg.total_size) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = ESP_OK;
+    i2c_master_dev_handle_t dev = nullptr;
+    uint16_t dev_addr = 0xFFFF;
+    const size_t chunk_size = 128;
+    size_t done = 0;
+    while (done < len) {
+        const uint32_t mem = offset + done;
+        size_t n = len - done < chunk_size ? len - done : chunk_size;
+        if (cfg.address_width < 2) {
+            const uint32_t room = 256 - (mem & 0xFF);  // không vượt khối 256 B
+            if (n > room) {
+                n = room;
+            }
+        }
+        const uint16_t a = blockAddress(cfg, mem);
+        if (a != dev_addr) {
+            if (dev) {
+                i2c_master_bus_rm_device(dev);
+                dev = nullptr;
+            }
+            ret = addDeviceAt(bus, cfg, a, &dev);
+            if (ret != ESP_OK) {
+                break;
+            }
+            dev_addr = a;
+        }
+        uint8_t addr_buf[2];
+        const size_t addr_len = putMemAddress(addr_buf, cfg, mem);
+        ret = i2c_master_transmit_receive(dev, addr_buf, addr_len, out + done, n, cfg.xfer_timeout_ms);
+        if (ret != ESP_OK) {
+            printf("[HCC EEPROM] read @0x%04X (dev 0x%02X) failed: %s\n", static_cast<unsigned>(mem), a,
+                   esp_err_to_name(ret));
+            break;
+        }
+        done += n;
+        if (cb) {
+            cb(done, len, user);
+        }
+    }
+    if (dev) {
+        i2c_master_bus_rm_device(dev);
+    }
+    return ret;
+}
+
+esp_err_t HCCEeprom::write(i2c_master_bus_handle_t bus, const Config &cfg, uint32_t offset,
+                           const uint8_t *data, size_t len, Progress cb, void *user)
+{
+    if (bus == nullptr || data == nullptr || len == 0 || offset + len > cfg.total_size) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const uint16_t page = cfg.page_size;
+    if (page == 0 || page > kMaxPageSize) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = ESP_OK;
+    i2c_master_dev_handle_t dev = nullptr;
+    uint16_t dev_addr = 0xFFFF;
+    uint8_t tx[2 + kMaxPageSize];
+    size_t done = 0;
+    while (done < len) {
+        const uint32_t mem = offset + done;
+        size_t n = page - (mem % page);  // không vượt biên trang
+        if (n > len - done) {
+            n = len - done;
+        }
+        const uint16_t a = blockAddress(cfg, mem);
+        if (a != dev_addr) {
+            if (dev) {
+                i2c_master_bus_rm_device(dev);
+                dev = nullptr;
+            }
+            ret = addDeviceAt(bus, cfg, a, &dev);
+            if (ret != ESP_OK) {
+                break;
+            }
+            dev_addr = a;
+        }
+        const size_t addr_len = putMemAddress(tx, cfg, mem);
+        memcpy(tx + addr_len, data + done, n);
+        ret = i2c_master_transmit(dev, tx, addr_len + n, cfg.xfer_timeout_ms);
+        if (ret != ESP_OK) {
+            printf("[HCC EEPROM] write @0x%04X (dev 0x%02X) failed: %s\n", static_cast<unsigned>(mem), a,
+                   esp_err_to_name(ret));
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(cfg.write_cycle_ms));  // chờ chu kỳ ghi nội bộ t_WR
+        done += n;
+        if (cb) {
+            cb(done, len, user);
+        }
+    }
+    if (dev) {
+        i2c_master_bus_rm_device(dev);
+    }
+    return ret;
+}
+
 esp_err_t HCCEeprom::readAll(i2c_master_bus_handle_t bus, const Config &cfg,
                              uint8_t *out, size_t out_size)
 {
     if (out == nullptr || out_size < cfg.total_size || cfg.total_size == 0) {
         return ESP_ERR_INVALID_ARG;
     }
-
-    i2c_master_dev_handle_t dev = nullptr;
-    esp_err_t ret = addDevice(bus, cfg, &dev);
-    if (ret != ESP_OK) {
-        printf("[HCC EEPROM] add device failed: %s\n", esp_err_to_name(ret));
-        return ret;
+    esp_err_t ret = read(bus, cfg, 0, out, cfg.total_size);
+    if (ret == ESP_OK) {
+        printf("[HCC EEPROM] read %u bytes @0x%02X OK\n", static_cast<unsigned>(cfg.total_size), cfg.device_address);
     }
-
-    // Đọc theo từng khối, re-seek địa chỉ mỗi khối để không phụ thuộc auto-increment.
-    const size_t chunk_size = 128;
-    for (uint32_t offset = 0; offset < cfg.total_size; offset += chunk_size) {
-        uint8_t addr_buf[2];
-        const size_t addr_len = putMemAddress(addr_buf, cfg, offset);
-        size_t this_chunk = chunk_size;
-        if (offset + this_chunk > cfg.total_size) {
-            this_chunk = cfg.total_size - offset;
-        }
-
-        ret = i2c_master_transmit_receive(dev, addr_buf, addr_len,
-                                          out + offset, this_chunk,
-                                          cfg.xfer_timeout_ms);
-        if (ret != ESP_OK) {
-            printf("[HCC EEPROM] read @0x%04X failed: %s\n",
-                   static_cast<unsigned>(offset), esp_err_to_name(ret));
-            i2c_master_bus_rm_device(dev);
-            return ret;
-        }
-    }
-
-    i2c_master_bus_rm_device(dev);
-    printf("[HCC EEPROM] read %u bytes @0x%02X OK\n",
-           static_cast<unsigned>(cfg.total_size), cfg.device_address);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t HCCEeprom::writeAll(i2c_master_bus_handle_t bus, const Config &cfg,
@@ -86,50 +180,11 @@ esp_err_t HCCEeprom::writeAll(i2c_master_bus_handle_t bus, const Config &cfg,
     if (data == nullptr || data_size == 0 || data_size > cfg.total_size) {
         return ESP_ERR_INVALID_ARG;
     }
-    uint16_t page = cfg.page_size;
-    if (page == 0 || page > kMaxPageSize) {
-        printf("[HCC EEPROM] page_size %u không hợp lệ (1..%u)\n",
-               page, kMaxPageSize);
-        return ESP_ERR_INVALID_ARG;
+    esp_err_t ret = write(bus, cfg, 0, data, data_size);
+    if (ret == ESP_OK) {
+        printf("[HCC EEPROM] wrote %u bytes @0x%02X OK\n", static_cast<unsigned>(data_size), cfg.device_address);
     }
-
-    i2c_master_dev_handle_t dev = nullptr;
-    esp_err_t ret = addDevice(bus, cfg, &dev);
-    if (ret != ESP_OK) {
-        printf("[HCC EEPROM] add device failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    uint8_t tx[2 + kMaxPageSize];
-    uint32_t offset = 0;
-    while (offset < data_size) {
-        // Không cho khối ghi vượt biên trang của EEPROM.
-        const uint32_t page_room = page - (offset % page);
-        uint32_t this_chunk = page_room;
-        if (offset + this_chunk > data_size) {
-            this_chunk = data_size - offset;
-        }
-
-        const size_t addr_len = putMemAddress(tx, cfg, offset);
-        memcpy(tx + addr_len, data + offset, this_chunk);
-
-        ret = i2c_master_transmit(dev, tx, addr_len + this_chunk, cfg.xfer_timeout_ms);
-        if (ret != ESP_OK) {
-            printf("[HCC EEPROM] write @0x%04X failed: %s\n",
-                   static_cast<unsigned>(offset), esp_err_to_name(ret));
-            i2c_master_bus_rm_device(dev);
-            return ret;
-        }
-
-        // Chờ chu kỳ ghi nội bộ (t_WR) trước khi thao tác trang kế tiếp.
-        vTaskDelay(pdMS_TO_TICKS(cfg.write_cycle_ms));
-        offset += this_chunk;
-    }
-
-    i2c_master_bus_rm_device(dev);
-    printf("[HCC EEPROM] wrote %u bytes @0x%02X OK\n",
-           static_cast<unsigned>(data_size), cfg.device_address);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t HCCEeprom::ensureSdMounted(bool *mounted_here)

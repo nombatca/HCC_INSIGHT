@@ -19,6 +19,17 @@ public:
         int      xfer_timeout_ms = 1000;   // timeout mỗi giao dịch I2C
     };
 
+    // Báo tiến trình (byte đã xong / tổng); gọi từ task đang đọc / ghi.
+    typedef void (*Progress)(uint32_t done, uint32_t total, void *user);
+
+    // Đọc len byte từ ô nhớ offset. Chip địa chỉ 1 byte > 256 B (24C04/08/16): khối 256 B chọn bằng bit thấp
+    // của địa chỉ thiết bị (0x50..0x57), tự xử lý.
+    static esp_err_t read(i2c_master_bus_handle_t bus, const Config &cfg, uint32_t offset,
+                          uint8_t *out, size_t len, Progress cb = nullptr, void *user = nullptr);
+    // Ghi theo trang (không vượt biên trang / khối), chờ t_WR sau mỗi trang.
+    static esp_err_t write(i2c_master_bus_handle_t bus, const Config &cfg, uint32_t offset,
+                           const uint8_t *data, size_t len, Progress cb = nullptr, void *user = nullptr);
+
     // Đọc toàn bộ EEPROM vào out (out_size phải >= cfg.total_size).
     static esp_err_t readAll(i2c_master_bus_handle_t bus, const Config &cfg,
                              uint8_t *out, size_t out_size);
@@ -56,6 +67,9 @@ public:
 private:
     static esp_err_t addDevice(i2c_master_bus_handle_t bus, const Config &cfg,
                                i2c_master_dev_handle_t *out_dev);
+    static esp_err_t addDeviceAt(i2c_master_bus_handle_t bus, const Config &cfg, uint16_t dev_addr,
+                                 i2c_master_dev_handle_t *out_dev);
+    static uint16_t  blockAddress(const Config &cfg, uint32_t mem_addr);
     static size_t    putMemAddress(uint8_t *buf, const Config &cfg, uint32_t mem_addr);
     static esp_err_t ensureSdMounted(bool *mounted_here);
     static void      buildPath(char *out, size_t out_size, const char *filename);
