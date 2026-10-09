@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "HCCRffe.hpp"
+#include "HCCSpmiSniffView.hpp"
 
 namespace HCCSpmiView {
 
@@ -29,6 +30,9 @@ struct View {
 };
 
 View v;
+lv_obj_t *s_screen = nullptr;  // để quay lại từ SPMI SNIFFER
+lv_event_cb_t s_back_cb = nullptr;
+void *s_back_user = nullptr;
 
 lv_obj_t *label(lv_obj_t *parent, const char *t, const lv_font_t *f, lv_color_t c)
 {
@@ -140,6 +144,24 @@ void onTimer(lv_timer_t *)
     render();
 }
 
+void onSnifferBack(lv_event_t *)
+{
+    lv_obj_t *scr = s_screen;
+    lv_obj_clean(scr);
+    show(scr, s_back_cb, s_back_user);
+}
+
+void onSniffer(lv_event_t *)
+{
+    if (HCCRffe::busy() && !v.waiting) {
+        setStatus("Đang bận (đang quét RFFE / SPMI)", C_WARN);
+        return;
+    }
+    lv_obj_t *scr = s_screen;
+    lv_obj_clean(scr);
+    HCCSpmiSniffView::show(scr, onSnifferBack, nullptr);
+}
+
 void onRootDeleted(lv_event_t *)
 {
     if (v.timer) {
@@ -155,6 +177,9 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     if (v.root) {
         lv_obj_del(v.root);
     }
+    s_screen = screen;
+    s_back_cb = back_cb;
+    s_back_user = back_user;
     lv_obj_set_style_bg_color(screen, C_BG, 0);
     lv_obj_t *root = lv_obj_create(screen);
     v.root = root;
@@ -197,10 +222,12 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_obj_set_pos(back, 28, yb);
     v.scan_btn = button(root, "SCAN", 200, lv_color_hex(0x1FA9D6), onScan, nullptr);
     lv_obj_set_pos(v.scan_btn, 206, yb);
+    lv_obj_t *sn = button(root, "NGHE BUS", 200, lv_color_hex(0x7A4FD8), onSniffer, nullptr);
+    lv_obj_set_pos(sn, 424, yb);
     v.status = label(root, "Sẵn sàng", &lv_font_be_vietnam_16, C_CYAN);
-    lv_obj_set_width(v.status, 560);
+    lv_obj_set_width(v.status, 360);
     lv_label_set_long_mode(v.status, LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(v.status, 426, yb + 4);
+    lv_obj_set_pos(v.status, 642, yb + 4);
 
     render();
     v.timer = lv_timer_create(onTimer, 100, nullptr);

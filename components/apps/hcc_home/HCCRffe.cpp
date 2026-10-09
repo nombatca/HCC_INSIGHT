@@ -1111,6 +1111,21 @@ bool startSpmiScan(void)
     return true;
 }
 
+bool claimPins(void)
+{
+    if (s_busy || !configured()) {
+        return false;
+    }
+    s_busy = true;
+    return true;
+}
+
+void releasePins(void)
+{
+    s_gpio_ready = false;  // chân đã bị cấu hình lại (PARLIO): lần quét sau gọi gpioInit lại
+    s_busy = false;
+}
+
 uint32_t spmiSerial(void)
 {
     return s_spmi_serial;
