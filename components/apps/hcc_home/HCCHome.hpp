@@ -88,6 +88,7 @@ private:
     static void applyUSBResult(void *arg);
     static void onModuleClicked(lv_event_t *event);
     static void onRffeClicked(lv_event_t *event);
+    static void onSpmiClicked(lv_event_t *event);
     // SÓNG I2C: xem SCL / SDA như máy hiện sóng (HCCI2CScopeView).
     static void onI2CScopeClicked(lv_event_t *event);
     static void onI2CScopeBack(lv_event_t *event);

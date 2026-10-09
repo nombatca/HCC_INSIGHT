@@ -954,4 +954,171 @@ const Report &report(void)
     return s_report;
 }
 
+// ==================== SPMI ====================
+
+static SpmiReport s_spmi;
+static volatile uint32_t s_spmi_serial = 0;
+
+// Extended Register Read Long: SID[3:0] 0011 1bbb P, A[15:8] P, A[7:0] P, bus park, n x (D[7:0] P), bus park.
+// Trả true khi mọi byte đều đúng parity.
+static bool readRegLong(uint8_t sid, uint16_t addr, uint8_t *buf, int n)
+{
+    if (n < 1 || n > 8) {
+        return false;
+    }
+    bool ok = true;
+    portENTER_CRITICAL(&s_mux);
+    sdataDrive(true);
+    sclk(0);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    sdata(1);  // SSC
+    esp_rom_delay_us(HALF_US * 2);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    const int c = writeBits(((uint32_t)sid << 8) | 0x38 | (uint32_t)(n - 1), 12);
+    writeBit((c & 1) ? 0 : 1);
+    const int a1 = writeBits(addr >> 8, 8);
+    writeBit((a1 & 1) ? 0 : 1);
+    const int a0 = writeBits(addr & 0xFF, 8);
+    writeBit((a0 & 1) ? 0 : 1);
+    busPark(true);
+    for (int k = 0; k < n; ++k) {
+        int v = 0;
+        int ones = 0;
+        for (int i = 0; i < 8; ++i) {
+            const int b = readBit();
+            v = (v << 1) | b;
+            ones += b;
+        }
+        ones += readBit();
+        buf[k] = static_cast<uint8_t>(v);
+        ok = ok && (ones & 1) == 1;
+    }
+    sclk(1);
+    esp_rom_delay_us(HALF_US);
+    sclk(0);
+    sdataDrive(true);
+    sdata(0);
+    esp_rom_delay_us(HALF_US);
+    portEXIT_CRITICAL(&s_mux);
+    return ok;
+}
+
+// SID có thật khi thanh ghi 0x00 đọc hai lần đều đúng parity và cùng giá trị (không nối gì: SDATA kéo xuống
+// -> 0x00 + P=0 sai parity lẻ -> không nhận).
+static bool probeSid(uint8_t sid, SpmiSid &r)
+{
+    uint8_t a = 0, b = 0;
+    if (!readReg(sid, 0x00, &a)) {
+        return false;
+    }
+    esp_rom_delay_us(20);
+    if (!readReg(sid, 0x00, &b) || a != b) {
+        ESP_LOGW(TAG, "SPMI SID 0x%X: 0x00 lần 1 = 0x%02X, lần 2 = 0x%02X - không ổn định, bỏ", sid, a, b);
+        return false;
+    }
+    r.r0 = a;
+    r.long_ok = readRegLong(sid, 0x0100, r.ext, 6);
+    ESP_LOGI(TAG, "SPMI SID 0x%X: 0x00=0x%02X  0x0100..0x0105=%s%02X %02X %02X %02X %02X %02X", sid, a,
+             r.long_ok ? "" : "? ", r.ext[0], r.ext[1], r.ext[2], r.ext[3], r.ext[4], r.ext[5]);
+    return true;
+}
+
+static void spmiTask(void *)
+{
+    SpmiReport rep;
+    rep.scanned = true;
+    gpioInit();
+    std::vector<SpmiSid> probes(16);
+    bool idle_ok = false;
+    int found = 0;
+    const bool first = pinsSwapped();
+    for (int attempt = 0; attempt < 2 && found == 0; ++attempt) {
+        const bool sw = (attempt == 0) ? first : !first;
+        setOrientation(sw);
+        if (!busIdleLow()) {
+            ESP_LOGW(TAG, "SPMI SCLK GPIO%d / SDATA GPIO%d: SDATA bị kéo lên khi bus nghỉ - bỏ chiều này", s_pin_clk,
+                     s_pin_dat);
+            continue;
+        }
+        idle_ok = true;
+        for (uint8_t sid = 0; sid < 16; ++sid) {
+            probes[sid] = SpmiSid();
+            probes[sid].sid = sid;
+            probes[sid].responded = probeSid(sid, probes[sid]);
+            found += probes[sid].responded ? 1 : 0;
+        }
+        ESP_LOGI(TAG, "SPMI SCLK GPIO%d / SDATA GPIO%d%s: %d SID", s_pin_clk, s_pin_dat, sw ? " (đảo)" : "", found);
+        vTaskDelay(1);
+    }
+    if (found == 0) {
+        setOrientation(false);
+    }
+    // Chống SID ảo: gần như mọi SID trả cùng một giá trị -> nghi nhiễu / bus bị kéo, không kết luận.
+    if (found >= 12) {
+        int same = 0;
+        uint8_t v0 = 0;
+        bool have = false;
+        for (const SpmiSid &p : probes) {
+            if (!p.responded) {
+                continue;
+            }
+            if (!have) {
+                v0 = p.r0;
+                have = true;
+            }
+            same += p.r0 == v0 ? 1 : 0;
+        }
+        if (same >= 12) {
+            rep.suspicious = true;
+            for (SpmiSid &p : probes) {
+                p.responded = false;
+            }
+            found = 0;
+        }
+    }
+    rep.sids = probes;
+    if (!idle_ok) {
+        snprintf(rep.message, sizeof(rep.message),
+                 "SDATA bị kéo lên khi nghỉ ở cả hai chiều chân (pull-up / chạm nguồn) - không quét");
+    } else if (rep.suspicious) {
+        snprintf(rep.message, sizeof(rep.message),
+                 "Gần như mọi SID trả cùng giá trị - nghi nhiễu / bus bị kéo, không kết luận");
+    } else if (found == 0) {
+        snprintf(rep.message, sizeof(rep.message),
+                 "Không có SID nào phản hồi (đã thử cả hai chiều; kiểm tra nguồn VIO, chuyển mức, SoC còn giữ bus?)");
+    } else {
+        snprintf(rep.message, sizeof(rep.message), "Tìm thấy %d SID%s", found, pinsSwapped() ? " (dây đảo)" : "");
+    }
+    ESP_LOGI(TAG, "%s", rep.message);
+    s_spmi = std::move(rep);
+    s_spmi_serial = s_spmi_serial + 1;
+    s_busy = false;
+    vTaskDelete(nullptr);
+}
+
+bool startSpmiScan(void)
+{
+    if (s_busy || !configured()) {
+        return false;
+    }
+    s_busy = true;
+    if (xTaskCreatePinnedToCore(spmiTask, "hcc_spmi", 6144, nullptr, 5, nullptr, HCC_CORE_WORK) != pdPASS) {
+        s_busy = false;
+        return false;
+    }
+    return true;
+}
+
+uint32_t spmiSerial(void)
+{
+    return s_spmi_serial;
+}
+
+const SpmiReport &spmiReport(void)
+{
+    return s_spmi;
+}
+
 }  // namespace HCCRffe

@@ -102,4 +102,29 @@ bool busy(void);
 uint32_t reportSerial(void);
 const Report &report(void);
 
+// ==================== SPMI ====================
+// SPMI (MIPI System Power Management Interface) dùng cùng khung lệnh với RFFE: SSC, SID 4 bit, Register Read
+// (011a aaaa), Extended Register Read Long (0011 1bbb + địa chỉ 16 bit), parity lẻ, bus park -> dùng chung
+// driver bit-bang và chân SCLK / SDATA (kể cả tự đảo chiều).
+// Quét SID 0..15: SID chỉ được nhận khi đọc thanh ghi 0x00 hai lần đều đúng parity và cùng giá trị
+// (bus nghỉ phải ở mức 0; không nối gì -> 0 SID). Chỉ hiển thị giá trị thô, không tự gán tên IC.
+struct SpmiSid {
+    uint8_t sid;
+    bool responded;
+    uint8_t r0;          // thanh ghi 0x00
+    bool long_ok;        // đọc được 0x0100..0x0105 bằng Extended Register Read Long
+    uint8_t ext[6];      // giá trị thô 0x0100..0x0105
+};
+
+struct SpmiReport {
+    bool scanned = false;
+    bool suspicious = false;  // quá nhiều SID cùng giá trị: nghi nhiễu / bus bị kéo -> không kết luận
+    char message[160] = "";
+    std::vector<SpmiSid> sids;  // 16 phần tử, SID 0..15
+};
+
+// Quét ở task nền (dùng chung khoá bận với quét RFFE). false nếu đang quét / chưa cấu hình chân.
+bool startSpmiScan(void);
+uint32_t spmiSerial(void);
+const SpmiReport &spmiReport(void);
 }  // namespace HCCRffe

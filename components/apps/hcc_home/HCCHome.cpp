@@ -22,6 +22,7 @@ void hccMemoryReport(const char *where);
 #include "HCCViText.hpp"
 #include "HCCRffeView.hpp"
 #include "HCCI2CScopeView.hpp"
+#include "HCCSpmiView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
@@ -1266,6 +1267,40 @@ void HCCHome::showHome()
     lv_obj_set_style_text_color(ud_sub, dark_text, 0);
     lv_obj_set_style_text_font(ud_sub, &lv_font_be_vietnam_16, 0);
 
+    lv_obj_t *spmi_button = lv_btn_create(_screen);
+    lv_obj_set_size(spmi_button, 438, 72);
+    lv_obj_align(spmi_button, LV_ALIGN_TOP_LEFT, 494, 336);
+    lv_obj_add_event_cb(spmi_button, onSpmiClicked, LV_EVENT_CLICKED, this);
+    lv_obj_set_style_bg_color(spmi_button, button_color, 0);
+    lv_obj_set_style_bg_color(spmi_button, button_color_pressed, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(spmi_button, 14, 0);
+    lv_obj_set_style_border_width(spmi_button, 0, 0);
+
+    lv_obj_t *spmi_icon = lv_label_create(spmi_button);
+    lv_label_set_text(spmi_icon, "[PM]");
+    lv_obj_align(spmi_icon, LV_ALIGN_LEFT_MID, 20, 0);
+    lv_obj_set_style_text_color(spmi_icon, dark_text, 0);
+    lv_obj_set_style_text_font(spmi_icon, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *spmi_div = lv_obj_create(spmi_button);
+    lv_obj_set_size(spmi_div, 2, 48);
+    lv_obj_align(spmi_div, LV_ALIGN_LEFT_MID, 92, 0);
+    lv_obj_set_style_bg_color(spmi_div, divider, 0);
+    lv_obj_set_style_bg_opa(spmi_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(spmi_div, 0, 0);
+
+    lv_obj_t *spmi_title = lv_label_create(spmi_button);
+    lv_label_set_text(spmi_title, "SPMI");
+    lv_obj_align(spmi_title, LV_ALIGN_LEFT_MID, 116, -10);
+    lv_obj_set_style_text_color(spmi_title, dark_text, 0);
+    lv_obj_set_style_text_font(spmi_title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *spmi_sub = lv_label_create(spmi_button);
+    lv_label_set_text(spmi_sub, "Quét SID 0-15 bus nguồn (chung chân RFFE)");
+    lv_obj_align(spmi_sub, LV_ALIGN_LEFT_MID, 116, 16);
+    lv_obj_set_style_text_color(spmi_sub, dark_text, 0);
+    lv_obj_set_style_text_font(spmi_sub, &lv_font_be_vietnam_16, 0);
+
     /* Status */
     lv_obj_t *status = lv_label_create(_screen);
     lv_label_set_text(status, "Ready");
@@ -2336,6 +2371,17 @@ void HCCHome::onRffeClicked(lv_event_t *event)
     app->detachScreenObjects();
     lv_obj_clean(app->_screen);
     HCCRffeView::show(app->_screen, onBackClicked, app);
+}
+
+void HCCHome::onSpmiClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr) {
+        return;
+    }
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCSpmiView::show(app->_screen, onBackClicked, app);
 }
 
 void HCCHome::onI2CScopeClicked(lv_event_t *event)
