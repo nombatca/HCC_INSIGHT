@@ -1,5 +1,5 @@
 /*
- * HCCSpmiSniff: nghe thụ động bus SPMI (không gửi gì lên bus) trong 10-90 giây và ghi lại mọi giao dịch.
+ * HCCSpmiLog: nghe thụ động bus SPMI (không gửi gì lên bus) trong 10-90 giây và ghi lại mọi giao dịch.
  *
  * Phần cứng: PARLIO RX của ESP32-P4 lấy mẫu liên tục 2 dây (SCLK, SDATA trên chân RFFE: GPIO2 / GPIO3) ở
  * 20 / 40 / 80 MHz bằng DMA vào bộ đệm vòng trong RAM nội; task nền giải mã ngay (HCCSpmiDecode) nên không cần
@@ -16,7 +16,7 @@
 
 #include "HCCSpmiDecode.hpp"
 
-namespace HCCSpmiSniff {
+namespace HCCSpmiLog {
 
 struct Config {
     int seconds = 30;               // 10..90
@@ -70,4 +70,4 @@ bool startSave(void);
 bool saving(void);
 bool saveResult(char *msg, size_t size);  // true nếu lưu thành công
 
-}  // namespace HCCSpmiSniff
+}  // namespace HCCSpmiLog

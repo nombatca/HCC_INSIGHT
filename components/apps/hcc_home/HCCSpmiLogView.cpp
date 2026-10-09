@@ -1,13 +1,13 @@
-#include "HCCSpmiSniffView.hpp"
+#include "HCCSpmiLogView.hpp"
 
 #include <stdio.h>
 #include <string.h>
 #include <vector>
 
 #include "HCCRffe.hpp"
-#include "HCCSpmiSniff.hpp"
+#include "HCCSpmiLog.hpp"
 
-namespace HCCSpmiSniffView {
+namespace HCCSpmiLogView {
 
 using HCCSpmiDecode::Txn;
 
@@ -114,7 +114,7 @@ void setupTable(int cols, const int *widths, const char *const *heads)
 
 void renderTxns(void)
 {
-    const uint32_t n = HCCSpmiSniff::count();
+    const uint32_t n = HCCSpmiLog::count();
     const uint32_t pages = n == 0 ? 1 : (n + PAGE - 1) / PAGE;
     int page = v.page < 0 ? (int)pages - 1 : v.page;
     if (page >= (int)pages) {
@@ -127,10 +127,10 @@ void renderTxns(void)
     lv_table_set_row_cnt(v.table, 1);  // xoá dòng cũ trước khi đổi số cột
     setupTable(8, W, H);
     lv_table_set_row_cnt(v.table, 1 + (last - first));
-    const double ms_per = 1e3 / (double)(HCCSpmiSniff::sampleHz() ? HCCSpmiSniff::sampleHz() : 1);
+    const double ms_per = 1e3 / (double)(HCCSpmiLog::sampleHz() ? HCCSpmiLog::sampleHz() : 1);
     char b[64];
     for (uint32_t i = first; i < last; ++i) {
-        const Txn *t = HCCSpmiSniff::txn(i);
+        const Txn *t = HCCSpmiLog::txn(i);
         if (t == nullptr) {
             break;
         }
@@ -175,7 +175,7 @@ void renderTxns(void)
 
 void renderStats(void)
 {
-    std::vector<HCCSpmiSniff::Stat> st = HCCSpmiSniff::stats();
+    std::vector<HCCSpmiLog::Stat> st = HCCSpmiLog::stats();
     const uint32_t n = (uint32_t)st.size();
     const uint32_t pages = n == 0 ? 1 : (n + PAGE - 1) / PAGE;
     int page = v.page < 0 ? 0 : v.page;
@@ -191,7 +191,7 @@ void renderStats(void)
     lv_table_set_row_cnt(v.table, 1 + (last - first));
     char b[32];
     for (uint32_t i = first; i < last; ++i) {
-        const HCCSpmiSniff::Stat &s = st[i];
+        const HCCSpmiLog::Stat &s = st[i];
         const uint16_t r = (uint16_t)(1 + i - first);
         snprintf(b, sizeof(b), "%X", s.sid);
         lv_table_set_cell_value(v.table, r, 0, b);
@@ -224,7 +224,7 @@ void render(void)
     lv_obj_set_style_bg_color(v.tab_stat, v.stats_tab ? lv_color_hex(0x1FA9D6) : C_BTN, 0);
 }
 
-void updateInfo(const HCCSpmiSniff::Status &st)
+void updateInfo(const HCCSpmiLog::Status &st)
 {
     char a[16], b2[16], info[256];
     fmtTime(a, sizeof(a), st.elapsed_ms);
@@ -247,7 +247,7 @@ void updateInfo(const HCCSpmiSniff::Status &st)
 
 void onTimer(lv_timer_t *)
 {
-    const HCCSpmiSniff::Status st = HCCSpmiSniff::status();
+    const HCCSpmiLog::Status st = HCCSpmiLog::status();
     if (st.running) {
         updateInfo(st);
         if (!st.lines_found) {
@@ -259,7 +259,7 @@ void onTimer(lv_timer_t *)
         }
         // Đang bắt: theo dõi trang cuối mỗi ~1 s.
         static uint32_t tick = 0;
-        if (!v.stats_tab && v.page < 0 && ++tick % 3 == 0 && HCCSpmiSniff::count() != v.shown) {
+        if (!v.stats_tab && v.page < 0 && ++tick % 3 == 0 && HCCSpmiLog::count() != v.shown) {
             renderTxns();
         }
     } else if (v.was_running) {
@@ -270,27 +270,27 @@ void onTimer(lv_timer_t *)
         render();
     }
     v.was_running = st.running;
-    if (v.was_saving && !HCCSpmiSniff::saving()) {
+    if (v.was_saving && !HCCSpmiLog::saving()) {
         char m[160];
-        const bool ok = HCCSpmiSniff::saveResult(m, sizeof(m));
+        const bool ok = HCCSpmiLog::saveResult(m, sizeof(m));
         setStatus(m, ok ? C_OK : C_BAD);
         lv_obj_clear_state(v.save_btn, LV_STATE_DISABLED);
     }
-    v.was_saving = HCCSpmiSniff::saving();
+    v.was_saving = HCCSpmiLog::saving();
 }
 
 void onStart(lv_event_t *)
 {
-    if (HCCSpmiSniff::status().running) {
-        HCCSpmiSniff::stop();
+    if (HCCSpmiLog::status().running) {
+        HCCSpmiLog::stop();
         setStatus("Đang dừng...", C_WARN);
         return;
     }
-    HCCSpmiSniff::Config cfg;
+    HCCSpmiLog::Config cfg;
     cfg.seconds = SECONDS[s_sec];
     cfg.sample_hz = RATES[s_rate];
     char err[128];
-    if (!HCCSpmiSniff::start(cfg, err, sizeof(err))) {
+    if (!HCCSpmiLog::start(cfg, err, sizeof(err))) {
         setStatus(err, C_BAD);
         return;
     }
@@ -306,7 +306,7 @@ void onStart(lv_event_t *)
 void onTab(lv_event_t *e)
 {
     v.stats_tab = (intptr_t)lv_event_get_user_data(e) != 0;
-    v.page = v.stats_tab ? 0 : (HCCSpmiSniff::status().running ? -1 : 0);
+    v.page = v.stats_tab ? 0 : (HCCSpmiLog::status().running ? -1 : 0);
     render();
 }
 
@@ -314,7 +314,7 @@ void onPage(lv_event_t *e)
 {
     const int d = (int)(intptr_t)lv_event_get_user_data(e);
     if (v.page < 0) {
-        const uint32_t n = HCCSpmiSniff::count();
+        const uint32_t n = HCCSpmiLog::count();
         v.page = n == 0 ? 0 : (int)((n - 1) / PAGE);
     }
     v.page += d;
@@ -327,11 +327,11 @@ void onPage(lv_event_t *e)
 
 void onSave(lv_event_t *)
 {
-    if (HCCSpmiSniff::count() == 0) {
+    if (HCCSpmiLog::count() == 0) {
         setStatus("Chưa có giao dịch để lưu", C_WARN);
         return;
     }
-    if (!HCCSpmiSniff::startSave()) {
+    if (!HCCSpmiLog::startSave()) {
         setStatus("Không lưu được lúc này (đang bắt / đang lưu)", C_WARN);
         return;
     }
@@ -381,13 +381,13 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
         H = 520;
     }
 
-    lv_obj_t *t = label(root, "SPMI SNIFFER", &lv_font_be_vietnam_28, C_TEXT);
+    lv_obj_t *t = label(root, "BẮT DỮ LIỆU SPMI", &lv_font_be_vietnam_28, C_TEXT);
     lv_obj_set_pos(t, 28, 10);
     char pins[128];
     snprintf(pins, sizeof(pins), "Chỉ nghe, không gửi lên bus  |  GPIO%d + GPIO%d (tự nhận SCLK / SDATA)  |  cần chuyển mức",
              HCCRffe::sclkPin(), HCCRffe::sdataPin());
     lv_obj_t *pl = label(root, pins, &lv_font_be_vietnam_14, C_MUTED);
-    lv_obj_set_pos(pl, 260, 22);
+    lv_obj_set_pos(pl, 330, 22);
 
     const int y1 = 52;
     lv_obj_t *l1 = label(root, "Thời gian", &lv_font_be_vietnam_16, C_MUTED);
@@ -449,7 +449,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_label_set_long_mode(v.status, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(v.status, 362, yb + 4);
 
-    const HCCSpmiSniff::Status st = HCCSpmiSniff::status();
+    const HCCSpmiLog::Status st = HCCSpmiLog::status();
     v.was_running = st.running;
     v.page = st.running ? -1 : 0;
     if (st.running) {
@@ -466,4 +466,4 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     v.timer = lv_timer_create(onTimer, 330, nullptr);
 }
 
-}  // namespace HCCSpmiSniffView
+}  // namespace HCCSpmiLogView

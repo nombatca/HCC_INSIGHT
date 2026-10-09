@@ -1,4 +1,4 @@
-#include "HCCSpmiSniff.hpp"
+#include "HCCSpmiLog.hpp"
 
 #include <algorithm>
 #include <map>
@@ -19,13 +19,13 @@
 #include "freertos/task.h"
 #include "hcc_cores.h"
 
-namespace HCCSpmiSniff {
+namespace HCCSpmiLog {
 
 using HCCSpmiDecode::Txn;
 
 namespace {
 
-const char *TAG = "HCCSpmiSniff";
+const char *TAG = "HCCSpmiLog";
 constexpr size_t DESC_BYTES = 4032;              // bội 64, vừa một mô tả DMA
 constexpr size_t NDESC = 16;
 constexpr size_t RING_BYTES = DESC_BYTES * NDESC;  // ~63 KB RAM nội
@@ -157,7 +157,7 @@ bool detectLines(const uint8_t *d, size_t n)
     return s_edges[0] + s_edges[1] >= 400;
 }
 
-void sniffTask(void *)
+void captureTask(void *)
 {
     parlio_rx_unit_handle_t unit = nullptr;
     parlio_rx_delimiter_handle_t deli = nullptr;
@@ -412,7 +412,7 @@ bool start(const Config &cfg, char *err, size_t err_size)
     s_stop_req = false;
     xQueueReset(s_queue);
     s_running = true;
-    if (xTaskCreatePinnedToCore(sniffTask, "hcc_spmi_sniff", 6144, nullptr, 6, nullptr, HCC_CORE_WORK) != pdPASS) {
+    if (xTaskCreatePinnedToCore(captureTask, "hcc_spmi_log", 6144, nullptr, 6, nullptr, HCC_CORE_WORK) != pdPASS) {
         s_running = false;
         s_status.running = false;
         HCCRffe::releasePins();
@@ -493,4 +493,4 @@ bool saveResult(char *msg, size_t size)
     return s_save_ok;
 }
 
-}  // namespace HCCSpmiSniff
+}  // namespace HCCSpmiLog

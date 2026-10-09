@@ -123,7 +123,7 @@ struct SpmiReport {
     std::vector<SpmiSid> sids;  // 16 phần tử, SID 0..15
 };
 
-// Mượn chân SCLK / SDATA cho việc khác (vd SPMI SNIFFER dùng PARLIO): false nếu đang quét / chưa cấu hình chân.
+// Mượn chân SCLK / SDATA cho việc khác (vd BẮT DỮ LIỆU SPMI dùng PARLIO): false nếu đang quét / chưa cấu hình chân.
 // releasePins() trả lại chân; lần quét sau tự cấu hình lại GPIO.
 bool claimPins(void);
 void releasePins(void);
