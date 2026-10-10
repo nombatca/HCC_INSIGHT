@@ -24,6 +24,98 @@ const char *kindName(Kind k)
     return "?";
 }
 
+const char *kindLongName(Kind k)
+{
+    switch (k) {
+    case K_REG0_WRITE: return "Register 0 Write";
+    case K_REG_WRITE: return "Register Write";
+    case K_REG_READ: return "Register Read";
+    case K_EXT_WRITE: return "Extended Register Write";
+    case K_EXT_READ: return "Extended Register Read";
+    case K_EXTL_WRITE: return "Extended Register Write Long";
+    case K_EXTL_READ: return "Extended Register Read Long";
+    case K_RESET: return "Reset";
+    case K_SLEEP: return "Sleep";
+    case K_SHUTDOWN: return "Shutdown";
+    case K_WAKEUP: return "Wakeup";
+    case K_OTHER: return "Lệnh khác (không giải mã)";
+    case K_BAD: return "Khung lệnh hỏng";
+    }
+    return "?";
+}
+
+Kind kindOf(uint8_t c)
+{
+    if (c & 0x80) {
+        return K_REG0_WRITE;
+    }
+    if ((c & 0xE0) == 0x40) {
+        return K_REG_WRITE;
+    }
+    if ((c & 0xE0) == 0x60) {
+        return K_REG_READ;
+    }
+    if ((c & 0xF0) == 0x00) {
+        return K_EXT_WRITE;
+    }
+    if ((c & 0xF0) == 0x20) {
+        return K_EXT_READ;
+    }
+    if ((c & 0xF8) == 0x30) {
+        return K_EXTL_WRITE;
+    }
+    if ((c & 0xF8) == 0x38) {
+        return K_EXTL_READ;
+    }
+    switch (c) {
+    case 0x10: return K_RESET;
+    case 0x11: return K_SLEEP;
+    case 0x12: return K_SHUTDOWN;
+    case 0x13: return K_WAKEUP;
+    default: return K_OTHER;
+    }
+}
+
+int addrFrames(Kind k)
+{
+    switch (k) {
+    case K_EXT_WRITE:
+    case K_EXT_READ: return 1;
+    case K_EXTL_WRITE:
+    case K_EXTL_READ: return 2;
+    default: return 0;
+    }
+}
+
+PktStatus status(const Txn &t)
+{
+    if (t.kind == K_BAD) {
+        return ST_BAD_CMD;
+    }
+    if (t.short_bits) {
+        return ST_SHORT;
+    }
+    if (t.parity_err) {
+        return ST_PARITY;
+    }
+    if (t.kind == K_OTHER) {
+        return ST_UNKNOWN_CMD;
+    }
+    return ST_OK;
+}
+
+const char *statusName(PktStatus s)
+{
+    switch (s) {
+    case ST_OK: return "OK";
+    case ST_PARITY: return "SAI PARITY";
+    case ST_SHORT: return "THIẾU BIT";
+    case ST_BAD_CMD: return "LỖI LỆNH";
+    case ST_UNKNOWN_CMD: return "LỆNH KHÁC";
+    }
+    return "?";
+}
+
 bool isRead(Kind k)
 {
     return k == K_REG_READ || k == K_EXT_READ || k == K_EXTL_READ;
@@ -36,8 +128,8 @@ bool isWrite(Kind k)
 
 namespace {
 
-// Đọc khung 8 bit + parity tại pos. Trả false nếu thiếu bit; *perr++ khi sai parity lẻ.
-bool frame8(const uint8_t *b, int n, int &pos, uint8_t *v, uint8_t *perr)
+// Đọc khung 8 bit + parity tại pos. Trả false nếu thiếu bit; sai parity lẻ: ++perr và bật bit idx của *mask.
+bool frame8(const uint8_t *b, int n, int &pos, uint8_t *v, int idx, Txn &t)
 {
     if (pos + 9 > n) {
         return false;
@@ -51,7 +143,10 @@ bool frame8(const uint8_t *b, int n, int &pos, uint8_t *v, uint8_t *perr)
     pos += 9;
     *v = (uint8_t)x;
     if (!(ones & 1)) {
-        ++*perr;
+        ++t.parity_err;
+        if (idx < 16) {
+            t.frame_err |= (uint16_t)(1u << idx);
+        }
     }
     return true;
 }
@@ -67,6 +162,7 @@ bool parse(const uint8_t *b, int n, Txn &t)
     t.short_bits = 0;
     t.extra_bits = 0;
     t.extra = 0;
+    t.frame_err = 0;
     memset(t.data, 0, sizeof(t.data));
     if (n < 13) {
         t.kind = K_BAD;
@@ -87,58 +183,40 @@ bool parse(const uint8_t *b, int n, Txn &t)
     if (!(ones & 1)) {
         t.kind = K_BAD;
         t.parity_err = 1;
+        t.frame_err = 1;
         return true;
     }
     const uint8_t c = t.cmd;
+    t.kind = kindOf(c);
     int ndata = 0;
-    int naddr = 0;
-    bool read = false;
-    if (c & 0x80) {
-        t.kind = K_REG0_WRITE;
+    const int naddr = addrFrames(t.kind);
+    const bool read = isRead(t.kind);
+    switch (t.kind) {
+    case K_REG0_WRITE:
         t.data[0] = c & 0x7F;
         t.len = 1;
-    } else if ((c & 0xE0) == 0x40) {
-        t.kind = K_REG_WRITE;
+        break;
+    case K_REG_WRITE:
+    case K_REG_READ:
         t.addr = c & 0x1F;
         ndata = 1;
-    } else if ((c & 0xE0) == 0x60) {
-        t.kind = K_REG_READ;
-        t.addr = c & 0x1F;
-        ndata = 1;
-        read = true;
-    } else if ((c & 0xF0) == 0x00) {
-        t.kind = K_EXT_WRITE;
-        naddr = 1;
+        break;
+    case K_EXT_WRITE:
+    case K_EXT_READ:
         ndata = (c & 0x0F) + 1;
-    } else if ((c & 0xF0) == 0x20) {
-        t.kind = K_EXT_READ;
-        naddr = 1;
-        ndata = (c & 0x0F) + 1;
-        read = true;
-    } else if ((c & 0xF8) == 0x30) {
-        t.kind = K_EXTL_WRITE;
-        naddr = 2;
+        break;
+    case K_EXTL_WRITE:
+    case K_EXTL_READ:
         ndata = (c & 0x07) + 1;
-    } else if ((c & 0xF8) == 0x38) {
-        t.kind = K_EXTL_READ;
-        naddr = 2;
-        ndata = (c & 0x07) + 1;
-        read = true;
-    } else if (c == 0x10) {
-        t.kind = K_RESET;
-    } else if (c == 0x11) {
-        t.kind = K_SLEEP;
-    } else if (c == 0x12) {
-        t.kind = K_SHUTDOWN;
-    } else if (c == 0x13) {
-        t.kind = K_WAKEUP;
-    } else {
-        t.kind = K_OTHER;
+        break;
+    default:
+        break;
     }
+    int idx = 1;
     if (t.kind != K_OTHER) {
         for (int i = 0; i < naddr; ++i) {
             uint8_t a = 0;
-            if (!frame8(b, n, pos, &a, &t.parity_err)) {
+            if (!frame8(b, n, pos, &a, idx++, t)) {
                 t.short_bits = 1;
                 return true;
             }
@@ -152,7 +230,7 @@ bool parse(const uint8_t *b, int n, Txn &t)
             pos += 1;  // bus park trước khi slave trả dữ liệu
         }
         for (int i = 0; i < ndata && i < 8; ++i) {
-            if (!frame8(b, n, pos, &t.data[i], &t.parity_err)) {
+            if (!frame8(b, n, pos, &t.data[i], idx++, t)) {
                 t.short_bits = 1;
                 return true;
             }
@@ -184,6 +262,7 @@ void Decoder::reset(uint32_t idle_samples, TxnSink sink, void *user)
     _n = 0;
     _falls = 0;
     _clk_samples = 0;
+    _lost = false;
 }
 
 void Decoder::resync()
@@ -191,6 +270,26 @@ void Decoder::resync()
     _in = false;
     _arm = false;
     _n = 0;
+    _lost = true;
+}
+
+void Decoder::idle(uint64_t n)
+{
+    if (n == 0) {
+        return;
+    }
+    sample(0, 0);  // mẫu đầu xử lý đủ (có thể là cạnh xuống SCLK / kết thúc SSC)
+    _t += n - 1;
+    if (_in && _n > 0 && _t - _last_fall > _idle) {
+        finish();
+    }
+}
+
+void Decoder::lost(uint64_t n)
+{
+    resync();
+    _pc = _pd = 0;
+    _t += n;
 }
 
 void Decoder::finish()
@@ -198,6 +297,9 @@ void Decoder::finish()
     if (_in && _n > 0 && _sink) {
         Txn t;
         t.t_sample = _start;
+        t.flags = _lost ? F_LOST_BEFORE : 0;
+        t.dur = (uint32_t)(_last_fall > _start ? _last_fall - _start : 0);
+        _lost = false;
         parse(_bits, _n, t);
         _sink(t, _user);
         if (_last_fall > _first_fall) {

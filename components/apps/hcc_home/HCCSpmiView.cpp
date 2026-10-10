@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "HCCRffe.hpp"
-#include "HCCSpmiLogView.hpp"
+#include "HCCSpmiMonitorView.hpp"
 
 namespace HCCSpmiView {
 
@@ -30,7 +30,7 @@ struct View {
 };
 
 View v;
-lv_obj_t *s_screen = nullptr;  // để quay lại từ BẮT DỮ LIỆU SPMI
+lv_obj_t *s_screen = nullptr;  // để quay lại từ SPMI MONITOR
 lv_event_cb_t s_back_cb = nullptr;
 void *s_back_user = nullptr;
 
@@ -159,7 +159,7 @@ void onCapture(lv_event_t *)
     }
     lv_obj_t *scr = s_screen;
     lv_obj_clean(scr);
-    HCCSpmiLogView::show(scr, onCaptureBack, nullptr);
+    HCCSpmiMonitorView::show(scr, onCaptureBack, nullptr);
 }
 
 void onRootDeleted(lv_event_t *)
@@ -193,17 +193,17 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
         H = 520;
     }
 
-    lv_obj_t *title = label(root, "SPMI", &lv_font_be_vietnam_28, C_TEXT);
+    lv_obj_t *title = label(root, "SPMI SCANNER", &lv_font_be_vietnam_28, C_TEXT);
     lv_obj_set_pos(title, 28, 14);
     char pins[128];
     if (HCCRffe::configured()) {
-        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d (dùng chung với RFFE, tự đảo nếu nối ngược)",
+        snprintf(pins, sizeof(pins), "SCLK GPIO %d   SDATA GPIO %d (chung RFFE, tự đảo nếu nối ngược)",
                  HCCRffe::sclkPin(), HCCRffe::sdataPin());
     } else {
         snprintf(pins, sizeof(pins), "%s", HCCRffe::configError());
     }
     lv_obj_t *pl = label(root, pins, &lv_font_be_vietnam_16, HCCRffe::configured() ? C_MUTED : C_WARN);
-    lv_obj_set_pos(pl, 120, 24);
+    lv_obj_set_pos(pl, 236, 24);
     v.summary = label(root, "", &lv_font_be_vietnam_18, C_CYAN);
     lv_obj_set_pos(v.summary, 28, 58);
 
@@ -222,7 +222,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_obj_set_pos(back, 28, yb);
     v.scan_btn = button(root, "SCAN", 200, lv_color_hex(0x1FA9D6), onScan, nullptr);
     lv_obj_set_pos(v.scan_btn, 206, yb);
-    lv_obj_t *sn = button(root, "NGHE BUS", 200, lv_color_hex(0x7A4FD8), onCapture, nullptr);
+    lv_obj_t *sn = button(root, "MONITOR >", 200, lv_color_hex(0x7A4FD8), onCapture, nullptr);
     lv_obj_set_pos(sn, 424, yb);
     v.status = label(root, "Sẵn sàng", &lv_font_be_vietnam_16, C_CYAN);
     lv_obj_set_width(v.status, 360);

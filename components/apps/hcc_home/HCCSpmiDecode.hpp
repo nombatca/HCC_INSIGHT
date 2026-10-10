@@ -45,11 +45,34 @@ struct Txn {
     uint16_t nbits;      // số bit thu được trong chuỗi
     uint16_t extra_bits; // số bit dư sau các khung mong đợi (vd ACK/NACK)
     uint8_t extra;       // tối đa 8 bit dư đầu tiên (MSB = bit đầu)
+    uint16_t frame_err;  // bit i = khung thứ i sai parity (bit 0 = khung lệnh, sau đó địa chỉ rồi dữ liệu)
+    uint8_t flags;       // F_*
+    uint32_t dur;        // số mẫu từ SSC đến cạnh xuống SCLK cuối cùng
+};
+
+enum : uint8_t {
+    F_LOST_BEFORE = 1,   // ngay trước gói này có dữ liệu bị mất (tràn bộ đệm) - thời gian / thứ tự có thể sai
+};
+
+// Trạng thái gói (cột STATUS). Thứ tự ưu tiên: lệnh hỏng > thiếu bit > sai parity > lệnh không giải mã > OK.
+enum PktStatus : uint8_t {
+    ST_OK,
+    ST_PARITY,       // khung địa chỉ / dữ liệu sai parity
+    ST_SHORT,        // chuỗi bị cắt (thiếu bit)
+    ST_BAD_CMD,      // khung lệnh sai parity hoặc ngắn hơn 13 bit
+    ST_UNKNOWN_CMD,  // lệnh hợp lệ nhưng ngoài các lớp được giải mã (chỉ có mã lệnh)
 };
 
 const char *kindName(Kind k);
+const char *kindLongName(Kind k);  // tên lệnh theo chuẩn (Register Write...)
 bool isRead(Kind k);
 bool isWrite(Kind k);
+// Lớp lệnh theo mã 8 bit (không xét parity).
+Kind kindOf(uint8_t cmd);
+PktStatus status(const Txn &t);
+const char *statusName(PktStatus s);
+// Số khung địa chỉ / dữ liệu mong đợi sau khung lệnh.
+int addrFrames(Kind k);
 
 // Phân tích một chuỗi bit (sau SSC). Trả false nếu không đủ 13 bit khung lệnh.
 bool parse(const uint8_t *bits, int n, Txn &out);
@@ -62,7 +85,11 @@ public:
     // data: byte gói 4 mẫu (2 bit / mẫu, mẫu đầu ở bit thấp). swap: đổi vai SCLK / SDATA.
     void feed(const uint8_t *data, size_t len);
     void flush();
-    void resync();  // mất dữ liệu (tràn bộ đệm): bỏ chuỗi đang dở
+    void resync();  // mất dữ liệu (tràn bộ đệm): bỏ chuỗi đang dở, gói kế tiếp mang cờ F_LOST_BEFORE
+    // n mẫu bus nghỉ (SCLK = SDATA = 0) không có trong bộ đệm (khoảng trống giữa các đoạn sóng đã lưu).
+    void idle(uint64_t n);
+    // n mẫu bị mất (tràn bộ đệm): resync + tiến đồng hồ để thời gian các gói sau vẫn đúng.
+    void lost(uint64_t n);
 
     uint64_t samples() const { return _t; }
     uint64_t sclkFalls() const { return _falls; }
@@ -87,6 +114,7 @@ private:
     int _n = 0;
     uint64_t _falls = 0;
     uint64_t _clk_samples = 0;
+    bool _lost = false;
 };
 
 }  // namespace HCCSpmiDecode
