@@ -1,5 +1,7 @@
 #include "HCCSpmiView.hpp"
 
+#include "HCCLayout.hpp"
+
 #include <stdio.h>
 
 #include "HCCRffe.hpp"
@@ -188,7 +190,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, onRootDeleted, LV_EVENT_DELETE, nullptr);
     lv_obj_update_layout(root);
-    lv_coord_t H = lv_obj_get_height(root);
+    lv_coord_t H = HCCLayout::usableHeight(root, 503);
     if (H < 360 || H > 800) {
         H = 520;
     }

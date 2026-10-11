@@ -1,5 +1,7 @@
 #include "HCCEepromView.hpp"
 
+#include "HCCLayout.hpp"
+
 #include <ctype.h>
 #include <dirent.h>
 #include <stdarg.h>
@@ -1207,7 +1209,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user, BusGetter ge
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, onRootDeleted, LV_EVENT_DELETE, nullptr);
     lv_obj_update_layout(root);
-    int W = lv_obj_get_width(root), H = lv_obj_get_height(root);
+    int W = lv_obj_get_width(root), H = HCCLayout::usableHeight(root, 503);
     if (W < 900 || W > 1280) {
         W = 1024;
     }
@@ -1356,31 +1358,31 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user, BusGetter ge
     lv_label_set_long_mode(v.log, LV_LABEL_LONG_WRAP);
 
     // ---------- Cột phải ----------
-    lv_obj_t *r1 = panel(root, RX, M, RW, 158, "THÔNG TIN CHIP");
+    lv_obj_t *r1 = panel(root, RX, M, RW, 146, "THÔNG TIN CHIP");
     static const char *IC[] = {"Tên chip", "Dung lượng", "Page size", "Địa chỉ I2C", "Giao tiếp", "Trạng thái"};
     for (int i = 0; i < 6; ++i) {
-        v.info_chip[i] = infoRow(r1, 32 + i * 20, IC[i]);
+        v.info_chip[i] = infoRow(r1, 30 + i * 18, IC[i]);
     }
-    const int r2y = M + 158 + M;
-    lv_obj_t *r2 = panel(root, RX, r2y, RW, 116, "THÔNG TIN DỮ LIỆU");
+    const int r2y = M + 146 + M;
+    lv_obj_t *r2 = panel(root, RX, r2y, RW, 104, "THÔNG TIN DỮ LIỆU");
     static const char *ID[] = {"Kích thước", "CRC32", "Byte đổi", "File"};
     for (int i = 0; i < 4; ++i) {
-        v.info_data[i] = infoRow(r2, 32 + i * 20, ID[i]);
+        v.info_data[i] = infoRow(r2, 30 + i * 18, ID[i]);
     }
-    const int r3y = r2y + 116 + M;
-    lv_obj_t *r3 = panel(root, RX, r3y, RW, 80, "ĐẾN ĐỊA CHỈ");
-    lv_obj_t *gb = button(r3, "", 10, 34, 110, 38, C_PANEL2, onGoto, nullptr);
+    const int r3y = r2y + 104 + M;
+    lv_obj_t *r3 = panel(root, RX, r3y, RW, 76, "ĐẾN ĐỊA CHỈ");
+    lv_obj_t *gb = button(r3, "", 10, 32, 110, 36, C_PANEL2, onGoto, nullptr);
     v.goto_lbl = lv_obj_get_child(gb, 0);
     lv_label_set_text(v.goto_lbl, "0x0000");
-    button(r3, "ĐI", 128, 34, RW - 138, 38, C_BLUE, onGotoGo, nullptr);
-    const int r4y = r3y + 80 + M;
+    button(r3, "ĐI", 128, 32, RW - 138, 36, C_BLUE, onGotoGo, nullptr);
+    const int r4y = r3y + 76 + M;
     const int r4h = H - r4y - M - 46 - M;
     lv_obj_t *r4 = panel(root, RX, r4y, RW, r4h, "TUỲ CHỌN HIỂN THỊ");
     static const char *OPT[] = {"Hiện ASCII", "Tô màu byte đổi"};
     for (int i = 0; i < 2; ++i) {
         lv_obj_t *cb = lv_checkbox_create(r4);
         lv_checkbox_set_text(cb, OPT[i]);
-        lv_obj_set_pos(cb, 10, 30 + i * 28);
+        lv_obj_set_pos(cb, 10, 30 + i * 26);
         lv_obj_set_style_text_font(cb, &lv_font_be_vietnam_14, 0);
         lv_obj_set_style_text_color(cb, C_TEXT, 0);
         if (i == 0 ? s_show_ascii : s_color_changed) {

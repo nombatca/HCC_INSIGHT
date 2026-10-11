@@ -1,5 +1,7 @@
 #include "HCCI2CScopeView.hpp"
 
+#include "HCCLayout.hpp"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -512,7 +514,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user, HCCI2CScope:
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, onRootDeleted, LV_EVENT_DELETE, nullptr);
     lv_obj_update_layout(root);
-    lv_coord_t W = lv_obj_get_width(root), H = lv_obj_get_height(root);
+    lv_coord_t W = lv_obj_get_width(root), H = HCCLayout::usableHeight(root, 503);
     if (W < 600 || W > 1280) {
         W = 1024;
     }

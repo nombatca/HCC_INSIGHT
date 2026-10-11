@@ -1,5 +1,7 @@
 #include "HCCSpmiAnalyzerView.hpp"
 
+#include "HCCLayout.hpp"
+
 #include <algorithm>
 #include <dirent.h>
 #include <stdio.h>
@@ -562,7 +564,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, onRootDeleted, LV_EVENT_DELETE, nullptr);
     lv_obj_update_layout(root);
-    lv_coord_t H = lv_obj_get_height(root);
+    lv_coord_t H = HCCLayout::usableHeight(root, 503);
     if (H < 420 || H > 800) {
         H = 527;
     }
@@ -653,7 +655,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user)
     lv_obj_set_style_pad_hor(v.table, 6, (lv_style_selector_t)LV_PART_ITEMS);
     lv_obj_add_event_cb(v.table, onTableDraw, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 
-    lv_obj_t *back = button(root, "MONITOR", 130, 44, C_BORDER, back_cb, back_user);
+    lv_obj_t *back = button(root, LV_SYMBOL_LEFT " BACK", 130, 44, C_BORDER, back_cb, back_user);
     lv_obj_set_pos(back, 8, by);
     for (int k = 0; k < 2; ++k) {
         const HCCSpmiLink::Target t = (HCCSpmiLink::Target)k;

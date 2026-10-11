@@ -1,5 +1,7 @@
 #include "HCCRffeView.hpp"
 
+#include "HCCLayout.hpp"
+
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
@@ -1030,7 +1032,7 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     // Vùng app thật nhỏ hơn màn hình (thanh trạng thái Brookesia): khung kết quả co theo chiều cao này
     // để không đè lên nút BACK / SCAN.
     lv_obj_update_layout(root);
-    lv_coord_t root_h = lv_obj_get_height(root);
+    lv_coord_t root_h = HCCLayout::usableHeight(root, 503);
     if (root_h < 360 || root_h > 600) {
         root_h = 520;
     }
