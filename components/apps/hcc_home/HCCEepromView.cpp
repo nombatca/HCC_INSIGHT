@@ -112,6 +112,9 @@ Result s_res;
 uint8_t *s_work = nullptr;  // bản sao bộ đệm cho tác vụ (ghi / lưu) và nơi nhận dữ liệu (đọc / nạp)
 uint8_t *s_work2 = nullptr; // đọc lại để xác minh
 BusGetter s_get_bus = nullptr;
+lv_event_cb_t s_back_cb = nullptr;
+void *s_back_user = nullptr;
+bool s_back_pending = false;
 void *s_bus_user = nullptr;
 
 void onProgress(uint32_t done, uint32_t total, void *)
@@ -1119,6 +1122,33 @@ void onClearLog(lv_event_t *)
     lv_label_set_text(v.log, "");
 }
 
+// Trở về: chạy ngay khi CHẠM (không chờ nhả tay) - trên máy thật lần nhả tay đôi khi không thành CLICKED nên
+// phải bấm nhiều lần. Chờ nhả tay rồi mới dựng màn mới (lv_async_call) để cú nhả không rơi vào nút của màn sau.
+void doBack(void *)
+{
+    s_back_pending = false;
+    if (s_back_cb == nullptr) {
+        return;
+    }
+    lv_event_t ev = {};
+    ev.user_data = s_back_user;
+    s_back_cb(&ev);
+}
+
+void onBack(lv_event_t *)
+{
+    if (s_back_pending) {
+        return;
+    }
+    s_back_pending = true;
+    ESP_LOGI(TAG, "Trở về");
+    lv_indev_t *in = lv_indev_get_act();
+    if (in) {
+        lv_indev_wait_release(in);
+    }
+    lv_async_call(doBack, nullptr);
+}
+
 void onRootDeleted(lv_event_t *)
 {
     if (v.timer) {
@@ -1163,6 +1193,9 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user, BusGetter ge
         lv_obj_del(v.root);
     }
     s_get_bus = get_bus;
+    s_back_cb = back_cb;
+    s_back_user = back_user;
+    s_back_pending = false;
     s_bus_user = bus_user;
     lv_obj_set_style_bg_color(screen, C_BG, 0);
     lv_obj_t *root = lv_obj_create(screen);
@@ -1355,7 +1388,8 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user, BusGetter ge
         }
         lv_obj_add_event_cb(cb, onOption, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)i);
     }
-    button(root, LV_SYMBOL_LEFT "  Trở về", RX, H - M - 46, RW, 46, C_BTN, back_cb, back_user);
+    lv_obj_t *back = button(root, LV_SYMBOL_LEFT "  Trở về", RX, H - M - 46, RW, 46, C_BTN, nullptr, nullptr);
+    lv_obj_add_event_cb(back, onBack, LV_EVENT_PRESSED, nullptr);
 
     buildKeypad(root, W, H);
     setTab(0);
