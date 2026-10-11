@@ -22,6 +22,7 @@ void hccMemoryReport(const char *where);
 #include "HCCViText.hpp"
 #include "HCCRffeView.hpp"
 #include "HCCI2CScopeView.hpp"
+#include "HCCLogicView.hpp"
 #include "HCCSpmiView.hpp"
 #include "HCCEepromView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
@@ -1302,6 +1303,41 @@ void HCCHome::showHome()
     lv_obj_set_style_text_color(spmi_sub, dark_text, 0);
     lv_obj_set_style_text_font(spmi_sub, &lv_font_be_vietnam_16, 0);
 
+    // LOGIC ANALYZER 8 kênh (PARLIO).
+    lv_obj_t *logic_button = lv_btn_create(_screen);
+    lv_obj_set_size(logic_button, 438, 72);
+    lv_obj_align(logic_button, LV_ALIGN_TOP_LEFT, 28, 416);
+    lv_obj_add_event_cb(logic_button, onLogicClicked, LV_EVENT_CLICKED, this);
+    lv_obj_set_style_bg_color(logic_button, button_color, 0);
+    lv_obj_set_style_bg_color(logic_button, button_color_pressed, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(logic_button, 14, 0);
+    lv_obj_set_style_border_width(logic_button, 0, 0);
+
+    lv_obj_t *logic_icon = lv_label_create(logic_button);
+    lv_label_set_text(logic_icon, "[LA]");
+    lv_obj_align(logic_icon, LV_ALIGN_LEFT_MID, 20, 0);
+    lv_obj_set_style_text_color(logic_icon, dark_text, 0);
+    lv_obj_set_style_text_font(logic_icon, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *logic_div = lv_obj_create(logic_button);
+    lv_obj_set_size(logic_div, 2, 48);
+    lv_obj_align(logic_div, LV_ALIGN_LEFT_MID, 92, 0);
+    lv_obj_set_style_bg_color(logic_div, divider, 0);
+    lv_obj_set_style_bg_opa(logic_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(logic_div, 0, 0);
+
+    lv_obj_t *logic_title = lv_label_create(logic_button);
+    lv_label_set_text(logic_title, "LOGIC ANALYZER");
+    lv_obj_align(logic_title, LV_ALIGN_LEFT_MID, 116, -10);
+    lv_obj_set_style_text_color(logic_title, dark_text, 0);
+    lv_obj_set_style_text_font(logic_title, &lv_font_be_vietnam_18, 0);
+
+    lv_obj_t *logic_sub = lv_label_create(logic_button);
+    lv_label_set_text(logic_sub, "8 kênh, tới 80 MHz, giải mã I2C / UART / SPI");
+    lv_obj_align(logic_sub, LV_ALIGN_LEFT_MID, 116, 16);
+    lv_obj_set_style_text_color(logic_sub, dark_text, 0);
+    lv_obj_set_style_text_font(logic_sub, &lv_font_be_vietnam_16, 0);
+
     /* Status */
     lv_obj_t *status = lv_label_create(_screen);
     lv_label_set_text(status, "Ready");
@@ -2383,6 +2419,17 @@ void HCCHome::onSpmiClicked(lv_event_t *event)
     app->detachScreenObjects();
     lv_obj_clean(app->_screen);
     HCCSpmiView::show(app->_screen, onBackClicked, app);
+}
+
+void HCCHome::onLogicClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_screen == nullptr) {
+        return;
+    }
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCLogicView::show(app->_screen, onBackClicked, app);
 }
 
 void HCCHome::onI2CScopeClicked(lv_event_t *event)

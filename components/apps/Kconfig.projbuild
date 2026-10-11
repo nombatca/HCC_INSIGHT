@@ -82,3 +82,42 @@ menu "HCC RFFE"
             Bit-bang half period. 5 us gives about 100 kHz SCLK.
 
 endmenu
+
+menu "HCC LOGIC ANALYZER"
+
+    # 8 kênh vào của LOGIC ANALYZER (PARLIO RX 8 bit). Chỉ nhận tín hiệu 0 / 3,3 V: tín hiệu 1,2 / 1,8 V cần
+    # mạch chuyển mức một chiều. Firmware từ chối chân của LCD, thẻ SD, âm thanh, I2C cảm ứng, SDIO Wi-Fi, USB.
+    config HCC_LOGIC_CH0_GPIO
+        int "D0 GPIO (-1 = không dùng)"
+        default 20
+        range -1 54
+    config HCC_LOGIC_CH1_GPIO
+        int "D1 GPIO"
+        default 21
+        range -1 54
+    config HCC_LOGIC_CH2_GPIO
+        int "D2 GPIO"
+        default 22
+        range -1 54
+    config HCC_LOGIC_CH3_GPIO
+        int "D3 GPIO"
+        default 23
+        range -1 54
+    config HCC_LOGIC_CH4_GPIO
+        int "D4 GPIO"
+        default 26
+        range -1 54
+    config HCC_LOGIC_CH5_GPIO
+        int "D5 GPIO"
+        default 27
+        range -1 54
+    config HCC_LOGIC_CH6_GPIO
+        int "D6 GPIO"
+        default 47
+        range -1 54
+    config HCC_LOGIC_CH7_GPIO
+        int "D7 GPIO"
+        default 48
+        range -1 54
+
+endmenu
