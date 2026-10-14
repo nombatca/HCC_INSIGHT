@@ -4510,7 +4510,7 @@ void HCCHome::showPanic()
     _pi_file = nullptr;
 
     // --- Cột 2: PHẦN CỨNG NGHI NGỜ ---
-    lv_obj_t *c2 = makeCol(252, LV_SYMBOL_WARNING, "PHẦN CỨNG NGHI NGỜ", cyan);
+    lv_obj_t *c2 = makeCol(330, LV_SYMBOL_WARNING, "PHẦN CỨNG NGHI NGỜ", cyan);
     _pi_conclusion = addVal(c2, &lv_font_be_vietnam_20, white);  // phần cứng nghi ngờ (to)
     _pi_conf = lv_label_create(c2);
     lv_label_set_recolor(_pi_conf, true);
@@ -4527,7 +4527,7 @@ void HCCHome::showPanic()
     _pi_check = addVal(c3, f16, green);
 
     // --- Cột 4: TRÙNG CA ĐÃ SỬA ---
-    lv_obj_t *c4 = makeCol(230, LV_SYMBOL_OK, "TRÙNG CA ĐÃ SỬA", cyan);
+    lv_obj_t *c4 = makeCol(152, LV_SYMBOL_OK, "TRÙNG CA ĐÃ SỬA", cyan);
     _pi_kb = addVal(c4, f16, cyan);
 
     _pi_detail = c3;  // cuộn về đầu khi đổi file
