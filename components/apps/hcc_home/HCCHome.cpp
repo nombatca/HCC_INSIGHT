@@ -4955,8 +4955,7 @@ void HCCHome::openConfirmRepair()
         if (dark) lv_obj_set_style_text_color(l, lv_color_hex(0x0B141C), 0);
         lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
     };
-    button("LƯU (CHƯA XÁC NHẬN)", 0, 240, 0xF2C94C, onRepairSaveClicked, true);
-    button("XÁC NHẬN VERIFIED", 250, 220, 0x3DD66E, onRepairVerifyClicked, true);
+    button("XÁC NHẬN SỬA CHỮA", 0, 300, 0x3DD66E, onRepairVerifyClicked, true);
     button("ĐÓNG", -1, 120, 0x1F3242, onRepairCloseClicked, false);
 
     // Vùng cuộn chứa các trường.
@@ -5069,9 +5068,12 @@ bool HCCHome::submitRepairCase(bool verified)
     c.notes = txt(_repair_note);
 
     if (verified) {
-        // Chặn trước khi lưu (store cũng tự hạ, nhưng báo rõ cho kỹ thuật viên).
-        if (c.model.empty() || c.signature.empty()) { setStatus("Log thiếu model/signature - không thể VERIFIED"); return false; }
-        if (c.repair_action.empty()) { setStatus("Cần ghi 'ĐÃ SỬA / THAY THẾ GÌ' để VERIFIED"); return false; }
+        if (c.model.empty() || c.signature.empty()) {
+            setStatus("Log thiếu model/signature - không lưu được ca");
+            return false;
+        }
+        // Thiếu mô tả "đã sửa gì" -> vẫn lưu nhưng hạ xuống REPAIR_CONFIRMED (ca vẫn khớp lần sau).
+        if (c.repair_action.empty()) verified = false;
     }
     c.status = verified ? "VERIFIED" : "REPAIR_CONFIRMED";
 
@@ -5097,16 +5099,14 @@ bool HCCHome::submitRepairCase(bool verified)
     std::string err;
     if (!HCCPanicKBStore::saveCase(c, err)) {
         printf("[HCC KB] lưu case lỗi: %s\n", err.c_str());
-        setStatus("Lưu case thất bại (thẻ SD?)");
+        // Hiện đúng lý do (chưa cắm thẻ / ghi lỗi) thay vì câu chung chung.
+        setStatus(("Lưu thất bại: " + err).c_str());
         return false;
     }
     ensureKbLoaded(true);
-    if (c.date.empty()) {
-        setStatus(verified ? "Đã lưu VERIFIED case (chưa có giờ - không ghi ngày)"
-                           : "Đã lưu REPAIR_CONFIRMED case (chưa có giờ - không ghi ngày)");
-    } else {
-        setStatus(verified ? "Đã lưu VERIFIED case" : "Đã lưu REPAIR_CONFIRMED case");
-    }
+    std::string msg = std::string("Đã lưu ca: kb/v1/cases/") + c.id + ".json";
+    if (c.date.empty()) msg += " (chưa có giờ)";
+    setStatus(msg.c_str());
     return true;
 }
 
