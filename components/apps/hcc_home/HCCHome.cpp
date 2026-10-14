@@ -4878,19 +4878,6 @@ static lv_obj_t *repairField(lv_obj_t *parent, const char *label, const char *pr
 static const char *kRepairActions[] = {"replaced", "repaired", "reworked", "cleaned", "other"};
 static const char *kMeasureTypes[] = {"voltage", "diode", "resistance", "current", "other"};
 
-static lv_obj_t *repairDropdown(lv_obj_t *parent, const char *label, const char *options)
-{
-    lv_obj_t *l = lv_label_create(parent);
-    lv_label_set_text(l, label);
-    lv_obj_set_style_text_color(l, lv_color_hex(0x7F96A8), 0);
-    lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
-    lv_obj_t *dd = lv_dropdown_create(parent);
-    lv_obj_set_width(dd, lv_pct(100));
-    lv_dropdown_set_options(dd, options);
-    lv_obj_set_style_text_font(dd, &lv_font_be_vietnam_16, 0);
-    return dd;
-}
-
 void HCCHome::onConfirmRepairClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
@@ -5001,32 +4988,27 @@ void HCCHome::openConfirmRepair()
     lv_obj_set_style_text_color(_repair_sig, lv_color_hex(0x00D9FF), 0);
     lv_obj_set_style_text_font(_repair_sig, &lv_font_be_vietnam_16, 0);
 
-    _repair_model = repairField(form, "MODEL (iPhoneN,M)", f.product.c_str(), onRepairFieldFocused, this);
-    _rp_hw = repairField(form, "KHU VỰC PHẦN CỨNG (thực tế)", "", onRepairFieldFocused, this);
-    _rp_comp = repairField(form, "LINH KIỆN / CÁP ĐÃ THAY HOẶC SỬA", "", onRepairFieldFocused, this);
-    _rp_ref = repairField(form, "KÝ HIỆU TRÊN MAIN / MÃ LINH KIỆN (vd U3300)", "", onRepairFieldFocused, this);
-    _rp_comp_action = repairDropdown(form, "HÀNH ĐỘNG VỚI LINH KIỆN",
-                                     "replaced - thay mới\nrepaired - sửa\nreworked - làm lại / đóng lại\n"
-                                     "cleaned - vệ sinh\nother - khác");
-    _rp_busrail = repairField(form, "BUS / RAIL LIÊN QUAN (cách nhau dấu ;)", "", onRepairFieldFocused, this);
-    _rp_m_point = repairField(form, "ĐIỂM ĐO (net / chân)", "", onRepairFieldFocused, this);
-    _rp_m_type = repairDropdown(form, "LOẠI ĐO",
-                                "voltage - điện áp\ndiode - đo diode\nresistance - điện trở\ncurrent - dòng\n"
-                                "other - khác");
-    _rp_m_before = repairField(form, "GIÁ TRỊ TRƯỚC KHI SỬA", "", onRepairFieldFocused, this);
-    _rp_m_after = repairField(form, "GIÁ TRỊ SAU KHI SỬA", "", onRepairFieldFocused, this);
-    _rp_m_unit = repairField(form, "ĐƠN VỊ (V, mA, ohm...)", "", onRepairFieldFocused, this);
-    _repair_action = repairField(form, "CÁCH SỬA (repair action)", "", onRepairFieldFocused, this);
-    _rp_resolved = lv_checkbox_create(form);
-    lv_checkbox_set_text(_rp_resolved, "Đã hết panic sau khi sửa (bắt buộc để VERIFIED)");
-    lv_obj_set_style_text_font(_rp_resolved, &lv_font_be_vietnam_16, 0);
-    lv_obj_set_style_text_color(_rp_resolved, lv_color_hex(0xFFFFFF), 0);
-    _rp_days = repairField(form, "SỐ NGÀY THEO DÕI SAU SỬA", "", onRepairFieldFocused, this);
-    lv_textarea_set_accepted_chars(_rp_days, "0123456789");
-    _repair_note = repairField(form, "GHI CHÚ", "", onRepairFieldFocused, this);
+    // Rút gọn: chỉ 2 mục. Model + signature tự lấy từ log (không nhập tay) nên ca luôn khớp.
+    _repair_model = nullptr;
+    _rp_hw = nullptr;
+    _rp_comp = nullptr;
+    _rp_ref = nullptr;
+    _rp_comp_action = nullptr;
+    _rp_busrail = nullptr;
+    _rp_m_type = nullptr;
+    _rp_m_before = nullptr;
+    _rp_m_after = nullptr;
+    _rp_m_unit = nullptr;
+    _rp_resolved = nullptr;
+    _rp_days = nullptr;
+    _repair_note = nullptr;
 
-    // Gõ tiếng Việt cho các ô mô tả (MODEL / ký hiệu / số đo là ASCII).
-    for (lv_obj_t *ta : {_rp_hw, _rp_comp, _rp_busrail, _repair_action, _repair_note}) HCCViText::markVietnamese(ta);
+    _repair_action = repairField(form, "ĐÃ SỬA / THAY THẾ GÌ", "", onRepairFieldFocused, this);
+    _rp_m_point = repairField(form, "ĐO ĐẠC / KIỂM TRA (điểm đo, giá trị trước/sau)", "",
+                              onRepairFieldFocused, this);
+
+    // Gõ tiếng Việt cho cả 2 ô.
+    for (lv_obj_t *ta : {_repair_action, _rp_m_point}) HCCViText::markVietnamese(ta);
 
     // Bàn phím lớn + Telex (ẩn cho tới khi focus 1 ô).
     _repair_kb = HCCViText::createKeyboard(_repair_dialog, nullptr);
@@ -5043,11 +5025,13 @@ bool HCCHome::submitRepairCase(bool verified)
     };
 
     HCCKB::CaseRecord c = HCCKB::caseFromFacts(f);
-    const std::string model = txt(_repair_model);
-    if (model != f.product) {
-        // Model nhập tay (log không có / sai): dựng lại signature cho model đó.
-        c.model = model;
-        c.signature = model.empty() ? std::string() : "v1|" + model + f.signature_generic.substr(4);
+    if (_repair_model) {
+        // (Chỉ khi còn ô nhập model tay) log không có / sai -> dựng lại signature cho model đó.
+        const std::string model = txt(_repair_model);
+        if (model != f.product) {
+            c.model = model;
+            c.signature = model.empty() ? std::string() : "v1|" + model + f.signature_generic.substr(4);
+        }
     }
     c.hardware_area = txt(_rp_hw);
     if (!txt(_rp_comp).empty() || !txt(_rp_ref).empty()) {
@@ -5072,22 +5056,22 @@ bool HCCHome::submitRepairCase(bool verified)
     if (!txt(_rp_m_point).empty()) {
         HCCKB::Measurement m;
         m.point = txt(_rp_m_point);
-        m.type = kMeasureTypes[std::min<uint16_t>(lv_dropdown_get_selected(_rp_m_type), 4)];
+        m.type = _rp_m_type ? kMeasureTypes[std::min<uint16_t>(lv_dropdown_get_selected(_rp_m_type), 4)] : "other";
         m.before = txt(_rp_m_before);
         m.after = txt(_rp_m_after);
         m.unit = txt(_rp_m_unit);
         c.measurements.push_back(m);
     }
     c.repair_action = txt(_repair_action);
-    c.result.panic_resolved = lv_obj_has_state(_rp_resolved, LV_STATE_CHECKED);
+    // Bỏ checkbox: bấm "XÁC NHẬN VERIFIED" tức là đã hết panic sau khi sửa.
+    c.result.panic_resolved = _rp_resolved ? lv_obj_has_state(_rp_resolved, LV_STATE_CHECKED) : verified;
     c.result.observed_days = txt(_rp_days).empty() ? -1 : atoi(txt(_rp_days).c_str());
     c.notes = txt(_repair_note);
 
     if (verified) {
         // Chặn trước khi lưu (store cũng tự hạ, nhưng báo rõ cho kỹ thuật viên).
-        if (c.model.empty() || c.signature.empty()) { setStatus("VERIFIED cần MODEL + signature"); return false; }
-        if (c.repair_action.empty()) { setStatus("VERIFIED cần ghi CÁCH SỬA"); return false; }
-        if (!c.result.panic_resolved) { setStatus("VERIFIED cần tick 'Đã hết panic sau khi sửa'"); return false; }
+        if (c.model.empty() || c.signature.empty()) { setStatus("Log thiếu model/signature - không thể VERIFIED"); return false; }
+        if (c.repair_action.empty()) { setStatus("Cần ghi 'ĐÃ SỬA / THAY THẾ GÌ' để VERIFIED"); return false; }
     }
     c.status = verified ? "VERIFIED" : "REPAIR_CONFIRMED";
 
