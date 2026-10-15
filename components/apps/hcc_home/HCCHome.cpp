@@ -5016,7 +5016,8 @@ void HCCHome::openConfirmRepair()
 
 bool HCCHome::submitRepairCase(bool verified)
 {
-    if (_repair_model == nullptr) return false;
+    // Form rút gọn: ô bắt buộc còn lại là _repair_action (đã bỏ ô MODEL).
+    if (_repair_action == nullptr) return false;
     const PanicFacts &f = _repair_parsed.facts;
     auto txt = [](lv_obj_t *ta) { return std::string(ta ? lv_textarea_get_text(ta) : ""); };
     auto setStatus = [&](const char *m) {
