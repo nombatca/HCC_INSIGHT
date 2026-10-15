@@ -4651,8 +4651,9 @@ void HCCHome::showKbView()
     set(_pi_check, _kv_steps);
     set(_pi_kb, _kv_case);
     if (_pi_kb) {
-        // Xanh khi trùng ca đã xác nhận sửa; xám khi chưa có ca khớp.
-        lv_obj_set_style_text_color(_pi_kb, lv_color_hex(_kv_hw_confirmed ? 0x3DD66E : 0x00D9FF), 0);
+        // Vàng khi khớp ca sửa chữa; xám khi chưa có ca khớp.
+        const bool matched = !_kv_case.empty() && _kv_case.rfind("Chưa có", 0) != 0;
+        lv_obj_set_style_text_color(_pi_kb, lv_color_hex(matched ? 0xF2C94C : 0x8A97A3), 0);
     }
     set(_pi_conclusion, _kv_hw);
     if (_pi_conclusion) {

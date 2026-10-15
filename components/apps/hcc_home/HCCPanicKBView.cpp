@@ -377,10 +377,9 @@ BasicView renderBasic(const PanicFacts &f, const Analysis &a)
 
     // ---- VERIFIED / REPAIR CASE ----
     if (top) {
-        b.case_match = top->rec->status + " " + top->rec->id + "\n" + matchText(top->match_type);
-        if (top->match_type == "shared_assert_tag") b.case_match += "\n" + top->reason;
+        // Chỉ hiển thị: khớp ca sửa chữa + đã sửa bằng gì.
+        b.case_match = std::string("Khớp ca sửa chữa: ") + matchText(top->match_type);
         if (!top->rec->repair_action.empty()) b.case_match += "\nĐã sửa bằng: " + top->rec->repair_action;
-        if (a.cases.size() > 1) b.case_match += "\n(+" + std::to_string(a.cases.size() - 1) + " case khác - xem chi tiết)";
     } else {
         b.case_match = "Chưa có VERIFIED / REPAIR case khớp";
     }
