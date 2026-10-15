@@ -5003,6 +5003,7 @@ void HCCHome::openConfirmRepair()
     _repair_note = nullptr;
 
     _repair_action = repairField(form, "ĐÃ SỬA / THAY THẾ GÌ", "", onRepairFieldFocused, this);
+    lv_obj_set_style_text_color(_repair_action, lv_color_hex(0xF2C94C), 0);  // chữ màu vàng
     _rp_m_point = repairField(form, "ĐO ĐẠC / KIỂM TRA (điểm đo, giá trị trước/sau)", "",
                               onRepairFieldFocused, this);
 
