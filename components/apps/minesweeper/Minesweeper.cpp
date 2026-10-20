@@ -12,7 +12,7 @@ LV_IMG_DECLARE(img_app_minesweeper);
 
 namespace {
 constexpr int CELL = 50;              // kích thước 1 ô (px)
-constexpr int BOARD_TOP = 96;         // y bắt đầu lưới (chừa thanh trạng thái + header)
+constexpr int BOARD_TOP = 56;         // y bắt đầu lưới (đẩy lên cao; info nằm cột trái)
 // Màu số 1..8 kiểu Minesweeper cổ điển.
 const uint32_t kNumColor[9] = {
     0x000000, 0x4A90E2, 0x3DD66E, 0xFF6B6B, 0x9B6DFF,
@@ -58,30 +58,30 @@ void Minesweeper::buildUi(lv_obj_t *parent)
     lv_obj_set_style_bg_color(parent, lv_color_hex(0x0B1420), 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
-    // ---- Thanh tiêu đề ----
+    // ---- Cột thông tin bên trái ----
     lv_obj_t *title = lv_label_create(parent);
     lv_label_set_text(title, LV_SYMBOL_WARNING " DÒ MÌN");
     lv_obj_set_style_text_color(title, lv_color_hex(0x00D9FF), 0);
     lv_obj_set_style_text_font(title, &lv_font_be_vietnam_20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 22);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 18);
 
     _mines_label = lv_label_create(parent);
     lv_obj_set_style_text_color(_mines_label, lv_color_hex(0xFF8A8A), 0);
     lv_obj_set_style_text_font(_mines_label, &lv_font_be_vietnam_20, 0);
-    lv_obj_align(_mines_label, LV_ALIGN_TOP_LEFT, 300, 22);
+    lv_obj_align(_mines_label, LV_ALIGN_TOP_LEFT, 24, 58);
 
     _time_label = lv_label_create(parent);
     lv_obj_set_style_text_color(_time_label, lv_color_hex(0xB8C5CF), 0);
     lv_obj_set_style_text_font(_time_label, &lv_font_be_vietnam_20, 0);
-    lv_obj_align(_time_label, LV_ALIGN_TOP_LEFT, 470, 22);
+    lv_obj_align(_time_label, LV_ALIGN_TOP_LEFT, 24, 92);
 
     _status_label = lv_label_create(parent);
     lv_label_set_long_mode(_status_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_status_label, 1000);
+    lv_obj_set_width(_status_label, 230);
     lv_obj_set_style_text_color(_status_label, lv_color_hex(0xB8C5CF), 0);
     lv_obj_set_style_text_font(_status_label, &lv_font_be_vietnam_16, 0);
-    lv_obj_align(_status_label, LV_ALIGN_TOP_LEFT, 24, 62);
-    lv_label_set_text(_status_label, "Chạm: mở ô   -   Giữ: cắm cờ");
+    lv_obj_align(_status_label, LV_ALIGN_TOP_LEFT, 24, 132);
+    lv_label_set_text(_status_label, "Chạm: mở ô\nGiữ: cắm cờ");
 
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_set_size(btn, 150, 56);
