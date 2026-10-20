@@ -98,13 +98,17 @@ void Minesweeper::buildUi(lv_obj_t *parent)
     const int x0 = (1024 - COLS * CELL) / 2;
     for (int r = 0; r < ROWS; ++r) {
         for (int c = 0; c < COLS; ++c) {
-            lv_obj_t *cell = lv_btn_create(parent);
+            // Dùng lv_obj thường (không phải lv_btn) để theme không tô xanh đè màu.
+            lv_obj_t *cell = lv_obj_create(parent);
             lv_obj_set_size(cell, CELL - 4, CELL - 4);
             lv_obj_set_pos(cell, x0 + c * CELL, BOARD_TOP + r * CELL);
             lv_obj_set_style_radius(cell, 6, 0);
             lv_obj_set_style_bg_color(cell, lv_color_hex(0x24405A), 0);
+            lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
             lv_obj_set_style_border_width(cell, 0, 0);
             lv_obj_set_style_pad_all(cell, 0, 0);
+            lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_user_data(cell, (void *)(intptr_t)encode(r, c));
             lv_obj_add_event_cb(cell, cellClickedCb, LV_EVENT_SHORT_CLICKED, this);
             lv_obj_add_event_cb(cell, cellLongCb, LV_EVENT_LONG_PRESSED, this);
