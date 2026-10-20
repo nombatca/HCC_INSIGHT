@@ -11,8 +11,8 @@
 LV_IMG_DECLARE(img_app_minesweeper);
 
 namespace {
-constexpr int CELL = 52;              // kích thước 1 ô (px)
-constexpr int BOARD_TOP = 104;        // y bắt đầu lưới
+constexpr int CELL = 50;              // kích thước 1 ô (px)
+constexpr int BOARD_TOP = 96;         // y bắt đầu lưới (chừa thanh trạng thái + header)
 // Màu số 1..8 kiểu Minesweeper cổ điển.
 const uint32_t kNumColor[9] = {
     0x000000, 0x4A90E2, 0x3DD66E, 0xFF6B6B, 0x9B6DFF,
