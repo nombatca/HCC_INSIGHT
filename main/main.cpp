@@ -178,6 +178,14 @@ extern "C" void app_main(void)
         return;
     }
 
+    Minesweeper *minesweeper = new Minesweeper();
+    assert(minesweeper != nullptr && "Failed to create minesweeper");
+    if (phone->installApp(minesweeper) < 0) {
+        ESP_LOGE(TAG, "Failed to install minesweeper");
+        bsp_display_unlock();
+        return;
+    }
+
     HCCHome *hcc_home = new HCCHome();
     assert(hcc_home != nullptr && "Failed to create hcc_home");
     if (phone->installApp(hcc_home) < 0) {
