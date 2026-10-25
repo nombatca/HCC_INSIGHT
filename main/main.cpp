@@ -186,6 +186,14 @@ extern "C" void app_main(void)
         return;
     }
 
+    HCCWifiRadar *wifi_radar = new HCCWifiRadar();
+    assert(wifi_radar != nullptr && "Failed to create wifi_radar");
+    if (phone->installApp(wifi_radar) < 0) {
+        ESP_LOGE(TAG, "Failed to install wifi_radar");
+        bsp_display_unlock();
+        return;
+    }
+
     HCCHome *hcc_home = new HCCHome();
     assert(hcc_home != nullptr && "Failed to create hcc_home");
     if (phone->installApp(hcc_home) < 0) {
