@@ -48,6 +48,12 @@ constexpr char kInfoCommand[] =
     "echo \"W=$( (cat /sys/class/net/wlan0/address 2>/dev/null; ip link show wlan0 2>/dev/null) | "
     "grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -n1)\";"
     "echo \"T=$(settings get secure bluetooth_address 2>/dev/null)\";"
+    // IMEI 2 SIM: thu vai ma lenh iphonesubinfo, lay chuoi ASCII (field giua 2 dau '),
+    // chi giu 14-16 chu so. Android 10+ thuong chan -> rong.
+    "echo \"G=$(for c in 1 2 3 4; do v=$(service call iphonesubinfo $c i32 0 2>/dev/null | "
+    "cut -d\\' -f2 | tr -cd 0-9); if [ ${#v} -ge 14 ] && [ ${#v} -le 16 ]; then echo $v; break; fi; done)\";"
+    "echo \"H=$(for c in 1 2 3 4; do v=$(service call iphonesubinfo $c i32 1 2>/dev/null | "
+    "cut -d\\' -f2 | tr -cd 0-9); if [ ${#v} -ge 14 ] && [ ${#v} -le 16 ]; then echo $v; break; fi; done)\";"
     "dumpsys battery";
 
 // ---- Host key (RSA-2048, persisted in NVS, shared by every connection) ----
@@ -774,6 +780,8 @@ void HCCAdbClient::parseShellOutput()
             case 'Y': field = _info.battery_cycles; size = sizeof(_info.battery_cycles); break;
             case 'W': field = _info.wifi_mac; size = sizeof(_info.wifi_mac); break;
             case 'T': field = _info.bt_mac; size = sizeof(_info.bt_mac); break;
+            case 'G': field = _info.imei1; size = sizeof(_info.imei1); break;
+            case 'H': field = _info.imei2; size = sizeof(_info.imei2); break;
             default: break;
             }
             // Keep banner values when getprop printed nothing.
