@@ -2903,9 +2903,9 @@ void HCCHome::showUSB()
     lv_obj_set_style_text_color(_usb_status_label, lv_color_hex(0x00D9FF), 0);
     lv_obj_set_style_text_font(_usb_status_label, &lv_font_be_vietnam_18, 0);
 
-    /* Device information panel */
+    /* Device information panel (nới rộng để chứa đủ thông tin Android/iPhone) */
     lv_obj_t *device_panel = lv_obj_create(_screen);
-    lv_obj_set_size(device_panel, 460, 250);
+    lv_obj_set_size(device_panel, 620, 258);
     lv_obj_align(device_panel, LV_ALIGN_TOP_LEFT, 28, 95);
     lv_obj_set_style_bg_color(device_panel, lv_color_hex(0x182630), 0);
     lv_obj_set_style_border_width(device_panel, 1, 0);
@@ -2922,15 +2922,15 @@ void HCCHome::showUSB()
     _usb_info_label = lv_label_create(device_panel);
     lv_label_set_text(_usb_info_label, "No USB device detected");
     lv_obj_align(_usb_info_label, LV_ALIGN_TOP_LEFT, 18, 42);
-    lv_obj_set_width(_usb_info_label, 420);
+    lv_obj_set_width(_usb_info_label, 584);
     lv_obj_set_style_text_color(_usb_info_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(_usb_info_label, &lv_font_be_vietnam_16, 0);
     lv_obj_set_style_text_line_space(_usb_info_label, -2, 0);
 
-    /* Mode panel */
+    /* Mode panel (thu gọn, dời sang phải để nhường chỗ panel DEVICE) */
     lv_obj_t *mode_panel = lv_obj_create(_screen);
-    lv_obj_set_size(mode_panel, 480, 250);
-    lv_obj_align(mode_panel, LV_ALIGN_TOP_LEFT, 514, 95);
+    lv_obj_set_size(mode_panel, 328, 258);
+    lv_obj_align(mode_panel, LV_ALIGN_TOP_LEFT, 668, 95);
     lv_obj_set_style_bg_color(mode_panel, lv_color_hex(0x182630), 0);
     lv_obj_set_style_border_width(mode_panel, 1, 0);
     lv_obj_set_style_border_color(mode_panel, lv_color_hex(0x304553), 0);
