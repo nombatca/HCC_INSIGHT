@@ -45,8 +45,9 @@ constexpr char kInfoCommand[] =
     "echo \"C=$(getprop ro.soc.model)\";"
     "echo \"P=$(getprop ro.board.platform)\";"
     "echo \"Y=$(cat /sys/class/power_supply/battery/cycle_count 2>/dev/null)\";"
-    "echo \"W=$( (cat /sys/class/net/wlan0/address 2>/dev/null; ip link show wlan0 2>/dev/null) | "
-    "grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -n1)\";"
+    "echo \"W=$( (cmd wifi get-factory-mac 2>/dev/null; cat /sys/class/net/wlan0/address 2>/dev/null; "
+    "ip link show wlan0 2>/dev/null) | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | "
+    "grep -viE '^(00:00:00:00:00:00|02:00:00:00:00:00)$' | head -n1)\";"
     "echo \"T=$(settings get secure bluetooth_address 2>/dev/null)\";"
     // IMEI 2 SIM: thu vai ma lenh iphonesubinfo, lay chuoi ASCII (field giua 2 dau '),
     // chi giu 14-16 chu so. Android 10+ thuong chan -> rong.
