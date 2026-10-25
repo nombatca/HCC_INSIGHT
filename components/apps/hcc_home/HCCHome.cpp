@@ -4406,16 +4406,23 @@ void HCCHome::showPanic()
     HCCPanicServer::start();
     HCCPanicStorage::ensureMounted();
 
+    // Nút thép xanh có chuyển sắc nhẹ + viền sáng (giống bản mẫu). Tham số bg là màu đỉnh.
     auto styleBtn = [](lv_obj_t *b, const char *txt, lv_event_cb_t cb, void *u,
                        lv_color_t bg, const lv_font_t *f) {
         lv_obj_set_style_bg_color(b, bg, 0);
-        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_set_style_bg_grad_color(b, lv_color_hex(0x213A5B), 0);
+        lv_obj_set_style_bg_grad_dir(b, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(0x4A6B90), 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_radius(b, 10, 0);
+        lv_obj_set_style_text_color(b, lv_color_hex(0xEAF2FA), 0);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, u);
         lv_obj_t *l = lv_label_create(b);
         lv_label_set_text(l, txt);
         lv_obj_center(l);
         lv_obj_set_style_text_font(l, f, 0);
     };
+    const lv_color_t kBtnTop = lv_color_hex(0x32547A);  // màu đỉnh thống nhất cho mọi nút
 
     /* ===== Header: HCC INSIGHT | PANIC ANALYZER ===== */
     {
@@ -4452,12 +4459,12 @@ void HCCHome::showPanic()
     _panic_analyze_button = lv_btn_create(_screen);
     lv_obj_set_size(_panic_analyze_button, 168, 44);
     lv_obj_align(_panic_analyze_button, LV_ALIGN_TOP_LEFT, 624, 44);
-    styleBtn(_panic_analyze_button, LV_SYMBOL_EYE_OPEN "  ANALYZE", onPanicAnalyzeClicked, this, lv_color_hex(0x1E6FD0), &lv_font_be_vietnam_18);
+    styleBtn(_panic_analyze_button, LV_SYMBOL_EYE_OPEN "  ANALYZE", onPanicAnalyzeClicked, this, kBtnTop, &lv_font_be_vietnam_18);
 
     lv_obj_t *view_btn = lv_btn_create(_screen);
     lv_obj_set_size(view_btn, 188, 44);
     lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 802, 44);
-    styleBtn(view_btn, LV_SYMBOL_LIST "  XEM PANIC", onPanicViewClicked, this, lv_color_hex(0x1B3048), &lv_font_be_vietnam_18);
+    styleBtn(view_btn, LV_SYMBOL_LIST "  XEM PANIC", onPanicViewClicked, this, kBtnTop, &lv_font_be_vietnam_18);
 
     /* Địa chỉ gửi panic + trạng thái (dòng mảnh) */
     _panic_url_label = lv_label_create(_screen);
@@ -4669,7 +4676,7 @@ void HCCHome::showPanic()
 
     /* ===== Thanh nút dưới cùng (đồng màu theo layout) ===== */
     const lv_coord_t by = 478;
-    const lv_color_t btnCol = lv_color_hex(0x1B3A5C);
+    const lv_color_t btnCol = kBtnTop;
     const lv_font_t *bf = &lv_font_be_vietnam_16;
 
     lv_obj_t *back_btn = lv_btn_create(_screen);
