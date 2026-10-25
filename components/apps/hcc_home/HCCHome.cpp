@@ -4403,6 +4403,7 @@ void HCCHome::showPanic()
 
     lv_obj_clean(_screen);
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x0B1420), 0);
+    lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);  // không cho màn cuộn (tránh thanh cuộn đè nút)
     HCCPanicServer::start();
     HCCPanicStorage::ensureMounted();
 
@@ -4491,9 +4492,10 @@ void HCCHome::showPanic()
     const lv_font_t *f16 = &lv_font_be_vietnam_16;
     const lv_font_t *f18 = &lv_font_be_vietnam_18;
     const lv_font_t *f20 = &lv_font_be_vietnam_20;
+    const lv_font_t *f22 = &lv_font_be_vietnam_22;
     const uint32_t CARD_BG = 0x122537, CARD_BD = 0x25405A, BOX_BG = 0x0E2033, ACC = 0x2E9BE6;
     const uint32_t WHITE = 0xFFFFFF, MUTED = 0x8DA2B5, YEL = 0xF5C83D;
-    const lv_coord_t cy = 116, colH = 380;
+    const lv_coord_t cy = 116, colH = 348;
 
     auto mkCard = [&](int x, int y, int w, int h, const char *icon, const char *title) -> lv_obj_t * {
         lv_obj_t *card = lv_obj_create(_screen);
@@ -4535,17 +4537,17 @@ void HCCHome::showPanic()
 
     // --- Cột 1: THÔNG TIN MÁY ---
     lv_obj_t *c1 = mkCard(16, cy, 312, colH, LV_SYMBOL_HOME, "THÔNG TIN MÁY");
-    int ry = 48;
-    _pi_model = rowVal(c1, ry, "Model");     ry += 34;
-    _pi_ident = rowVal(c1, ry, "Mã máy");    ry += 34;
-    _pi_ios   = rowVal(c1, ry, "iOS");       ry += 34;
-    _pi_soc   = rowVal(c1, ry, "SoC");       ry += 34;
-    _pi_board = rowVal(c1, ry, "Board");     ry += 34;
-    _pi_tag   = rowVal(c1, ry, "Tag");       ry += 34;
-    _pi_time  = rowVal(c1, ry, "Thời gian"); ry += 42;
+    int ry = 44;
+    _pi_model = rowVal(c1, ry, "Model");     ry += 31;
+    _pi_ident = rowVal(c1, ry, "Mã máy");    ry += 31;
+    _pi_ios   = rowVal(c1, ry, "iOS");       ry += 31;
+    _pi_soc   = rowVal(c1, ry, "SoC");       ry += 31;
+    _pi_board = rowVal(c1, ry, "Board");     ry += 31;
+    _pi_tag   = rowVal(c1, ry, "Tag");       ry += 31;
+    _pi_time  = rowVal(c1, ry, "Thời gian"); ry += 37;
     {
         lv_obj_t *stb = lv_obj_create(c1);
-        lv_obj_set_size(stb, 282, 72); lv_obj_set_pos(stb, 14, ry);
+        lv_obj_set_size(stb, 282, 66); lv_obj_set_pos(stb, 14, ry);
         lv_obj_set_style_bg_color(stb, lv_color_hex(0x3A1518), 0);
         lv_obj_set_style_border_color(stb, lv_color_hex(0x7A2A2A), 0);
         lv_obj_set_style_border_width(stb, 1, 0);
@@ -4553,14 +4555,14 @@ void HCCHome::showPanic()
         lv_obj_clear_flag(stb, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *sti = lv_label_create(stb); lv_label_set_text(sti, LV_SYMBOL_WARNING);
         lv_obj_set_style_text_font(sti, &lv_font_be_vietnam_28, 0);
-        lv_obj_set_style_text_color(sti, lv_color_hex(0xF24444), 0); lv_obj_set_pos(sti, 16, 20);
+        lv_obj_set_style_text_color(sti, lv_color_hex(0xF24444), 0); lv_obj_set_pos(sti, 16, 18);
         lv_obj_t *stt = lv_label_create(stb); lv_label_set_text(stt, "TÌNH TRẠNG");
         lv_obj_set_style_text_font(stt, f14, 0);
-        lv_obj_set_style_text_color(stt, lv_color_hex(0xFF8A8A), 0); lv_obj_set_pos(stt, 60, 12);
+        lv_obj_set_style_text_color(stt, lv_color_hex(0xFF8A8A), 0); lv_obj_set_pos(stt, 60, 10);
         _pi_sev = lv_label_create(stb); lv_label_set_text(_pi_sev, "-");
         lv_label_set_long_mode(_pi_sev, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_sev, 208);
         lv_obj_set_style_text_font(_pi_sev, f20, 0);
-        lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xFF4444), 0); lv_obj_set_pos(_pi_sev, 60, 37);
+        lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xFF4444), 0); lv_obj_set_pos(_pi_sev, 60, 32);
     }
     _pi_sevsub = nullptr; _pi_file = nullptr;
 
@@ -4568,99 +4570,99 @@ void HCCHome::showPanic()
     lv_obj_t *c2 = mkCard(340, cy, 392, colH, LV_SYMBOL_LIST, "KẾT LUẬN CHẨN ĐOÁN");
     {
         lv_obj_t *wn = lv_label_create(c2); lv_label_set_text(wn, LV_SYMBOL_WARNING);
-        lv_obj_set_style_text_font(wn, &lv_font_be_vietnam_32, 0);
-        lv_obj_set_style_text_color(wn, lv_color_hex(0xF23030), 0); lv_obj_set_pos(wn, 28, 52);
+        lv_obj_set_style_text_font(wn, &lv_font_be_vietnam_28, 0);
+        lv_obj_set_style_text_color(wn, lv_color_hex(0xF23030), 0); lv_obj_set_pos(wn, 26, 48);
     }
     _pi_errtitle = lv_label_create(c2); lv_label_set_text(_pi_errtitle, "-");
-    lv_label_set_long_mode(_pi_errtitle, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_errtitle, 300);
-    lv_obj_set_style_text_font(_pi_errtitle, &lv_font_be_vietnam_28, 0);
-    lv_obj_set_style_text_color(_pi_errtitle, lv_color_hex(0xF23030), 0); lv_obj_set_pos(_pi_errtitle, 78, 55);
+    lv_label_set_long_mode(_pi_errtitle, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_errtitle, 306);
+    lv_obj_set_style_text_font(_pi_errtitle, f22, 0);
+    lv_obj_set_style_text_color(_pi_errtitle, lv_color_hex(0xF23030), 0); lv_obj_set_pos(_pi_errtitle, 68, 49);
     _pi_errsub = lv_label_create(c2); lv_label_set_text(_pi_errsub, "-");
     lv_label_set_long_mode(_pi_errsub, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_errsub, 356);
-    lv_obj_set_style_text_font(_pi_errsub, f18, 0);
-    lv_obj_set_style_text_color(_pi_errsub, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_errsub, 18, 102);
+    lv_obj_set_style_text_font(_pi_errsub, f16, 0);
+    lv_obj_set_style_text_color(_pi_errsub, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_errsub, 18, 86);
     {
-        lv_obj_t *sb = lv_obj_create(c2); lv_obj_set_size(sb, 356, 92); lv_obj_set_pos(sb, 18, 140);
+        lv_obj_t *sb = lv_obj_create(c2); lv_obj_set_size(sb, 356, 80); lv_obj_set_pos(sb, 18, 116);
         lv_obj_set_style_bg_color(sb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(sb, lv_color_hex(CARD_BD), 0);
         lv_obj_set_style_border_width(sb, 1, 0); lv_obj_set_style_radius(sb, 10, 0); lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
         for (int i = 0; i < 2; ++i) {
             _pi_sensor_lbl[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_lbl[i], "-");
             lv_obj_set_style_text_font(_pi_sensor_lbl[i], f16, 0);
             lv_obj_set_style_text_color(_pi_sensor_lbl[i], lv_color_hex(0xE8C14A), 0);
-            lv_obj_set_pos(_pi_sensor_lbl[i], i ? 206 : 26, 14);
+            lv_obj_set_pos(_pi_sensor_lbl[i], i ? 206 : 26, 12);
             _pi_sensor_val[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_val[i], "-");
             lv_label_set_long_mode(_pi_sensor_val[i], LV_LABEL_LONG_DOT);
             lv_obj_set_width(_pi_sensor_val[i], 152);
-            lv_obj_set_style_text_font(_pi_sensor_val[i], &lv_font_be_vietnam_28, 0);
+            lv_obj_set_style_text_font(_pi_sensor_val[i], f22, 0);
             lv_obj_set_style_text_color(_pi_sensor_val[i], lv_color_hex(YEL), 0);
-            lv_obj_set_pos(_pi_sensor_val[i], i ? 200 : 22, 46);
+            lv_obj_set_pos(_pi_sensor_val[i], i ? 200 : 22, 40);
         }
-        lv_obj_t *sdiv = lv_obj_create(sb); lv_obj_set_size(sdiv, 1, 64); lv_obj_set_pos(sdiv, 178, 14);
+        lv_obj_t *sdiv = lv_obj_create(sb); lv_obj_set_size(sdiv, 1, 56); lv_obj_set_pos(sdiv, 178, 12);
         lv_obj_set_style_bg_color(sdiv, lv_color_hex(0x2E4A63), 0); lv_obj_set_style_border_width(sdiv, 0, 0);
     }
     {
-        lv_obj_t *mt = lv_obj_create(c2); lv_obj_set_size(mt, 210, 58); lv_obj_set_pos(mt, 18, 242);
+        lv_obj_t *mt = lv_obj_create(c2); lv_obj_set_size(mt, 210, 54); lv_obj_set_pos(mt, 18, 206);
         lv_obj_set_style_bg_color(mt, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(mt, lv_color_hex(CARD_BD), 0);
         lv_obj_set_style_border_width(mt, 1, 0); lv_obj_set_style_radius(mt, 8, 0); lv_obj_clear_flag(mt, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *mtl = lv_label_create(mt); lv_label_set_text(mtl, "Model target");
-        lv_obj_set_style_text_font(mtl, f14, 0); lv_obj_set_style_text_color(mtl, lv_color_hex(MUTED), 0); lv_obj_set_pos(mtl, 12, 8);
+        lv_obj_set_style_text_font(mtl, f14, 0); lv_obj_set_style_text_color(mtl, lv_color_hex(MUTED), 0); lv_obj_set_pos(mtl, 12, 7);
         _pi_target = lv_label_create(mt); lv_label_set_text(_pi_target, "-");
         lv_label_set_long_mode(_pi_target, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_target, 186);
-        lv_obj_set_style_text_font(_pi_target, f18, 0); lv_obj_set_style_text_color(_pi_target, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_target, 12, 28);
-        lv_obj_t *cfb = lv_obj_create(c2); lv_obj_set_size(cfb, 146, 58); lv_obj_set_pos(cfb, 234, 242);
+        lv_obj_set_style_text_font(_pi_target, f16, 0); lv_obj_set_style_text_color(_pi_target, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_target, 12, 27);
+        lv_obj_t *cfb = lv_obj_create(c2); lv_obj_set_size(cfb, 146, 54); lv_obj_set_pos(cfb, 234, 206);
         lv_obj_set_style_bg_color(cfb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(cfb, lv_color_hex(CARD_BD), 0);
         lv_obj_set_style_border_width(cfb, 1, 0); lv_obj_set_style_radius(cfb, 8, 0); lv_obj_clear_flag(cfb, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *cfl = lv_label_create(cfb); lv_label_set_text(cfl, "Độ tin cậy");
-        lv_obj_set_style_text_font(cfl, f14, 0); lv_obj_set_style_text_color(cfl, lv_color_hex(MUTED), 0); lv_obj_set_pos(cfl, 12, 8);
+        lv_obj_set_style_text_font(cfl, f14, 0); lv_obj_set_style_text_color(cfl, lv_color_hex(MUTED), 0); lv_obj_set_pos(cfl, 12, 7);
         _pi_conf = lv_label_create(cfb); lv_label_set_recolor(_pi_conf, true); lv_label_set_text(_pi_conf, "-");
-        lv_obj_set_style_text_font(_pi_conf, f18, 0); lv_obj_set_style_text_color(_pi_conf, lv_color_hex(YEL), 0); lv_obj_set_pos(_pi_conf, 12, 30);
+        lv_obj_set_style_text_font(_pi_conf, f16, 0); lv_obj_set_style_text_color(_pi_conf, lv_color_hex(YEL), 0); lv_obj_set_pos(_pi_conf, 12, 27);
     }
     {
-        lv_obj_t *ib = lv_obj_create(c2); lv_obj_set_size(ib, 356, 62); lv_obj_set_pos(ib, 18, 308);
+        lv_obj_t *ib = lv_obj_create(c2); lv_obj_set_size(ib, 356, 62); lv_obj_set_pos(ib, 18, 268);
         lv_obj_set_style_bg_color(ib, lv_color_hex(0x10263A), 0); lv_obj_set_style_border_color(ib, lv_color_hex(0x2E4A63), 0);
         lv_obj_set_style_border_width(ib, 1, 0); lv_obj_set_style_radius(ib, 10, 0); lv_obj_clear_flag(ib, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *ii = lv_label_create(ib); lv_label_set_text(ii, LV_SYMBOL_WARNING);
-        lv_obj_set_style_text_font(ii, f18, 0); lv_obj_set_style_text_color(ii, lv_color_hex(0xE8C14A), 0); lv_obj_set_pos(ii, 12, 12);
+        lv_obj_set_style_text_font(ii, f18, 0); lv_obj_set_style_text_color(ii, lv_color_hex(0xE8C14A), 0); lv_obj_set_pos(ii, 12, 11);
         _pi_info = lv_label_create(ib); lv_label_set_text(_pi_info, "-");
         lv_label_set_long_mode(_pi_info, LV_LABEL_LONG_WRAP); lv_obj_set_width(_pi_info, 304);
-        lv_obj_set_style_text_font(_pi_info, f14, 0); lv_obj_set_style_text_color(_pi_info, lv_color_hex(0xC6D3DF), 0); lv_obj_set_pos(_pi_info, 42, 10);
+        lv_obj_set_style_text_font(_pi_info, f14, 0); lv_obj_set_style_text_color(_pi_info, lv_color_hex(0xC6D3DF), 0); lv_obj_set_pos(_pi_info, 42, 9);
     }
 
     // --- Cột 3a: KHUYẾN NGHỊ ---
-    lv_obj_t *c3 = mkCard(744, cy, 264, 240, LV_SYMBOL_SETTINGS, "KHUYẾN NGHỊ");
+    lv_obj_t *c3 = mkCard(744, cy, 264, 228, LV_SYMBOL_SETTINGS, "KHUYẾN NGHỊ");
     {
-        int sy = 48;
+        int sy = 44;
         for (int i = 0; i < 3; ++i) {
-            lv_obj_t *rb = lv_obj_create(c3); lv_obj_set_size(rb, 236, 54); lv_obj_set_pos(rb, 14, sy);
+            lv_obj_t *rb = lv_obj_create(c3); lv_obj_set_size(rb, 236, 50); lv_obj_set_pos(rb, 14, sy);
             lv_obj_set_style_bg_color(rb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(rb, lv_color_hex(CARD_BD), 0);
             lv_obj_set_style_border_width(rb, 1, 0); lv_obj_set_style_radius(rb, 8, 0); lv_obj_clear_flag(rb, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t *nb = lv_obj_create(rb); lv_obj_set_size(nb, 26, 26); lv_obj_set_pos(nb, 8, 14);
+            lv_obj_t *nb = lv_obj_create(rb); lv_obj_set_size(nb, 26, 26); lv_obj_set_pos(nb, 8, 12);
             lv_obj_set_style_bg_color(nb, lv_color_hex(0x1E6FD0), 0); lv_obj_set_style_border_width(nb, 0, 0);
             lv_obj_set_style_radius(nb, 7, 0); lv_obj_clear_flag(nb, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_t *nn = lv_label_create(nb); char nnum[2] = {(char)('1' + i), 0}; lv_label_set_text(nn, nnum);
             lv_obj_set_style_text_font(nn, f16, 0); lv_obj_set_style_text_color(nn, lv_color_hex(WHITE), 0); lv_obj_center(nn);
             _pi_steps[i] = lv_label_create(rb); lv_label_set_text(_pi_steps[i], "-");
             lv_label_set_long_mode(_pi_steps[i], LV_LABEL_LONG_DOT);
-            lv_obj_set_size(_pi_steps[i], 184, 40);  // cao 2 dòng, DOT cắt gọn khi dài
+            lv_obj_set_size(_pi_steps[i], 184, 38);  // tối đa 2 dòng, DOT cắt gọn khi dài
             lv_obj_set_style_text_font(_pi_steps[i], f14, 0); lv_obj_set_style_text_color(_pi_steps[i], lv_color_hex(0xD6E0EA), 0);
-            lv_obj_set_pos(_pi_steps[i], 44, 8);
-            sy += 60;
+            lv_obj_set_pos(_pi_steps[i], 44, 6);
+            sy += 56;
         }
     }
     _pi_steps[3] = nullptr;
     _pi_check = nullptr;  // khuyến nghị dùng _pi_steps[]
 
     // --- Cột 3b: CA SỬA TƯƠNG TỰ ---
-    lv_obj_t *c4 = mkCard(744, cy + 248, 264, colH - 248, LV_SYMBOL_COPY, "CA SỬA");
+    lv_obj_t *c4 = mkCard(744, cy + 236, 264, colH - 236, LV_SYMBOL_COPY, "CA SỬA");
     {
         lv_obj_t *dbi = lv_label_create(c4); lv_label_set_text(dbi, LV_SYMBOL_DRIVE);
         lv_obj_set_style_text_font(dbi, &lv_font_be_vietnam_28, 0);
-        lv_obj_set_style_text_color(dbi, lv_color_hex(0x3A5368), 0); lv_obj_set_pos(dbi, 18, 56);
+        lv_obj_set_style_text_color(dbi, lv_color_hex(0x3A5368), 0); lv_obj_set_pos(dbi, 18, 50);
     }
     _pi_kb = lv_label_create(c4); lv_label_set_text(_pi_kb, "-");
     lv_label_set_long_mode(_pi_kb, LV_LABEL_LONG_WRAP); lv_obj_set_width(_pi_kb, 180);
     lv_obj_set_style_text_font(_pi_kb, f14, 0); lv_obj_set_style_text_color(_pi_kb, lv_color_hex(0xC6D3DF), 0);
-    lv_obj_set_pos(_pi_kb, 60, 54);
+    lv_obj_set_pos(_pi_kb, 60, 48);
 
     _pi_conclusion = nullptr; _pi_keystr = nullptr; _pi_cause = nullptr;
     _pi_detail = c3;
@@ -4680,7 +4682,7 @@ void HCCHome::showPanic()
     lv_obj_add_event_cb(_pi_detail, onPanicListDeleted, LV_EVENT_DELETE, this);
 
     /* ===== Thanh nút dưới cùng (đồng màu theo layout) ===== */
-    const lv_coord_t by = 502;
+    const lv_coord_t by = 470;
     const lv_color_t btnCol = kBtnTop;
     const lv_font_t *bf = &lv_font_be_vietnam_16;
 
