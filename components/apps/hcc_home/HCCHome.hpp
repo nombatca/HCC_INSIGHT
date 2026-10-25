@@ -210,6 +210,7 @@ private:
 
     lv_obj_t *_usb_status_label;
     lv_obj_t *_usb_info_label;
+    lv_obj_t *_usb_info_label2;   // cột phải (panel DEVICE 2 cột)
     lv_obj_t *_usb_mode_label;
 
     usb_host_client_handle_t _usb_client;

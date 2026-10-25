@@ -628,6 +628,7 @@ HCCHome::HCCHome()
       _scan_button(nullptr),
       _usb_status_label(nullptr),
       _usb_info_label(nullptr),
+      _usb_info_label2(nullptr),
       _usb_mode_label(nullptr),
       _usb_client(nullptr),
       _usb_device(nullptr),
@@ -753,6 +754,7 @@ void HCCHome::detachScreenObjects()
 {
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
+    _usb_info_label2 = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
@@ -1827,7 +1829,25 @@ void HCCHome::applyUSBResult(void *arg)
     }
 
     if (app->_usb_info_label != nullptr) {
-        lv_label_set_text(app->_usb_info_label, app->_usb_info);
+        if (app->_usb_info_label2 != nullptr) {
+            // Chia các dòng _usb_info thành 2 cột (nửa đầu trái, nửa sau phải).
+            int lines = 1;
+            for (const char *p = app->_usb_info; *p; ++p) if (*p == '\n') ++lines;
+            int half = (lines + 1) / 2;
+            const char *split = app->_usb_info;
+            int seen = 0;
+            for (const char *p = app->_usb_info; *p; ++p) {
+                if (*p == '\n' && ++seen == half) { split = p + 1; break; }
+            }
+            std::string left(app->_usb_info, split == app->_usb_info ? strlen(app->_usb_info)
+                                                                      : (size_t)(split - app->_usb_info));
+            // bỏ '\n' cuối cột trái cho gọn
+            while (!left.empty() && (left.back() == '\n' || left.back() == ' ')) left.pop_back();
+            lv_label_set_text(app->_usb_info_label, left.c_str());
+            lv_label_set_text(app->_usb_info_label2, (split != app->_usb_info) ? split : "");
+        } else {
+            lv_label_set_text(app->_usb_info_label, app->_usb_info);
+        }
     }
 
     HCCHome::updateActionLabels(app);
@@ -2779,6 +2799,7 @@ bool HCCHome::close(void)
     // pointers so the background USB client task never writes to freed objects.
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
+    _usb_info_label2 = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
@@ -2871,6 +2892,7 @@ void HCCHome::showUSB()
 
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
+    _usb_info_label2 = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
@@ -2904,9 +2926,9 @@ void HCCHome::showUSB()
     lv_obj_set_style_text_color(_usb_status_label, lv_color_hex(0x00D9FF), 0);
     lv_obj_set_style_text_font(_usb_status_label, &lv_font_be_vietnam_18, 0);
 
-    /* Device information panel (nới rộng để chứa đủ thông tin Android/iPhone) */
+    /* Device information panel: full chiều ngang, hiển thị 2 cột (bỏ panel MODE) */
     lv_obj_t *device_panel = lv_obj_create(_screen);
-    lv_obj_set_size(device_panel, 620, 258);
+    lv_obj_set_size(device_panel, 968, 258);
     lv_obj_align(device_panel, LV_ALIGN_TOP_LEFT, 28, 95);
     lv_obj_set_style_bg_color(device_panel, lv_color_hex(0x182630), 0);
     lv_obj_set_style_border_width(device_panel, 1, 0);
@@ -2920,41 +2942,25 @@ void HCCHome::showUSB()
     lv_obj_set_style_text_color(device_title, lv_color_hex(0x7F96A8), 0);
     lv_obj_set_style_text_font(device_title, &lv_font_be_vietnam_18, 0);
 
+    // Cột 1 (trái)
     _usb_info_label = lv_label_create(device_panel);
     lv_label_set_text(_usb_info_label, "No USB device detected");
-    lv_obj_align(_usb_info_label, LV_ALIGN_TOP_LEFT, 18, 42);
-    lv_obj_set_width(_usb_info_label, 584);
+    lv_obj_align(_usb_info_label, LV_ALIGN_TOP_LEFT, 18, 46);
+    lv_obj_set_width(_usb_info_label, 460);
     lv_obj_set_style_text_color(_usb_info_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(_usb_info_label, &lv_font_be_vietnam_16, 0);
-    lv_obj_set_style_text_line_space(_usb_info_label, -2, 0);
+    lv_obj_set_style_text_line_space(_usb_info_label, 2, 0);
 
-    /* Mode panel (thu gọn, dời sang phải để nhường chỗ panel DEVICE) */
-    lv_obj_t *mode_panel = lv_obj_create(_screen);
-    lv_obj_set_size(mode_panel, 328, 258);
-    lv_obj_align(mode_panel, LV_ALIGN_TOP_LEFT, 668, 95);
-    lv_obj_set_style_bg_color(mode_panel, lv_color_hex(0x182630), 0);
-    lv_obj_set_style_border_width(mode_panel, 1, 0);
-    lv_obj_set_style_border_color(mode_panel, lv_color_hex(0x304553), 0);
-    lv_obj_set_style_radius(mode_panel, 12, 0);
-    lv_obj_clear_flag(mode_panel, LV_OBJ_FLAG_SCROLLABLE);
+    // Cột 2 (phải)
+    _usb_info_label2 = lv_label_create(device_panel);
+    lv_label_set_text(_usb_info_label2, "");
+    lv_obj_align(_usb_info_label2, LV_ALIGN_TOP_LEFT, 500, 46);
+    lv_obj_set_width(_usb_info_label2, 448);
+    lv_obj_set_style_text_color(_usb_info_label2, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(_usb_info_label2, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_line_space(_usb_info_label2, 2, 0);
 
-    lv_obj_t *mode_title = lv_label_create(mode_panel);
-    lv_label_set_text(mode_title, "CURRENT MODE");
-    lv_obj_align(mode_title, LV_ALIGN_TOP_LEFT, 18, 14);
-    lv_obj_set_style_text_color(mode_title, lv_color_hex(0x7F96A8), 0);
-    lv_obj_set_style_text_font(mode_title, &lv_font_be_vietnam_18, 0);
-
-    _usb_mode_label = lv_label_create(mode_panel);
-    lv_label_set_text(_usb_mode_label, "MODE: NO DEVICE");
-    lv_obj_align(_usb_mode_label, LV_ALIGN_TOP_LEFT, 18, 52);
-    lv_obj_set_style_text_color(_usb_mode_label, lv_color_hex(0x00D9FF), 0);
-    lv_obj_set_style_text_font(_usb_mode_label, &lv_font_be_vietnam_28, 0);
-
-    lv_obj_t *mode_hint = lv_label_create(mode_panel);
-    lv_label_set_text(mode_hint, "USB mode detection");
-    lv_obj_align(mode_hint, LV_ALIGN_TOP_LEFT, 18, 100);
-    lv_obj_set_style_text_color(mode_hint, lv_color_hex(0xB8C5CF), 0);
-    lv_obj_set_style_text_font(mode_hint, &lv_font_be_vietnam_18, 0);
+    _usb_mode_label = nullptr;  // đã bỏ panel CURRENT MODE
 
     /* Repair action area */
     lv_obj_t *action_title = lv_label_create(_screen);
@@ -3797,6 +3803,7 @@ void HCCHome::showEeprom()
 
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
+    _usb_info_label2 = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
@@ -5805,6 +5812,7 @@ void HCCHome::detachUsbLabels()
 {
     _usb_status_label = nullptr;
     _usb_info_label = nullptr;
+    _usb_info_label2 = nullptr;
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
