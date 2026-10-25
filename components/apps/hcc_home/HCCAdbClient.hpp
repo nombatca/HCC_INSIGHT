@@ -48,6 +48,8 @@ public:
         char bt_mac[20];
         char imei1[20];
         char imei2[20];
+        char ram[16];
+        char storage[40];
     };
 
     // Loads the ADB host key from NVS, or generates and stores it, on a background task.

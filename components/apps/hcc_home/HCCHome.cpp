@@ -586,11 +586,12 @@ void HCCHome::applyAdbState(HCCHome *app)
         snprintf(app->_usb_info, sizeof(app->_usb_info),
                  "Model: %s\nAndroid: %s (SDK %s)\nSerial: %s\nChipset: %s\n"
                  "WiFi: %s\nBluetooth: %s\nIMEI 1: %s\nIMEI 2: %s\n"
+                 "RAM: %s\nBộ nhớ: %s\n"
                  "Battery: %s  %s  %s  %s\nCycles: %s",
                  model, value(info.android), value(info.sdk),
                  info.serial[0] != '\0' ? info.serial : value(app->_usb_desc_serial),
                  value(info.chipset), value(info.wifi_mac), value(info.bt_mac),
-                 value(info.imei1), value(info.imei2),
+                 value(info.imei1), value(info.imei2), value(info.ram), value(info.storage),
                  value(info.battery_level), value(info.battery_health),
                  value(info.battery_temp), value(info.battery_voltage), value(info.battery_cycles));
     }

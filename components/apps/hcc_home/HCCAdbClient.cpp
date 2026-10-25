@@ -57,6 +57,9 @@ constexpr char kInfoCommand[] =
     "cut -d\\' -f2 | tr -cd 0-9); if [ ${#v} -ge 14 ] && [ ${#v} -le 16 ]; then echo $v; break; fi; done)\";"
     "echo \"H=$(for c in 1 2 3 4; do v=$(service call iphonesubinfo $c i32 1 2>/dev/null | "
     "cut -d\\' -f2 | tr -cd 0-9); if [ ${#v} -ge 14 ] && [ ${#v} -le 16 ]; then echo $v; break; fi; done)\";"
+    // RAM (kB) tu /proc/meminfo, bo nho trong (tong + trong, don vi 1K) tu df /data.
+    "echo \"R=$(grep MemTotal /proc/meminfo 2>/dev/null | tr -cd 0-9)\";"
+    "echo \"O=$(df -k /data 2>/dev/null | tail -1 | tr -s ' ' | cut -d' ' -f2,4)\";"
     "dumpsys battery";
 
 // ---- Host key (RSA-2048, persisted in NVS, shared by every connection) ----
@@ -763,6 +766,8 @@ void HCCAdbClient::parseShellOutput()
 {
     char soc[32] = "";
     char platform[32] = "";
+    char ramkb[24] = "";
+    char dfline[48] = "";
     for (char *line = _shell_output; line != nullptr && *line != '\0';) {
         char *newline = strchr(line, '\n');
         const size_t length = newline != nullptr ? static_cast<size_t>(newline - line) : strlen(line);
@@ -785,6 +790,8 @@ void HCCAdbClient::parseShellOutput()
             case 'T': field = _info.bt_mac; size = sizeof(_info.bt_mac); break;
             case 'G': field = _info.imei1; size = sizeof(_info.imei1); break;
             case 'H': field = _info.imei2; size = sizeof(_info.imei2); break;
+            case 'R': field = ramkb; size = sizeof(ramkb); break;
+            case 'O': field = dfline; size = sizeof(dfline); break;
             default: break;
             }
             // Keep banner values when getprop printed nothing.
@@ -835,5 +842,17 @@ void HCCAdbClient::parseShellOutput()
     // IMEI 2 trung IMEI 1 (may 1 SIM / ma lenh tra cung 1 so) -> de trong.
     if (_info.imei2[0] != '\0' && strcmp(_info.imei1, _info.imei2) == 0) {
         _info.imei2[0] = '\0';
+    }
+
+    // RAM: kB -> GB.
+    long ram_kb = atol(ramkb);
+    if (ram_kb > 0) {
+        snprintf(_info.ram, sizeof(_info.ram), "%.1f GB", ram_kb / 1048576.0);
+    }
+    // Bo nho trong: dfline = "tong trong" (don vi 1K-block) -> GB.
+    long df_total = 0, df_avail = 0;
+    if (sscanf(dfline, "%ld %ld", &df_total, &df_avail) == 2 && df_total > 0) {
+        snprintf(_info.storage, sizeof(_info.storage), "%.0f GB (trong %.0f GB)",
+                 df_total / 1048576.0, df_avail / 1048576.0);
     }
 }
