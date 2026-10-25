@@ -759,6 +759,9 @@ void HCCAdbClient::parseBanner(const uint8_t *payload, size_t length)
 
 void HCCAdbClient::parseShellOutput()
 {
+    // TAM CHAN DOAN: in nguyen output shell ra serial de xem WiFi/IMEI tra ve gi.
+    printf("[HCC ADB] ===== shell raw begin =====\n%s\n[HCC ADB] ===== shell raw end =====\n",
+           _shell_output);
     char soc[32] = "";
     char platform[32] = "";
     for (char *line = _shell_output; line != nullptr && *line != '\0';) {
