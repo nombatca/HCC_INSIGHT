@@ -68,7 +68,8 @@ private:
     uint32_t rnd() { _rng = _rng * 1103515245u + 12345u; return (_rng >> 16) & 0x7fff; }
 
     // Snapshot đọc từ core (dưới khoá) để vẽ.
-    float _s_rssi = 0, _s_base = 0, _s_act = 0;
+    float _s_rssi = 0, _s_base = 0, _s_act = 0, _s_p2p = 0;
+    int _s_min = 0, _s_max = 0;
     bool _s_motion = false;
     int _s_level = 0;
     bool _s_connected = false;

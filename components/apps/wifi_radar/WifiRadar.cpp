@@ -175,7 +175,7 @@ void HCCWifiRadar::buildUi(lv_obj_t *parent)
     lv_obj_set_size(sld, 560, 14);
     lv_obj_align(sld, LV_ALIGN_TOP_LEFT, RX, 238);
     lv_slider_set_range(sld, 0, 100);
-    lv_slider_set_value(sld, 50, LV_ANIM_OFF);
+    lv_slider_set_value(sld, 75, LV_ANIM_OFF);
     lv_obj_add_event_cb(sld, sensCb, LV_EVENT_VALUE_CHANGED, this);
 
     // START/STOP
@@ -252,6 +252,9 @@ void HCCWifiRadar::uiTickCb(lv_timer_t *t)
         app->_s_rssi = app->_radar.rssi();
         app->_s_base = app->_radar.baseline();
         app->_s_act = app->_radar.activity();
+        app->_s_p2p = app->_radar.p2p();
+        app->_s_min = app->_radar.wmin();
+        app->_s_max = app->_radar.wmax();
         app->_s_motion = app->_radar.motion();
         app->_s_level = app->_radar.level();
         xSemaphoreGive(app->_lock);
@@ -328,10 +331,11 @@ void HCCWifiRadar::refreshUi(void)
         lv_obj_set_style_line_color(_sweep, lv_color_hex(0x8DFFB0), 0);
     }
 
-    char b[64];
+    char b[80];
     snprintf(b, sizeof(b), "RSSI: %d dBm   (nền %d)", (int)lroundf(_s_rssi), (int)lroundf(_s_base));
     lv_label_set_text(_rssi_lbl, b);
-    snprintf(b, sizeof(b), "Biến động: %.1f dB   mức %d%%", _s_act, _s_level);
+    snprintf(b, sizeof(b), "Dao động: %d dB  (%d..%d)   mức %d%%",
+             (int)lroundf(_s_p2p), _s_min, _s_max, _s_level);
     lv_label_set_text(_act_lbl, b);
     snprintf(b, sizeof(b), "AP: %s", _s_ssid[0] ? _s_ssid : "-");
     lv_label_set_text(_ap_lbl, b);
@@ -344,8 +348,8 @@ void HCCWifiRadar::sensCb(lv_event_t *e)
 {
     HCCWifiRadar *app = static_cast<HCCWifiRadar *>(lv_event_get_user_data(e));
     int v = lv_slider_get_value(lv_event_get_target(e));
-    // phải = nhạy hơn = ngưỡng thấp hơn. Ngưỡng 0.8 .. 6.0 dB.
-    float thr = 6.0f - (v / 100.0f) * 5.2f;
+    // phải = nhạy hơn = ngưỡng thấp hơn. Ngưỡng 0.6 .. 3.6 dB (nhạy hơn trước).
+    float thr = 3.6f - (v / 100.0f) * 3.0f;
     if (app->_lock && xSemaphoreTake(app->_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
         app->_radar.setThreshold(thr);
         xSemaphoreGive(app->_lock);
