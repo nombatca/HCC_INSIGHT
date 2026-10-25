@@ -4394,6 +4394,11 @@ void HCCHome::showPanic()
     _pi_conclusion = nullptr;
     _pi_ai = nullptr;
     _pi_detail = nullptr;
+    _pi_ident = _pi_board = _pi_tag = _pi_time = nullptr;
+    _pi_errtitle = _pi_errsub = _pi_target = _pi_info = nullptr;
+    _pi_sensor_lbl[0] = _pi_sensor_lbl[1] = nullptr;
+    _pi_sensor_val[0] = _pi_sensor_val[1] = nullptr;
+    _pi_steps[0] = _pi_steps[1] = _pi_steps[2] = _pi_steps[3] = nullptr;
     _panic_busy = false;
 
     lv_obj_clean(_screen);
@@ -4412,136 +4417,241 @@ void HCCHome::showPanic()
         lv_obj_set_style_text_font(l, f, 0);
     };
 
+    /* ===== Header: HCC INSIGHT | PANIC ANALYZER ===== */
+    {
+        lv_obj_t *h1 = lv_label_create(_screen);
+        lv_label_set_text(h1, "HCC ");
+        lv_obj_set_style_text_font(h1, &lv_font_be_vietnam_22, 0);
+        lv_obj_set_style_text_color(h1, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(h1, LV_ALIGN_TOP_LEFT, 24, 8);
+        lv_obj_t *h2 = lv_label_create(_screen);
+        lv_label_set_text(h2, "INSIGHT");
+        lv_obj_set_style_text_font(h2, &lv_font_be_vietnam_22, 0);
+        lv_obj_set_style_text_color(h2, lv_color_hex(0x2E9BE6), 0);
+        lv_obj_align_to(h2, h1, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+        lv_obj_t *h3 = lv_label_create(_screen);
+        lv_label_set_text(h3, "|  PANIC ANALYZER");
+        lv_obj_set_style_text_font(h3, &lv_font_be_vietnam_18, 0);
+        lv_obj_set_style_text_color(h3, lv_color_hex(0x7F96A8), 0);
+        lv_obj_align_to(h3, h2, LV_ALIGN_OUT_RIGHT_MID, 14, 1);
+    }
+
     /* ===== Toolbar ===== */
     lv_obj_t *ftitle = lv_label_create(_screen);
-    lv_label_set_text(ftitle, "File panic:");
-    lv_obj_align(ftitle, LV_ALIGN_TOP_LEFT, 24, 26);
-    lv_obj_set_style_text_color(ftitle, lv_color_hex(0xB8C5CF), 0);
+    lv_label_set_text(ftitle, LV_SYMBOL_FILE "  File panic:");
+    lv_obj_align(ftitle, LV_ALIGN_TOP_LEFT, 24, 54);
+    lv_obj_set_style_text_color(ftitle, lv_color_hex(0x9FB2C4), 0);
     lv_obj_set_style_text_font(ftitle, &lv_font_be_vietnam_16, 0);
 
     _panic_file_dropdown = lv_dropdown_create(_screen);
-    lv_obj_set_size(_panic_file_dropdown, 570, 46);
-    lv_obj_align(_panic_file_dropdown, LV_ALIGN_TOP_LEFT, 128, 14);
+    lv_obj_set_size(_panic_file_dropdown, 452, 44);
+    lv_obj_align(_panic_file_dropdown, LV_ALIGN_TOP_LEFT, 160, 44);
     lv_obj_set_style_text_font(_panic_file_dropdown, &lv_font_be_vietnam_16, 0);
     lv_obj_add_event_cb(_panic_file_dropdown, onPanicFileChanged, LV_EVENT_VALUE_CHANGED, this);
 
     _panic_analyze_button = lv_btn_create(_screen);
-    lv_obj_set_size(_panic_analyze_button, 138, 46);
-    lv_obj_align(_panic_analyze_button, LV_ALIGN_TOP_LEFT, 712, 14);
-    styleBtn(_panic_analyze_button, "ANALYZE", onPanicAnalyzeClicked, this, lv_color_hex(0x2478D0), &lv_font_be_vietnam_16);
+    lv_obj_set_size(_panic_analyze_button, 168, 44);
+    lv_obj_align(_panic_analyze_button, LV_ALIGN_TOP_LEFT, 624, 44);
+    styleBtn(_panic_analyze_button, LV_SYMBOL_EYE_OPEN "  ANALYZE", onPanicAnalyzeClicked, this, lv_color_hex(0x1E6FD0), &lv_font_be_vietnam_18);
 
     lv_obj_t *view_btn = lv_btn_create(_screen);
-    lv_obj_set_size(view_btn, 132, 46);
-    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 856, 14);
-    styleBtn(view_btn, "XEM PANIC", onPanicViewClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+    lv_obj_set_size(view_btn, 188, 44);
+    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 802, 44);
+    styleBtn(view_btn, LV_SYMBOL_LIST "  XEM PANIC", onPanicViewClicked, this, lv_color_hex(0x1B3048), &lv_font_be_vietnam_18);
 
-    /* Địa chỉ + trạng thái (dòng mảnh dưới toolbar) */
+    /* Địa chỉ gửi panic + trạng thái (dòng mảnh) */
     _panic_url_label = lv_label_create(_screen);
     updatePanicUrlLabel();
-    lv_obj_align(_panic_url_label, LV_ALIGN_TOP_LEFT, 24, 66);
+    lv_obj_align(_panic_url_label, LV_ALIGN_TOP_LEFT, 24, 94);
     lv_obj_set_style_text_color(_panic_url_label, lv_color_hex(0x00D9FF), 0);
-    lv_obj_set_style_text_font(_panic_url_label, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_font(_panic_url_label, &lv_font_be_vietnam_14, 0);
 
     _panic_status_label = lv_label_create(_screen);
     lv_label_set_text(_panic_status_label, "Sẵn sàng");
-    // Rộng cố định, chữ dài (lỗi AI) thành "..." thay vì đè lên dòng địa chỉ gửi panic bên trái.
     lv_label_set_long_mode(_panic_status_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(_panic_status_label, 420);
-    lv_obj_set_height(_panic_status_label, 22);
+    lv_obj_set_height(_panic_status_label, 20);
     lv_obj_set_style_text_align(_panic_status_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(_panic_status_label, LV_ALIGN_TOP_RIGHT, -24, 66);
+    lv_obj_align(_panic_status_label, LV_ALIGN_TOP_RIGHT, -24, 94);
     lv_obj_set_style_text_color(_panic_status_label, lv_color_hex(0x69E0C0), 0);
-    lv_obj_set_style_text_font(_panic_status_label, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_font(_panic_status_label, &lv_font_be_vietnam_14, 0);
 
-    /* Không còn ô danh sách panic: chọn panic bằng ô "File panic" ở trên; kết quả dùng toàn chiều ngang. */
     _pi_list = nullptr;
     _pi_list_count = nullptr;
 
-    /* ===== Kết quả: 4 cột dọc =====
-     * Cột 1 (hẹp): máy gì (model / iOS / SoC).
-     * Cột 2: phần cứng nghi ngờ (+ confidence + lỗi + signature).
-     * Cột 3: nên làm gì (các bước kiểm tra / xử lý).
-     * Cột 4: có trùng ca đã sửa không. */
-    const lv_color_t white = lv_color_hex(0xFFFFFF);
-    const lv_color_t cyan = lv_color_hex(0x00D9FF);
-    const lv_color_t green = lv_color_hex(0x8CE6A8);
-    const lv_color_t muted = lv_color_hex(0xB8C5CF);
-    const lv_font_t *f16 = &lv_font_be_vietnam_16;
+    /* ===== Kết quả: 3 cột (THÔNG TIN MÁY / KẾT LUẬN CHẨN ĐOÁN / KHUYẾN NGHỊ + CA SỬA) ===== */
     const lv_font_t *f14 = &lv_font_be_vietnam_14;
+    const lv_font_t *f16 = &lv_font_be_vietnam_16;
+    const lv_font_t *f18 = &lv_font_be_vietnam_18;
+    const lv_font_t *f20 = &lv_font_be_vietnam_20;
+    const uint32_t CARD_BG = 0x122537, CARD_BD = 0x25405A, BOX_BG = 0x0E2033, ACC = 0x2E9BE6;
+    const uint32_t WHITE = 0xFFFFFF, MUTED = 0x8DA2B5, YEL = 0xF5C83D;
+    const lv_coord_t cy = 116, colH = 352;
 
-    const lv_coord_t colY = 92, colH = 374;
-    lv_obj_t *cols = lv_obj_create(_screen);
-    lv_obj_set_size(cols, 976, colH);
-    lv_obj_align(cols, LV_ALIGN_TOP_LEFT, 24, colY);
-    lv_obj_set_style_bg_opa(cols, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(cols, 0, 0);
-    lv_obj_set_style_pad_all(cols, 0, 0);
-    lv_obj_set_style_pad_column(cols, 8, 0);
-    lv_obj_set_flex_flow(cols, LV_FLEX_FLOW_ROW);
-    lv_obj_clear_flag(cols, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Tạo một cột: card nền, tiêu đề màu, trả về vùng nội dung (cuộn dọc).
-    auto makeCol = [&](int w, const char *icon, const char *title, lv_color_t tcol) -> lv_obj_t * {
-        lv_obj_t *card = lv_obj_create(cols);
-        lv_obj_set_size(card, w, colH);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x142433), 0);
-        lv_obj_set_style_border_color(card, lv_color_hex(0x2A3E52), 0);
+    auto mkCard = [&](int x, int y, int w, int h, const char *icon, const char *title) -> lv_obj_t * {
+        lv_obj_t *card = lv_obj_create(_screen);
+        lv_obj_set_size(card, w, h);
+        lv_obj_set_pos(card, x, y);
+        lv_obj_set_style_bg_color(card, lv_color_hex(CARD_BG), 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(CARD_BD), 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_radius(card, 12, 0);
-        lv_obj_set_style_pad_all(card, 10, 0);
-        lv_obj_set_style_pad_row(card, 6, 0);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_scroll_dir(card, LV_DIR_VER);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *ic = lv_label_create(card);
+        lv_label_set_text(ic, icon);
+        lv_obj_set_style_text_font(ic, f20, 0);
+        lv_obj_set_style_text_color(ic, lv_color_hex(ACC), 0);
+        lv_obj_set_pos(ic, 14, 13);
         lv_obj_t *t = lv_label_create(card);
-        std::string tt = std::string(icon) + " " + title;
-        lv_label_set_text(t, tt.c_str());
-        lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(t, lv_pct(100));
-        lv_obj_set_style_text_font(t, f14, 0);
-        lv_obj_set_style_text_color(t, tcol, 0);
+        lv_label_set_text(t, title);
+        lv_obj_set_style_text_font(t, f18, 0);
+        lv_obj_set_style_text_color(t, lv_color_hex(WHITE), 0);
+        lv_obj_set_pos(t, 46, 14);
         return card;
     };
-    auto addVal = [&](lv_obj_t *card, const lv_font_t *f, lv_color_t c) -> lv_obj_t * {
+    auto rowVal = [&](lv_obj_t *card, int y, const char *lbl) -> lv_obj_t * {
         lv_obj_t *l = lv_label_create(card);
-        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(l, lv_pct(100));
-        lv_obj_set_style_text_font(l, f, 0);
-        lv_obj_set_style_text_color(l, c, 0);
-        lv_label_set_text(l, "-");
-        return l;
+        lv_label_set_text(l, lbl);
+        lv_obj_set_style_text_font(l, f14, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(MUTED), 0);
+        lv_obj_set_pos(l, 16, y + 2);
+        lv_obj_t *v = lv_label_create(card);
+        lv_label_set_text(v, "-");
+        lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(v, 186);
+        lv_obj_set_style_text_font(v, f16, 0);
+        lv_obj_set_style_text_color(v, lv_color_hex(WHITE), 0);
+        lv_obj_set_pos(v, 112, y);
+        return v;
     };
 
-    // --- Cột 1: MÁY (hẹp) ---
-    lv_obj_t *c1 = makeCol(168, LV_SYMBOL_HOME, "MÁY", cyan);
-    _pi_model = addVal(c1, f16, white);
-    _pi_ios = addVal(c1, f16, muted);
-    _pi_soc = addVal(c1, f16, muted);
-    _pi_sev = addVal(c1, f16, white);
-    _pi_sevsub = nullptr;
-    _pi_file = nullptr;
+    // --- Cột 1: THÔNG TIN MÁY ---
+    lv_obj_t *c1 = mkCard(16, cy, 312, colH, LV_SYMBOL_HOME, "THÔNG TIN MÁY");
+    int ry = 48;
+    _pi_model = rowVal(c1, ry, "Model");     ry += 33;
+    _pi_ident = rowVal(c1, ry, "Mã máy");    ry += 33;
+    _pi_ios   = rowVal(c1, ry, "iOS");       ry += 33;
+    _pi_soc   = rowVal(c1, ry, "SoC");       ry += 33;
+    _pi_board = rowVal(c1, ry, "Board");     ry += 33;
+    _pi_tag   = rowVal(c1, ry, "Tag");       ry += 33;
+    _pi_time  = rowVal(c1, ry, "Thời gian"); ry += 40;
+    {
+        lv_obj_t *stb = lv_obj_create(c1);
+        lv_obj_set_size(stb, 282, 56); lv_obj_set_pos(stb, 14, ry);
+        lv_obj_set_style_bg_color(stb, lv_color_hex(0x3A1518), 0);
+        lv_obj_set_style_border_color(stb, lv_color_hex(0x7A2A2A), 0);
+        lv_obj_set_style_border_width(stb, 1, 0);
+        lv_obj_set_style_radius(stb, 10, 0);
+        lv_obj_clear_flag(stb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *sti = lv_label_create(stb); lv_label_set_text(sti, LV_SYMBOL_WARNING);
+        lv_obj_set_style_text_font(sti, &lv_font_be_vietnam_28, 0);
+        lv_obj_set_style_text_color(sti, lv_color_hex(0xF24444), 0); lv_obj_set_pos(sti, 14, 13);
+        lv_obj_t *stt = lv_label_create(stb); lv_label_set_text(stt, "TÌNH TRẠNG");
+        lv_obj_set_style_text_font(stt, f14, 0);
+        lv_obj_set_style_text_color(stt, lv_color_hex(0xFF8A8A), 0); lv_obj_set_pos(stt, 58, 7);
+        _pi_sev = lv_label_create(stb); lv_label_set_text(_pi_sev, "-");
+        lv_obj_set_style_text_font(_pi_sev, f20, 0);
+        lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xFF4444), 0); lv_obj_set_pos(_pi_sev, 58, 27);
+    }
+    _pi_sevsub = nullptr; _pi_file = nullptr;
 
-    // --- Cột 2: PHẦN CỨNG NGHI NGỜ ---
-    lv_obj_t *c2 = makeCol(330, LV_SYMBOL_WARNING, "PHẦN CỨNG NGHI NGỜ", cyan);
-    _pi_conclusion = addVal(c2, &lv_font_be_vietnam_20, white);  // phần cứng nghi ngờ (to)
-    _pi_conf = lv_label_create(c2);
-    lv_label_set_recolor(_pi_conf, true);
-    lv_label_set_long_mode(_pi_conf, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_pi_conf, lv_pct(100));
-    lv_obj_set_style_text_font(_pi_conf, f16, 0);
-    lv_obj_set_style_text_color(_pi_conf, white, 0);
-    lv_label_set_text(_pi_conf, "-");
-    _pi_keystr = addVal(c2, f16, lv_color_hex(0xFF8A8A));  // lỗi
-    _pi_cause = addVal(c2, f14, muted);                    // signature / hex
+    // --- Cột 2: KẾT LUẬN CHẨN ĐOÁN ---
+    lv_obj_t *c2 = mkCard(340, cy, 392, colH, LV_SYMBOL_LIST, "KẾT LUẬN CHẨN ĐOÁN");
+    {
+        lv_obj_t *wn = lv_label_create(c2); lv_label_set_text(wn, LV_SYMBOL_WARNING);
+        lv_obj_set_style_text_font(wn, &lv_font_be_vietnam_32, 0);
+        lv_obj_set_style_text_color(wn, lv_color_hex(0xF23030), 0); lv_obj_set_pos(wn, 30, 52);
+    }
+    _pi_errtitle = lv_label_create(c2); lv_label_set_text(_pi_errtitle, "-");
+    lv_label_set_long_mode(_pi_errtitle, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_errtitle, 298);
+    lv_obj_set_style_text_font(_pi_errtitle, &lv_font_be_vietnam_28, 0);
+    lv_obj_set_style_text_color(_pi_errtitle, lv_color_hex(0xF23030), 0); lv_obj_set_pos(_pi_errtitle, 80, 54);
+    _pi_errsub = lv_label_create(c2); lv_label_set_text(_pi_errsub, "-");
+    lv_label_set_long_mode(_pi_errsub, LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_errsub, 356);
+    lv_obj_set_style_text_font(_pi_errsub, f18, 0);
+    lv_obj_set_style_text_color(_pi_errsub, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_errsub, 18, 96);
+    {
+        lv_obj_t *sb = lv_obj_create(c2); lv_obj_set_size(sb, 356, 82); lv_obj_set_pos(sb, 18, 130);
+        lv_obj_set_style_bg_color(sb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(sb, lv_color_hex(CARD_BD), 0);
+        lv_obj_set_style_border_width(sb, 1, 0); lv_obj_set_style_radius(sb, 10, 0); lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+        for (int i = 0; i < 2; ++i) {
+            _pi_sensor_lbl[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_lbl[i], "-");
+            lv_obj_set_style_text_font(_pi_sensor_lbl[i], f16, 0);
+            lv_obj_set_style_text_color(_pi_sensor_lbl[i], lv_color_hex(0xE8C14A), 0);
+            lv_obj_set_pos(_pi_sensor_lbl[i], i ? 206 : 26, 12);
+            _pi_sensor_val[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_val[i], "-");
+            lv_obj_set_style_text_font(_pi_sensor_val[i], &lv_font_be_vietnam_28, 0);
+            lv_obj_set_style_text_color(_pi_sensor_val[i], lv_color_hex(YEL), 0);
+            lv_obj_set_pos(_pi_sensor_val[i], i ? 200 : 22, 42);
+        }
+        lv_obj_t *sdiv = lv_obj_create(sb); lv_obj_set_size(sdiv, 1, 56); lv_obj_set_pos(sdiv, 178, 12);
+        lv_obj_set_style_bg_color(sdiv, lv_color_hex(0x2E4A63), 0); lv_obj_set_style_border_width(sdiv, 0, 0);
+    }
+    {
+        lv_obj_t *mt = lv_obj_create(c2); lv_obj_set_size(mt, 210, 46); lv_obj_set_pos(mt, 18, 224);
+        lv_obj_set_style_bg_color(mt, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(mt, lv_color_hex(CARD_BD), 0);
+        lv_obj_set_style_border_width(mt, 1, 0); lv_obj_set_style_radius(mt, 8, 0); lv_obj_clear_flag(mt, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *mtl = lv_label_create(mt); lv_label_set_text(mtl, "Model target");
+        lv_obj_set_style_text_font(mtl, f14, 0); lv_obj_set_style_text_color(mtl, lv_color_hex(MUTED), 0); lv_obj_set_pos(mtl, 12, 6);
+        _pi_target = lv_label_create(mt); lv_label_set_text(_pi_target, "-");
+        lv_obj_set_style_text_font(_pi_target, f18, 0); lv_obj_set_style_text_color(_pi_target, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_target, 12, 22);
+        lv_obj_t *cfb = lv_obj_create(c2); lv_obj_set_size(cfb, 146, 46); lv_obj_set_pos(cfb, 234, 224);
+        lv_obj_set_style_bg_color(cfb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(cfb, lv_color_hex(CARD_BD), 0);
+        lv_obj_set_style_border_width(cfb, 1, 0); lv_obj_set_style_radius(cfb, 8, 0); lv_obj_clear_flag(cfb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *cfl = lv_label_create(cfb); lv_label_set_text(cfl, "Độ tin cậy");
+        lv_obj_set_style_text_font(cfl, f14, 0); lv_obj_set_style_text_color(cfl, lv_color_hex(MUTED), 0); lv_obj_set_pos(cfl, 12, 15);
+        _pi_conf = lv_label_create(cfb); lv_label_set_recolor(_pi_conf, true); lv_label_set_text(_pi_conf, "-");
+        lv_obj_set_style_text_font(_pi_conf, f16, 0); lv_obj_set_style_text_color(_pi_conf, lv_color_hex(YEL), 0); lv_obj_set_pos(_pi_conf, 86, 14);
+    }
+    {
+        lv_obj_t *ib = lv_obj_create(c2); lv_obj_set_size(ib, 356, 58); lv_obj_set_pos(ib, 18, 282);
+        lv_obj_set_style_bg_color(ib, lv_color_hex(0x10263A), 0); lv_obj_set_style_border_color(ib, lv_color_hex(0x2E4A63), 0);
+        lv_obj_set_style_border_width(ib, 1, 0); lv_obj_set_style_radius(ib, 10, 0); lv_obj_clear_flag(ib, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *ii = lv_label_create(ib); lv_label_set_text(ii, LV_SYMBOL_WARNING);
+        lv_obj_set_style_text_font(ii, f18, 0); lv_obj_set_style_text_color(ii, lv_color_hex(0xE8C14A), 0); lv_obj_set_pos(ii, 12, 17);
+        _pi_info = lv_label_create(ib); lv_label_set_text(_pi_info, "-");
+        lv_label_set_long_mode(_pi_info, LV_LABEL_LONG_WRAP); lv_obj_set_width(_pi_info, 300);
+        lv_obj_set_style_text_font(_pi_info, f14, 0); lv_obj_set_style_text_color(_pi_info, lv_color_hex(0xC6D3DF), 0); lv_obj_set_pos(_pi_info, 42, 10);
+    }
 
-    // --- Cột 3: NÊN LÀM GÌ ---
-    lv_obj_t *c3 = makeCol(286, LV_SYMBOL_EDIT, "NÊN LÀM GÌ", green);
-    _pi_check = addVal(c3, f16, green);
+    // --- Cột 3a: KHUYẾN NGHỊ ---
+    lv_obj_t *c3 = mkCard(744, cy, 264, 214, LV_SYMBOL_SETTINGS, "KHUYẾN NGHỊ");
+    {
+        int sy = 48;
+        for (int i = 0; i < 3; ++i) {
+            lv_obj_t *rb = lv_obj_create(c3); lv_obj_set_size(rb, 236, 48); lv_obj_set_pos(rb, 14, sy);
+            lv_obj_set_style_bg_color(rb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(rb, lv_color_hex(CARD_BD), 0);
+            lv_obj_set_style_border_width(rb, 1, 0); lv_obj_set_style_radius(rb, 8, 0); lv_obj_clear_flag(rb, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *nb = lv_obj_create(rb); lv_obj_set_size(nb, 26, 26); lv_obj_set_pos(nb, 8, 11);
+            lv_obj_set_style_bg_color(nb, lv_color_hex(0x1E6FD0), 0); lv_obj_set_style_border_width(nb, 0, 0);
+            lv_obj_set_style_radius(nb, 7, 0); lv_obj_clear_flag(nb, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *nn = lv_label_create(nb); char nnum[2] = {(char)('1' + i), 0}; lv_label_set_text(nn, nnum);
+            lv_obj_set_style_text_font(nn, f16, 0); lv_obj_set_style_text_color(nn, lv_color_hex(WHITE), 0); lv_obj_center(nn);
+            _pi_steps[i] = lv_label_create(rb); lv_label_set_text(_pi_steps[i], "-");
+            lv_label_set_long_mode(_pi_steps[i], LV_LABEL_LONG_DOT); lv_obj_set_width(_pi_steps[i], 184);
+            lv_obj_set_style_text_font(_pi_steps[i], f14, 0); lv_obj_set_style_text_color(_pi_steps[i], lv_color_hex(0xD6E0EA), 0);
+            lv_obj_set_pos(_pi_steps[i], 44, 6);
+            sy += 54;
+        }
+    }
+    _pi_steps[3] = nullptr;
+    _pi_check = nullptr;  // khuyến nghị dùng _pi_steps[]
 
-    // --- Cột 4: TRÙNG CA ĐÃ SỬA ---
-    lv_obj_t *c4 = makeCol(152, LV_SYMBOL_OK, "TRÙNG CA ĐÃ SỬA", cyan);
-    _pi_kb = addVal(c4, f16, cyan);
+    // --- Cột 3b: CA SỬA TƯƠNG TỰ ---
+    lv_obj_t *c4 = mkCard(744, cy + 224, 264, colH - 224, LV_SYMBOL_COPY, "CA SỬA");
+    {
+        lv_obj_t *dbi = lv_label_create(c4); lv_label_set_text(dbi, LV_SYMBOL_DRIVE);
+        lv_obj_set_style_text_font(dbi, &lv_font_be_vietnam_28, 0);
+        lv_obj_set_style_text_color(dbi, lv_color_hex(0x3A5368), 0); lv_obj_set_pos(dbi, 18, 54);
+    }
+    _pi_kb = lv_label_create(c4); lv_label_set_text(_pi_kb, "-");
+    lv_label_set_long_mode(_pi_kb, LV_LABEL_LONG_WRAP); lv_obj_set_width(_pi_kb, 180);
+    lv_obj_set_style_text_font(_pi_kb, f14, 0); lv_obj_set_style_text_color(_pi_kb, lv_color_hex(0xC6D3DF), 0);
+    lv_obj_set_pos(_pi_kb, 60, 52);
 
-    _pi_detail = c3;  // cuộn về đầu khi đổi file
+    _pi_conclusion = nullptr; _pi_keystr = nullptr; _pi_cause = nullptr;
+    _pi_detail = c3;
     _pi_ai = nullptr;
 
     /* ===== Danh sách + chi tiết ban đầu ===== */
@@ -4557,27 +4667,30 @@ void HCCHome::showPanic()
     _panic_poll_timer = lv_timer_create(onPanicPollTimer, 1000, this);
     lv_obj_add_event_cb(_pi_detail, onPanicListDeleted, LV_EVENT_DELETE, this);
 
-    /* ===== Thanh nút dưới cùng ===== */
-    const lv_coord_t by = 474;
-    lv_obj_t *back_btn = lv_btn_create(_screen);
-    lv_obj_set_size(back_btn, 150, 52);
-    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 24, by);
-    styleBtn(back_btn, "QUAY LẠI", onBackClicked, this, lv_color_hex(0x1F3242), &lv_font_be_vietnam_16);
+    /* ===== Thanh nút dưới cùng (đồng màu theo layout) ===== */
+    const lv_coord_t by = 478;
+    const lv_color_t btnCol = lv_color_hex(0x1B3A5C);
+    const lv_font_t *bf = &lv_font_be_vietnam_16;
 
-    lv_obj_t *verify_btn = lv_btn_create(_screen);
-    lv_obj_set_size(verify_btn, 190, 52);
-    lv_obj_align(verify_btn, LV_ALIGN_TOP_LEFT, 810, by);
-    styleBtn(verify_btn, "XÁC NHẬN ĐÃ SỬA", onConfirmRepairClicked, this, lv_color_hex(0x3DD66E), &lv_font_be_vietnam_16);
+    lv_obj_t *back_btn = lv_btn_create(_screen);
+    lv_obj_set_size(back_btn, 190, 50);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 16, by);
+    styleBtn(back_btn, LV_SYMBOL_LEFT "  QUAY LẠI", onBackClicked, this, btnCol, bf);
 
     lv_obj_t *detail_btn = lv_btn_create(_screen);
-    lv_obj_set_size(detail_btn, 300, 52);
-    lv_obj_align(detail_btn, LV_ALIGN_TOP_LEFT, 300, by);
-    styleBtn(detail_btn, "XEM PHÂN TÍCH CHI TIẾT", onPanicDetailClicked, this, lv_color_hex(0x2478D0), &lv_font_be_vietnam_16);
+    lv_obj_set_size(detail_btn, 270, 50);
+    lv_obj_align(detail_btn, LV_ALIGN_TOP_LEFT, 216, by);
+    styleBtn(detail_btn, LV_SYMBOL_EYE_OPEN "  PHÂN TÍCH CHI TIẾT", onPanicDetailClicked, this, btnCol, bf);
 
     lv_obj_t *cases_btn = lv_btn_create(_screen);
-    lv_obj_set_size(cases_btn, 180, 52);
-    lv_obj_align(cases_btn, LV_ALIGN_TOP_LEFT, 615, by);
-    styleBtn(cases_btn, "CASE ĐÃ LƯU", onSavedCasesClicked, this, lv_color_hex(0x7A5AD8), &lv_font_be_vietnam_16);
+    lv_obj_set_size(cases_btn, 250, 50);
+    lv_obj_align(cases_btn, LV_ALIGN_TOP_LEFT, 496, by);
+    styleBtn(cases_btn, LV_SYMBOL_SAVE "  CASE ĐÃ LƯU", onSavedCasesClicked, this, btnCol, bf);
+
+    lv_obj_t *verify_btn = lv_btn_create(_screen);
+    lv_obj_set_size(verify_btn, 252, 50);
+    lv_obj_align(verify_btn, LV_ALIGN_TOP_LEFT, 756, by);
+    styleBtn(verify_btn, LV_SYMBOL_OK "  XÁC NHẬN ĐÃ SỬA", onConfirmRepairClicked, this, btnCol, bf);
 }
 
 void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
@@ -4585,27 +4698,59 @@ void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
     auto setL = [](lv_obj_t *o, const std::string &s) {
         if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
     };
-    // Đời máy trước, mã máy trong ngoặc: "Model: iPhone 13 Pro (iPhone14,2)".
-    const std::string &mk = parsed.model;
-    const std::string mn = panicMarketingName(mk);
-    std::string modeltxt = "Model: ";
-    if (!mn.empty()) {
-        modeltxt += mn + " (" + mk + ")";
-    } else {
-        modeltxt += mk.empty() ? std::string("-") : mk;
-    }
-    // Log thiếu product (dán thiếu đầu file): hiện board SMC để biết là máy nào, không đoán model.
-    if (mk.empty() && !parsed.facts.smc_target.empty()) modeltxt = "Model: ? (board " + parsed.facts.smc_target + ")";
-    setL(_pi_model, modeltxt);
-    // "iPhone OS 17.5 (21F79)" -> "17.5 (21F79)".
+    const PanicFacts &f = parsed.facts;
+
+    // --- Cột 1: thông tin máy (chỉ giá trị, nhãn nằm bên trái sẵn) ---
+    const std::string &mk = parsed.model;             // "iPhone16,2"
+    const std::string mn = panicMarketingName(mk);    // "iPhone 15 Pro Max"...
+    setL(_pi_model, mn.empty() ? (mk.empty() ? std::string("-") : mk) : mn);
+    setL(_pi_ident, mk);                              // mã máy (identifier)
     std::string os = parsed.os_version;
     if (os.rfind("iPhone OS ", 0) == 0) os = os.substr(10);
-    setL(_pi_ios, "iOS: " + (os.empty() ? std::string("-") : os));
+    setL(_pi_ios, os);
     const char *soc = panicSocForModel(mk);
-    if (soc == nullptr && !parsed.facts.kernel_target.empty()) {
-        setL(_pi_soc, "Kernel: " + parsed.facts.kernel_target);
-    } else {
-        setL(_pi_soc, std::string("SoC: ") + (soc ? soc : "-"));
+    if (soc == nullptr && !f.kernel_target.empty()) setL(_pi_soc, f.kernel_target);
+    else setL(_pi_soc, soc ? std::string(soc) : std::string("-"));
+    setL(_pi_board, f.smc_target);                   // board target (vd d84_esim)
+    // Tag: các mã 4 ký tự quan sát trong thông điệp SMC (vd TAOJ).
+    std::string tags;
+    for (const auto &t : f.assert_tags) { if (!tags.empty()) tags += ", "; tags += t; }
+    setL(_pi_tag, tags);
+    setL(_pi_time, f.timestamp);
+
+    // --- Cột 2: kết luận ---
+    // Tiêu đề lỗi lớn = assert_text ("SMC BSC failure") hoặc message rút gọn.
+    std::string errtitle = f.assert_text;
+    if (errtitle.empty()) errtitle = f.message;           // dự phòng
+    setL(_pi_errtitle, errtitle);
+    // Phụ đề: mô tả nguồn lỗi theo dữ liệu đã trích (không suy diễn phần cứng).
+    std::string sub;
+    if (!f.assert_tags.empty()) sub = "SMC báo lỗi tại tag " + tags;
+    else if (!f.smc_target.empty()) sub = "ASSERT trong target " + f.smc_target;
+    else if (!f.source_location.empty()) sub = f.source_location;
+    setL(_pi_errsub, sub);
+    // Model target.
+    setL(_pi_target, f.smc_target);
+    // Hai ô sensor (nếu có): "s.sensor[1]" = 0x......
+    for (int i = 0; i < 2; ++i) {
+        if (!_pi_sensor_lbl[i] || !_pi_sensor_val[i]) continue;
+        if (i < (int)f.sensor_arrays.size() && !f.sensor_arrays[i].values.empty()) {
+            const PanicSensorArrayFact &sa = f.sensor_arrays[i];
+            // Phần tử có giá trị khác 0 đầu tiên là phần tử đáng chú ý (quan sát).
+            size_t idx = 0; uint64_t val = sa.values[0];
+            for (size_t k = 0; k < sa.values.size(); ++k) {
+                if (sa.values[k] != 0) { idx = k; val = sa.values[k]; break; }
+            }
+            std::string nm = sa.name;
+            for (auto &c : nm) c = (char)tolower((unsigned char)c);
+            char lbl[48]; snprintf(lbl, sizeof(lbl), "%s[%d]", nm.c_str(), (int)(sa.first_index + idx));
+            char hex[24]; snprintf(hex, sizeof(hex), "0x%llX", (unsigned long long)val);
+            lv_label_set_text(_pi_sensor_lbl[i], lbl);
+            lv_label_set_text(_pi_sensor_val[i], hex);
+        } else {
+            lv_label_set_text(_pi_sensor_lbl[i], "-");
+            lv_label_set_text(_pi_sensor_val[i], "-");
+        }
     }
 }
 
@@ -4657,28 +4802,61 @@ void HCCHome::showKbView()
     auto set = [](lv_obj_t *o, const std::string &s) {
         if (o) lv_label_set_text(o, s.empty() ? "-" : s.c_str());
     };
+    // (giữ tương thích nếu các nhãn cũ còn tồn tại)
     set(_pi_keystr, _kv_error);
     set(_pi_cause, _kv_sig);
     set(_pi_check, _kv_steps);
+    set(_pi_conclusion, _kv_hw);
+
+    // --- Các bước khuyến nghị: tách _kv_steps ("1. ...\n2. ...") vào 3 ô đánh số ---
+    const bool matched = !_kv_case.empty() && _kv_case.rfind("Chưa có", 0) != 0;
+    {
+        std::vector<std::string> items;
+        std::string cur;
+        for (char c : _kv_steps) {
+            if (c == '\n') { if (!cur.empty()) items.push_back(cur); cur.clear(); }
+            else cur += c;
+        }
+        if (!cur.empty()) items.push_back(cur);
+        for (int i = 0; i < 3; ++i) {
+            if (!_pi_steps[i]) continue;
+            if (i < (int)items.size()) {
+                std::string s = items[i];
+                // Bỏ tiền tố "N. " vì ô đã có số riêng.
+                size_t dot = s.find(". ");
+                if (dot != std::string::npos && dot <= 2) s = s.substr(dot + 2);
+                lv_label_set_text(_pi_steps[i], s.c_str());
+            } else {
+                lv_label_set_text(_pi_steps[i], i == 0 ? "Chưa có khuyến nghị cụ thể." : "");
+            }
+        }
+    }
+
+    // --- Ca sửa tương tự ---
     set(_pi_kb, _kv_case);
     if (_pi_kb) {
-        // Vàng khi khớp ca sửa chữa; xám khi chưa có ca khớp.
-        const bool matched = !_kv_case.empty() && _kv_case.rfind("Chưa có", 0) != 0;
-        lv_obj_set_style_text_color(_pi_kb, lv_color_hex(matched ? 0xF2C94C : 0x8A97A3), 0);
+        lv_obj_set_style_text_color(_pi_kb, lv_color_hex(matched ? 0xF2C94C : 0xC6D3DF), 0);
     }
-    set(_pi_conclusion, _kv_hw);
-    if (_pi_conclusion) {
-        // Xanh: VERIFIED case khớp chính xác; cam: nghi ngờ chưa xác nhận; xám: chưa xác định.
-        const uint32_t col = _kv_hw_confirmed ? 0x3DD66E : (_kv_hw_known ? 0xFFB347 : 0xB8C5CF);
-        lv_obj_set_style_text_color(_pi_conclusion, lv_color_hex(col), 0);
-    }
+
+    // --- Badge độ tin cậy ---
     if (_pi_conf) {
         const char *col = "#8A97A3 ";
-        if (_kv_conf_level == HCCKB::Confidence::High) col = "#3DD66E ";
-        else if (_kv_conf_level == HCCKB::Confidence::Medium) col = "#F2C94C ";
-        else if (_kv_conf_level == HCCKB::Confidence::Low) col = "#FF9F43 ";
-        const std::string t = std::string("CONFIDENCE: ") + col + (_kv_conf.empty() ? "-" : _kv_conf) + "#";
+        std::string txt = _kv_conf;
+        if (_kv_conf_level == HCCKB::Confidence::High) { col = "#3DD66E "; if (txt.empty()) txt = "CAO"; }
+        else if (_kv_conf_level == HCCKB::Confidence::Medium) { col = "#F2C94C "; if (txt.empty()) txt = "TRUNG BÌNH"; }
+        else if (_kv_conf_level == HCCKB::Confidence::Low) { col = "#FF9F43 "; if (txt.empty()) txt = "THẤP"; }
+        else if (txt.empty()) txt = "-";
+        const std::string t = std::string(col) + txt + "#";
         lv_label_set_text(_pi_conf, t.c_str());
+    }
+
+    // --- Ô ghi chú ---
+    if (_pi_info) {
+        std::string note;
+        if (matched && _kv_hw_confirmed) note = _kv_hw;
+        else if (_kv_hw_known) note = _kv_hw + " - cần đo kiểm xác nhận trước khi thay linh kiện.";
+        else note = "Chưa có case VERIFIED phù hợp. Cần đo kiểm trước khi thay linh kiện.";
+        lv_label_set_text(_pi_info, note.empty() ? "-" : note.c_str());
     }
 }
 
@@ -4702,12 +4880,19 @@ void HCCHome::refreshPanicDetail()
     if (fileshown.rfind("[RAM] ", 0) == 0) fileshown = fileshown.substr(6);
     setL(_pi_file, "File: " + fileshown);
 
+    auto clearNew = [&]() {
+        setL(_pi_ident, ""); setL(_pi_board, ""); setL(_pi_tag, ""); setL(_pi_time, "");
+        setL(_pi_errtitle, ""); setL(_pi_errsub, ""); setL(_pi_target, "");
+        for (int i = 0; i < 2; ++i) { setL(_pi_sensor_lbl[i], ""); setL(_pi_sensor_val[i], ""); }
+    };
+
     // Ảnh panic?
     std::string mime;
     if (strncmp(_panic_file, "[RAM] ", 6) == 0 && HCCPanicServer::receivedIsImage(&mime)) {
-        setL(_pi_model, "Model: (ảnh panic)");
-        setL(_pi_ios, "iOS: -");
-        setL(_pi_soc, "SoC: -");
+        setL(_pi_model, "(ảnh panic)");
+        setL(_pi_ios, "-");
+        setL(_pi_soc, "-");
+        clearNew();
         if (_pi_sev) { lv_label_set_text(_pi_sev, "ẢNH"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0x00D9FF), 0); }
         setL(_pi_sevsub, "Ảnh chụp panic - dùng ANALYZE để AI đọc");
         setL(_pi_keystr, "(Ảnh panic)");
@@ -4723,9 +4908,10 @@ void HCCHome::refreshPanicDetail()
 
     std::string raw;
     if (!loadSelectedRaw(raw)) {
-        setL(_pi_model, "Model: -");
-        setL(_pi_ios, "iOS: -");
-        setL(_pi_soc, "SoC: -");
+        setL(_pi_model, "-");
+        setL(_pi_ios, "-");
+        setL(_pi_soc, "-");
+        clearNew();
         if (_pi_sev) { lv_label_set_text(_pi_sev, "-"); lv_obj_set_style_text_color(_pi_sev, lv_color_hex(0xB8C5CF), 0); }
         setL(_pi_sevsub, "-");
         setL(_pi_keystr, "(chọn panic để xem)");

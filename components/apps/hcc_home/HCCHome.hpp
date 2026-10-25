@@ -377,6 +377,18 @@ private:
     lv_obj_t *_pi_conclusion;   // KẾT LUẬN
     lv_obj_t *_pi_ai = nullptr; // (không còn trên màn chính: AI nằm trong chi tiết)
     lv_obj_t *_pi_conf = nullptr; // CONFIDENCE (khung kết luận)
+    // ---- Layout Panic Analyzer mới (3 cột) ----
+    lv_obj_t *_pi_ident = nullptr;   // Identifier (iPhone16,2)
+    lv_obj_t *_pi_board = nullptr;   // Board (d84_esim)
+    lv_obj_t *_pi_tag = nullptr;     // Tag (TAOJ)
+    lv_obj_t *_pi_time = nullptr;    // Thời gian panic
+    lv_obj_t *_pi_errtitle = nullptr;// tiêu đề lỗi lớn (SMC BSC failure)
+    lv_obj_t *_pi_errsub = nullptr;  // phụ đề (SMC báo lỗi tại tag ...)
+    lv_obj_t *_pi_target = nullptr;  // model target (d84_esim)
+    lv_obj_t *_pi_info = nullptr;    // ghi chú (chưa có case VERIFIED ...)
+    lv_obj_t *_pi_sensor_lbl[2] = {nullptr, nullptr};
+    lv_obj_t *_pi_sensor_val[2] = {nullptr, nullptr};
+    lv_obj_t *_pi_steps[4] = {nullptr, nullptr, nullptr, nullptr}; // khuyến nghị 1-4
     lv_obj_t *_panic_detail_dialog = nullptr; // XEM PHÂN TÍCH CHI TIẾT
     static void onPanicDetailClicked(lv_event_t *event);
     static void onPanicDetailCloseClicked(lv_event_t *event);
