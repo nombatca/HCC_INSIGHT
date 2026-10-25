@@ -45,9 +45,11 @@ constexpr char kInfoCommand[] =
     "echo \"C=$(getprop ro.soc.model)\";"
     "echo \"P=$(getprop ro.board.platform)\";"
     "echo \"Y=$(cat /sys/class/power_supply/battery/cycle_count 2>/dev/null)\";"
-    // TAM CHAN DOAN v3: dong co 'mac' trong dumpsys wifi + danh sach interface mang.
-    "echo \"W=$( { dumpsys wifi 2>/dev/null | grep -i mac | head -2; echo -n 'if='; "
-    "ls /sys/class/net 2>/dev/null | tr '\\n' ','; } | tr '\\n' '~' | cut -c1-70)\";"
+    // WiFi MAC: best-effort (sysfs + ip link). Android 10+ (vd Samsung) thuong chan
+    // -> rong -> hien "-". Loai MAC rong/ngau nhien.
+    "echo \"W=$( (cat /sys/class/net/wlan0/address 2>/dev/null; ip link show wlan0 2>/dev/null) | "
+    "grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | "
+    "grep -viE '^(00:00:00:00:00:00|02:00:00:00:00:00)$' | head -n1)\";"
     "echo \"T=$(settings get secure bluetooth_address 2>/dev/null)\";"
     // IMEI 2 SIM: thu vai ma lenh iphonesubinfo, lay chuoi ASCII (field giua 2 dau '),
     // chi giu 14-16 chu so. Android 10+ thuong chan -> rong.
@@ -759,9 +761,6 @@ void HCCAdbClient::parseBanner(const uint8_t *payload, size_t length)
 
 void HCCAdbClient::parseShellOutput()
 {
-    // TAM CHAN DOAN: in nguyen output shell ra serial de xem WiFi/IMEI tra ve gi.
-    printf("[HCC ADB] ===== shell raw begin =====\n%s\n[HCC ADB] ===== shell raw end =====\n",
-           _shell_output);
     char soc[32] = "";
     char platform[32] = "";
     for (char *line = _shell_output; line != nullptr && *line != '\0';) {
@@ -832,5 +831,9 @@ void HCCAdbClient::parseShellOutput()
     }
     if (strcmp(_info.wifi_mac, "null") == 0) {
         _info.wifi_mac[0] = '\0';
+    }
+    // IMEI 2 trung IMEI 1 (may 1 SIM / ma lenh tra cung 1 so) -> de trong.
+    if (_info.imei2[0] != '\0' && strcmp(_info.imei1, _info.imei2) == 0) {
+        _info.imei2[0] = '\0';
     }
 }
