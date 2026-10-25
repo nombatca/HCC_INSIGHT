@@ -48,13 +48,24 @@ private:
     lv_chart_series_t *_ser = nullptr;
     lv_obj_t *_run_lbl = nullptr;
 
-    // Radar quét.
+    // Radar quét kiểu quân sự.
+    static constexpr int kTrail = 10;   // số đoạn đuôi tia quét
+    static constexpr int kBlip = 14;    // số chấm "mục tiêu" tối đa
+
     lv_obj_t *_radar_area = nullptr;
     lv_obj_t *_sweep = nullptr;
-    lv_obj_t *_blip = nullptr;
+    lv_obj_t *_trail[kTrail] = {nullptr};
+    lv_point_t _trail_pts[kTrail][2];
     lv_point_t _sweep_pts[2];
     int _sweep_angle = 0;
     int _rcx = 0, _rcy = 0, _rR = 0;
+
+    lv_obj_t *_blips[kBlip] = {nullptr};
+    float _blip_life[kBlip] = {0};     // 1.0 -> 0.0 (mờ dần)
+    int _blip_slot = 0;
+    uint32_t _last_blip_ms = 0;
+    uint32_t _rng = 0x12345678;
+    uint32_t rnd() { _rng = _rng * 1103515245u + 12345u; return (_rng >> 16) & 0x7fff; }
 
     // Snapshot đọc từ core (dưới khoá) để vẽ.
     float _s_rssi = 0, _s_base = 0, _s_act = 0;

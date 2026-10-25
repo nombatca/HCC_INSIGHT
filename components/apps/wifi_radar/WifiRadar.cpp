@@ -64,18 +64,20 @@ void HCCWifiRadar::buildUi(lv_obj_t *parent)
     lv_obj_set_style_text_font(title, f20, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 18);
 
-    // ---- Radar tròn (trái) ----
+    // ---- Radar tròn kiểu quân sự (trái) ----
     const int RS = 300;
+    const uint32_t GREEN = 0x2BE06A;     // xanh lân tinh
     _radar_area = lv_obj_create(parent);
     lv_obj_set_size(_radar_area, RS, RS);
     lv_obj_align(_radar_area, LV_ALIGN_TOP_LEFT, 40, 70);
-    lv_obj_set_style_bg_color(_radar_area, lv_color_hex(0x0A1A28), 0);
+    lv_obj_set_style_bg_color(_radar_area, lv_color_hex(0x031207), 0);
     lv_obj_set_style_radius(_radar_area, RS / 2, 0);
-    lv_obj_set_style_border_color(_radar_area, lv_color_hex(0x16D0A0), 0);
+    lv_obj_set_style_border_color(_radar_area, lv_color_hex(0x1F8A42), 0);
     lv_obj_set_style_border_width(_radar_area, 2, 0);
+    lv_obj_set_style_clip_corner(_radar_area, true, 0);
     lv_obj_clear_flag(_radar_area, LV_OBJ_FLAG_SCROLLABLE);
-    _rcx = RS / 2; _rcy = RS / 2; _rR = RS / 2 - 10;
-    // vòng đồng tâm
+    _rcx = RS / 2; _rcy = RS / 2; _rR = RS / 2 - 8;
+    // vòng cự ly
     for (int k = 1; k <= 3; ++k) {
         int rr = _rR * k / 3;
         lv_obj_t *ring = lv_obj_create(_radar_area);
@@ -83,25 +85,57 @@ void HCCWifiRadar::buildUi(lv_obj_t *parent)
         lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_radius(ring, rr, 0);
         lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_color(ring, lv_color_hex(0x1C5E52), 0);
+        lv_obj_set_style_border_color(ring, lv_color_hex(0x15521F + k * 0x061A08), 0);
         lv_obj_set_style_border_width(ring, 1, 0);
         lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
     }
-    // đường quét
+    // thập tự + 2 đường chéo
+    for (int d = 0; d < 4; ++d) {
+        static lv_point_t cl[4][2];
+        float ang = d * 45.0f * 3.14159265f / 180.0f;
+        cl[d][0] = {(lv_coord_t)(_rcx - _rR * cosf(ang)), (lv_coord_t)(_rcy - _rR * sinf(ang))};
+        cl[d][1] = {(lv_coord_t)(_rcx + _rR * cosf(ang)), (lv_coord_t)(_rcy + _rR * sinf(ang))};
+        lv_obj_t *ln = lv_line_create(_radar_area);
+        lv_obj_set_style_line_color(ln, lv_color_hex(0x154A20), 0);
+        lv_obj_set_style_line_width(ln, 1, 0);
+        lv_line_set_points(ln, cl[d], 2);
+    }
+    // đuôi tia quét (mờ dần) — vẽ trước, nằm dưới tia chính
+    for (int i = 0; i < kTrail; ++i) {
+        _trail[i] = lv_line_create(_radar_area);
+        lv_obj_set_style_line_color(_trail[i], lv_color_hex(GREEN), 0);
+        lv_obj_set_style_line_width(_trail[i], 3, 0);
+        lv_obj_set_style_line_opa(_trail[i], LV_OPA_TRANSP, 0);
+        _trail_pts[i][0] = {(lv_coord_t)_rcx, (lv_coord_t)_rcy};
+        _trail_pts[i][1] = {(lv_coord_t)_rcx, (lv_coord_t)_rcy};
+        lv_line_set_points(_trail[i], _trail_pts[i], 2);
+    }
+    // tia quét chính
     _sweep = lv_line_create(_radar_area);
-    lv_obj_set_style_line_color(_sweep, lv_color_hex(0x3DF2B0), 0);
+    lv_obj_set_style_line_color(_sweep, lv_color_hex(0x8DFFB0), 0);
     lv_obj_set_style_line_width(_sweep, 3, 0);
     _sweep_pts[0] = {(lv_coord_t)_rcx, (lv_coord_t)_rcy};
     _sweep_pts[1] = {(lv_coord_t)(_rcx + _rR), (lv_coord_t)_rcy};
     lv_line_set_points(_sweep, _sweep_pts, 2);
-    // blip (chấm báo động)
-    _blip = lv_obj_create(_radar_area);
-    lv_obj_set_size(_blip, 18, 18);
-    lv_obj_set_style_radius(_blip, 9, 0);
-    lv_obj_set_style_bg_color(_blip, lv_color_hex(0xFF5C5C), 0);
-    lv_obj_set_style_border_width(_blip, 0, 0);
-    lv_obj_clear_flag(_blip, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(_blip, LV_OBJ_FLAG_HIDDEN);
+    // tâm
+    lv_obj_t *dot = lv_obj_create(_radar_area);
+    lv_obj_set_size(dot, 8, 8);
+    lv_obj_align(dot, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_radius(dot, 4, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(GREEN), 0);
+    lv_obj_set_style_border_width(dot, 0, 0);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+    // pool chấm mục tiêu
+    for (int i = 0; i < kBlip; ++i) {
+        _blips[i] = lv_obj_create(_radar_area);
+        lv_obj_set_size(_blips[i], 16, 16);
+        lv_obj_set_style_radius(_blips[i], 8, 0);
+        lv_obj_set_style_bg_color(_blips[i], lv_color_hex(0xB6FF3A), 0);
+        lv_obj_set_style_border_width(_blips[i], 0, 0);
+        lv_obj_clear_flag(_blips[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(_blips[i], LV_OBJ_FLAG_HIDDEN);
+        _blip_life[i] = 0;
+    }
 
     // ---- Cột phải: trạng thái + số liệu ----
     const int RX = 380;
@@ -227,34 +261,71 @@ void HCCWifiRadar::uiTickCb(lv_timer_t *t)
 
 void HCCWifiRadar::refreshUi(void)
 {
-    // quét radar
-    _sweep_angle = (_sweep_angle + 7) % 360;
-    float a = _sweep_angle * 3.14159265f / 180.0f;
+    const float D2R = 3.14159265f / 180.0f;
+    // quay tia quét
+    _sweep_angle = (_sweep_angle + 6) % 360;
+    float a = _sweep_angle * D2R;
     _sweep_pts[0] = {(lv_coord_t)_rcx, (lv_coord_t)_rcy};
     _sweep_pts[1] = {(lv_coord_t)(_rcx + _rR * cosf(a)), (lv_coord_t)(_rcy + _rR * sinf(a))};
     lv_line_set_points(_sweep, _sweep_pts, 2);
+    // đuôi mờ dần phía sau tia
+    for (int i = 0; i < kTrail; ++i) {
+        float ta = (_sweep_angle - (i + 1) * 4) * D2R;
+        _trail_pts[i][0] = {(lv_coord_t)_rcx, (lv_coord_t)_rcy};
+        _trail_pts[i][1] = {(lv_coord_t)(_rcx + _rR * cosf(ta)), (lv_coord_t)(_rcy + _rR * sinf(ta))};
+        lv_line_set_points(_trail[i], _trail_pts[i], 2);
+        lv_opa_t op = (lv_opa_t)(110 * (kTrail - i) / kTrail);
+        lv_obj_set_style_line_opa(_trail[i], op, 0);
+    }
+
+    uint32_t now = now_ms();
+
+    // Sinh chấm mục tiêu khi có chuyển động (vị trí = tia quét lúc đó, xa theo mức).
+    if (_s_connected && _s_motion && (now - _last_blip_ms) > 320) {
+        _last_blip_ms = now;
+        float jit = ((int)(rnd() % 20) - 10) * D2R;       // lệch góc ±10°
+        float ba = a + jit;
+        float rr = _rR * (0.30f + 0.60f * (_s_level / 100.0f));
+        if (rr > _rR - 6) rr = _rR - 6;
+        int bx = (int)(_rcx + rr * cosf(ba));
+        int by = (int)(_rcy + rr * sinf(ba));
+        int s = _blip_slot++ % kBlip;
+        lv_obj_set_pos(_blips[s], bx - 8, by - 8);
+        _blip_life[s] = 1.0f;
+    }
+    // Mờ dần tất cả chấm.
+    for (int i = 0; i < kBlip; ++i) {
+        if (_blip_life[i] > 0) {
+            _blip_life[i] -= 0.035f;
+            if (_blip_life[i] <= 0) {
+                _blip_life[i] = 0;
+                lv_obj_add_flag(_blips[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_clear_flag(_blips[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_bg_opa(_blips[i], (lv_opa_t)(255 * _blip_life[i]), 0);
+                int sz = 10 + (int)(10 * _blip_life[i]);
+                lv_obj_set_size(_blips[i], sz, sz);
+                lv_obj_set_style_radius(_blips[i], sz / 2, 0);
+            }
+        }
+    }
 
     if (!_s_connected) {
         lv_label_set_text(_status, "CHƯA KẾT NỐI WIFI");
         lv_obj_set_style_text_color(_status, lv_color_hex(0xFFB347), 0);
         lv_label_set_text(_ap_lbl, "Vào Cài đặt kết nối WiFi để dò chuyển động");
-        lv_obj_add_flag(_blip, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_line_color(_sweep, lv_color_hex(0x3A5566), 0);
         return;
     }
 
     if (_s_motion) {
-        lv_label_set_text(_status, LV_SYMBOL_WARNING " CÓ CHUYỂN ĐỘNG");
-        lv_obj_set_style_text_color(_status, lv_color_hex(0xFF6B6B), 0);
-        lv_obj_set_style_line_color(_sweep, lv_color_hex(0xFF6B6B), 0);
-        // blip ở đầu đường quét
-        lv_obj_set_pos(_blip, _sweep_pts[1].x - 9, _sweep_pts[1].y - 9);
-        lv_obj_clear_flag(_blip, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(_status, LV_SYMBOL_WARNING " PHÁT HIỆN MỤC TIÊU");
+        lv_obj_set_style_text_color(_status, lv_color_hex(0xFFD23F), 0);
+        lv_obj_set_style_line_color(_sweep, lv_color_hex(0xFFE37A), 0);
     } else {
-        lv_label_set_text(_status, LV_SYMBOL_OK " YÊN TĨNH");
-        lv_obj_set_style_text_color(_status, lv_color_hex(0x3DD66E), 0);
-        lv_obj_set_style_line_color(_sweep, lv_color_hex(0x3DF2B0), 0);
-        lv_obj_add_flag(_blip, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(_status, LV_SYMBOL_OK " KHÔNG CÓ MỤC TIÊU");
+        lv_obj_set_style_text_color(_status, lv_color_hex(0x2BE06A), 0);
+        lv_obj_set_style_line_color(_sweep, lv_color_hex(0x8DFFB0), 0);
     }
 
     char b[64];
