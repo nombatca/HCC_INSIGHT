@@ -45,11 +45,9 @@ constexpr char kInfoCommand[] =
     "echo \"C=$(getprop ro.soc.model)\";"
     "echo \"P=$(getprop ro.board.platform)\";"
     "echo \"Y=$(cat /sys/class/power_supply/battery/cycle_count 2>/dev/null)\";"
-    // TAM CHAN DOAN v2: sysfs + ip + dumpsys wifi (bo cmd wifi vi bao Exception).
-    "echo \"W=$( { echo -n 'sy='; cat /sys/class/net/wlan0/address 2>&1; "
-    "echo -n ' ip='; ip -o link show wlan0 2>&1 | grep -oE 'ether [0-9a-f:]+' | head -1; "
-    "echo -n ' dw='; dumpsys wifi 2>/dev/null | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -1; } "
-    "| tr '\\n' ' ' | cut -c1-60)\";"
+    // TAM CHAN DOAN v3: dong co 'mac' trong dumpsys wifi + danh sach interface mang.
+    "echo \"W=$( { dumpsys wifi 2>/dev/null | grep -i mac | head -2; echo -n 'if='; "
+    "ls /sys/class/net 2>/dev/null | tr '\\n' ','; } | tr '\\n' '~' | cut -c1-70)\";"
     "echo \"T=$(settings get secure bluetooth_address 2>/dev/null)\";"
     // IMEI 2 SIM: thu vai ma lenh iphonesubinfo, lay chuoi ASCII (field giua 2 dau '),
     // chi giu 14-16 chu so. Android 10+ thuong chan -> rong.
