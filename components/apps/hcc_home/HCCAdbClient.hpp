@@ -44,6 +44,8 @@ public:
         char battery_temp[12];
         char battery_voltage[12];
         char battery_cycles[12];
+        char wifi_mac[20];
+        char bt_mac[20];
     };
 
     // Loads the ADB host key from NVS, or generates and stores it, on a background task.

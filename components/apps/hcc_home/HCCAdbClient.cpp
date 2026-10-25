@@ -45,6 +45,8 @@ constexpr char kInfoCommand[] =
     "echo \"C=$(getprop ro.soc.model)\";"
     "echo \"P=$(getprop ro.board.platform)\";"
     "echo \"Y=$(cat /sys/class/power_supply/battery/cycle_count 2>/dev/null)\";"
+    "echo \"W=$(cat /sys/class/net/wlan0/address 2>/dev/null)\";"
+    "echo \"T=$(settings get secure bluetooth_address 2>/dev/null)\";"
     "dumpsys battery";
 
 // ---- Host key (RSA-2048, persisted in NVS, shared by every connection) ----
@@ -769,6 +771,8 @@ void HCCAdbClient::parseShellOutput()
             case 'C': field = soc; size = sizeof(soc); break;
             case 'P': field = platform; size = sizeof(platform); break;
             case 'Y': field = _info.battery_cycles; size = sizeof(_info.battery_cycles); break;
+            case 'W': field = _info.wifi_mac; size = sizeof(_info.wifi_mac); break;
+            case 'T': field = _info.bt_mac; size = sizeof(_info.bt_mac); break;
             default: break;
             }
             // Keep banner values when getprop printed nothing.
@@ -808,4 +812,12 @@ void HCCAdbClient::parseShellOutput()
         line = newline != nullptr ? newline + 1 : nullptr;
     }
     snprintf(_info.chipset, sizeof(_info.chipset), "%s", soc[0] != '\0' ? soc : platform);
+
+    // MAC bị Android ẩn vì riêng tư (02:00:...) hoặc không đọc được ("null") -> để trống.
+    if (strcmp(_info.bt_mac, "02:00:00:00:00:00") == 0 || strcmp(_info.bt_mac, "null") == 0) {
+        _info.bt_mac[0] = '\0';
+    }
+    if (strcmp(_info.wifi_mac, "null") == 0) {
+        _info.wifi_mac[0] = '\0';
+    }
 }

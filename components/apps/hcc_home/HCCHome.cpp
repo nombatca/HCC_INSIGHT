@@ -584,11 +584,13 @@ void HCCHome::applyAdbState(HCCHome *app)
         snprintf(model, sizeof(model), "%s%s%s%s%s", info.brand, info.brand[0] != '\0' ? " " : "",
                  value(info.model), info.device[0] != '\0' ? " / " : "", info.device);
         snprintf(app->_usb_info, sizeof(app->_usb_info),
-                 "Model: %s\nAndroid: %s (SDK %s)\nBuild: %s\nSerial: %s\nChipset: %s\n"
+                 "Model: %s\nAndroid: %s (SDK %s)\nSerial: %s\nChipset: %s\n"
+                 "WiFi: %s\nBluetooth: %s\n"
                  "Battery: %s  %s  %s  %s\nCycles: %s",
-                 model, value(info.android), value(info.sdk), value(info.build),
+                 model, value(info.android), value(info.sdk),
                  info.serial[0] != '\0' ? info.serial : value(app->_usb_desc_serial),
-                 value(info.chipset), value(info.battery_level), value(info.battery_health),
+                 value(info.chipset), value(info.wifi_mac), value(info.bt_mac),
+                 value(info.battery_level), value(info.battery_health),
                  value(info.battery_temp), value(info.battery_voltage), value(info.battery_cycles));
     }
     lv_async_call(HCCHome::applyUSBResult, app);
