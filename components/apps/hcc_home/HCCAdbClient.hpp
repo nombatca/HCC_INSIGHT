@@ -44,7 +44,7 @@ public:
         char battery_temp[12];
         char battery_voltage[12];
         char battery_cycles[12];
-        char wifi_mac[20];
+        char wifi_mac[64];   // tạm nới rộng để chứa chuỗi chẩn đoán WiFi
         char bt_mac[20];
         char imei1[20];
         char imei2[20];
