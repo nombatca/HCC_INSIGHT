@@ -4535,17 +4535,17 @@ void HCCHome::showPanic()
 
     // --- Cột 1: THÔNG TIN MÁY ---
     lv_obj_t *c1 = mkCard(16, cy, 312, colH, LV_SYMBOL_HOME, "THÔNG TIN MÁY");
-    int ry = 48;
-    _pi_model = rowVal(c1, ry, "Model");     ry += 33;
-    _pi_ident = rowVal(c1, ry, "Mã máy");    ry += 33;
-    _pi_ios   = rowVal(c1, ry, "iOS");       ry += 33;
-    _pi_soc   = rowVal(c1, ry, "SoC");       ry += 33;
-    _pi_board = rowVal(c1, ry, "Board");     ry += 33;
-    _pi_tag   = rowVal(c1, ry, "Tag");       ry += 33;
-    _pi_time  = rowVal(c1, ry, "Thời gian"); ry += 40;
+    int ry = 46;
+    _pi_model = rowVal(c1, ry, "Model");     ry += 32;
+    _pi_ident = rowVal(c1, ry, "Mã máy");    ry += 32;
+    _pi_ios   = rowVal(c1, ry, "iOS");       ry += 32;
+    _pi_soc   = rowVal(c1, ry, "SoC");       ry += 32;
+    _pi_board = rowVal(c1, ry, "Board");     ry += 32;
+    _pi_tag   = rowVal(c1, ry, "Tag");       ry += 32;
+    _pi_time  = rowVal(c1, ry, "Thời gian"); ry += 38;
     {
         lv_obj_t *stb = lv_obj_create(c1);
-        lv_obj_set_size(stb, 282, 56); lv_obj_set_pos(stb, 14, ry);
+        lv_obj_set_size(stb, 282, 54); lv_obj_set_pos(stb, 14, ry);
         lv_obj_set_style_bg_color(stb, lv_color_hex(0x3A1518), 0);
         lv_obj_set_style_border_color(stb, lv_color_hex(0x7A2A2A), 0);
         lv_obj_set_style_border_width(stb, 1, 0);
@@ -4588,6 +4588,8 @@ void HCCHome::showPanic()
             lv_obj_set_style_text_color(_pi_sensor_lbl[i], lv_color_hex(0xE8C14A), 0);
             lv_obj_set_pos(_pi_sensor_lbl[i], i ? 206 : 26, 12);
             _pi_sensor_val[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_val[i], "-");
+            lv_label_set_long_mode(_pi_sensor_val[i], LV_LABEL_LONG_DOT);
+            lv_obj_set_width(_pi_sensor_val[i], 150);
             lv_obj_set_style_text_font(_pi_sensor_val[i], &lv_font_be_vietnam_28, 0);
             lv_obj_set_style_text_color(_pi_sensor_val[i], lv_color_hex(YEL), 0);
             lv_obj_set_pos(_pi_sensor_val[i], i ? 200 : 22, 42);
@@ -4726,16 +4728,35 @@ void HCCHome::showPanicDeviceInfo(const ParsedPanic &parsed)
     setL(_pi_time, f.timestamp);
 
     // --- Cột 2: kết luận ---
-    // Tiêu đề lỗi lớn = assert_text ("SMC BSC failure") hoặc message rút gọn.
+    // Tiêu đề lỗi lớn: ưu tiên assert_text ngắn ("SMC BSC failure"); nếu không có thì
+    // dùng tên loại panic ngắn gọn (KHÔNG đổ nguyên message dài để tránh tràn/cắt chữ).
     std::string errtitle = f.assert_text;
-    if (errtitle.empty()) errtitle = f.message;           // dự phòng
+    if (errtitle.empty()) {
+        switch (f.primary_kind) {
+            case PanicKind::SmcPanic:          errtitle = "SMC PANIC"; break;
+            case PanicKind::AopPanic:          errtitle = "AOP PANIC"; break;
+            case PanicKind::SepPanic:          errtitle = "SEP PANIC"; break;
+            case PanicKind::AnsNvme:           errtitle = "ANS / NVMe"; break;
+            case PanicKind::Baseband:          errtitle = "BASEBAND"; break;
+            case PanicKind::Pmu:               errtitle = "PMU PANIC"; break;
+            case PanicKind::I2c:               errtitle = "I2C PANIC"; break;
+            case PanicKind::UsbPhy:            errtitle = "USB PHY"; break;
+            case PanicKind::KernelException:   errtitle = "KERNEL PANIC"; break;
+            case PanicKind::KernelGeneric:     errtitle = "KERNEL PANIC"; break;
+            case PanicKind::BusyTimeout:       errtitle = "BUSY TIMEOUT"; break;
+            case PanicKind::IOKitDaemonStall:  errtitle = "IOKIT STALL"; break;
+            case PanicKind::UserspaceWatchdog: errtitle = "WATCHDOG"; break;
+            case PanicKind::WatchdogTimeout:   errtitle = "WATCHDOG"; break;
+            default:                           errtitle = "PANIC"; break;
+        }
+    }
     setL(_pi_errtitle, errtitle);
-    // Phụ đề: mô tả nguồn lỗi theo dữ liệu đã trích (không suy diễn phần cứng).
+    // Phụ đề: mô tả nguồn lỗi theo dữ liệu đã trích (showKbView sẽ ghi đè bằng kết luận KB).
     std::string sub;
     if (!f.assert_tags.empty()) sub = "SMC báo lỗi tại tag " + tags;
     else if (!f.smc_target.empty()) sub = "ASSERT trong target " + f.smc_target;
     else if (!f.source_location.empty()) sub = f.source_location;
-    setL(_pi_errsub, sub);
+    if (_pi_errsub) lv_label_set_text(_pi_errsub, sub.c_str());  // rỗng thì để trống (không hiện "-")
     // Model target.
     setL(_pi_target, f.smc_target);
     // Hai ô sensor (nếu có): "s.sensor[1]" = 0x......
@@ -4857,13 +4878,22 @@ void HCCHome::showKbView()
         lv_label_set_text(_pi_conf, t.c_str());
     }
 
-    // --- Ô ghi chú ---
+    // --- Phụ đề (dưới tiêu đề lỗi) = kết luận phần cứng từ KB, nếu có ---
+    if (_pi_errsub) {
+        const bool hwOk = !_kv_hw.empty() && _kv_hw != "-" &&
+                          _kv_hw.rfind("Chọn panic", 0) != 0 && _kv_hw.rfind("KB chưa", 0) != 0 &&
+                          _kv_hw.rfind("Ảnh panic", 0) != 0;
+        const char *cur = lv_label_get_text(_pi_errsub);
+        if (hwOk) lv_label_set_text(_pi_errsub, _kv_hw.c_str());
+        else if (cur == nullptr || cur[0] == '\0') lv_label_set_text(_pi_errsub, "");
+    }
+
+    // --- Ô ghi chú: chỉ nói trạng thái case VERIFIED ---
     if (_pi_info) {
         std::string note;
-        if (matched && _kv_hw_confirmed) note = _kv_hw;
-        else if (_kv_hw_known) note = _kv_hw + " - cần đo kiểm xác nhận trước khi thay linh kiện.";
+        if (matched && _kv_hw_confirmed) note = "Đã khớp case VERIFIED phù hợp.";
         else note = "Chưa có case VERIFIED phù hợp. Cần đo kiểm trước khi thay linh kiện.";
-        lv_label_set_text(_pi_info, note.empty() ? "-" : note.c_str());
+        lv_label_set_text(_pi_info, note.c_str());
     }
 }
 
