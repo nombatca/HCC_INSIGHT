@@ -186,10 +186,10 @@ extern "C" void app_main(void)
         return;
     }
 
-    HCCWifiRadar *wifi_radar = new HCCWifiRadar();
-    assert(wifi_radar != nullptr && "Failed to create wifi_radar");
-    if (phone->installApp(wifi_radar) < 0) {
-        ESP_LOGE(TAG, "Failed to install wifi_radar");
+    PhoneRadar *phone_radar = new PhoneRadar();
+    assert(phone_radar != nullptr && "Failed to create phone_radar");
+    if (phone->installApp(phone_radar) < 0) {
+        ESP_LOGE(TAG, "Failed to install phone_radar");
         bsp_display_unlock();
         return;
     }
