@@ -4552,6 +4552,7 @@ void HCCHome::showPanic()
         lv_obj_set_style_border_color(stb, lv_color_hex(0x7A2A2A), 0);
         lv_obj_set_style_border_width(stb, 1, 0);
         lv_obj_set_style_radius(stb, 10, 0);
+        lv_obj_set_style_pad_all(stb, 0, 0);
         lv_obj_clear_flag(stb, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *sti = lv_label_create(stb); lv_label_set_text(sti, LV_SYMBOL_WARNING);
         lv_obj_set_style_text_font(sti, &lv_font_be_vietnam_28, 0);
@@ -4584,7 +4585,7 @@ void HCCHome::showPanic()
     {
         lv_obj_t *sb = lv_obj_create(c2); lv_obj_set_size(sb, 356, 80); lv_obj_set_pos(sb, 18, 116);
         lv_obj_set_style_bg_color(sb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(sb, lv_color_hex(CARD_BD), 0);
-        lv_obj_set_style_border_width(sb, 1, 0); lv_obj_set_style_radius(sb, 10, 0); lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_border_width(sb, 1, 0); lv_obj_set_style_radius(sb, 10, 0); lv_obj_set_style_pad_all(sb, 0, 0); lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
         for (int i = 0; i < 2; ++i) {
             _pi_sensor_lbl[i] = lv_label_create(sb); lv_label_set_text(_pi_sensor_lbl[i], "-");
             lv_obj_set_style_text_font(_pi_sensor_lbl[i], f16, 0);
@@ -4603,7 +4604,7 @@ void HCCHome::showPanic()
     {
         lv_obj_t *mt = lv_obj_create(c2); lv_obj_set_size(mt, 210, 54); lv_obj_set_pos(mt, 18, 206);
         lv_obj_set_style_bg_color(mt, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(mt, lv_color_hex(CARD_BD), 0);
-        lv_obj_set_style_border_width(mt, 1, 0); lv_obj_set_style_radius(mt, 8, 0); lv_obj_clear_flag(mt, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_border_width(mt, 1, 0); lv_obj_set_style_radius(mt, 8, 0); lv_obj_set_style_pad_all(mt, 0, 0); lv_obj_clear_flag(mt, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *mtl = lv_label_create(mt); lv_label_set_text(mtl, "Model target");
         lv_obj_set_style_text_font(mtl, f14, 0); lv_obj_set_style_text_color(mtl, lv_color_hex(MUTED), 0); lv_obj_set_pos(mtl, 12, 7);
         _pi_target = lv_label_create(mt); lv_label_set_text(_pi_target, "-");
@@ -4611,7 +4612,7 @@ void HCCHome::showPanic()
         lv_obj_set_style_text_font(_pi_target, f16, 0); lv_obj_set_style_text_color(_pi_target, lv_color_hex(WHITE), 0); lv_obj_set_pos(_pi_target, 12, 27);
         lv_obj_t *cfb = lv_obj_create(c2); lv_obj_set_size(cfb, 146, 54); lv_obj_set_pos(cfb, 234, 206);
         lv_obj_set_style_bg_color(cfb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(cfb, lv_color_hex(CARD_BD), 0);
-        lv_obj_set_style_border_width(cfb, 1, 0); lv_obj_set_style_radius(cfb, 8, 0); lv_obj_clear_flag(cfb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_border_width(cfb, 1, 0); lv_obj_set_style_radius(cfb, 8, 0); lv_obj_set_style_pad_all(cfb, 0, 0); lv_obj_clear_flag(cfb, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *cfl = lv_label_create(cfb); lv_label_set_text(cfl, "Độ tin cậy");
         lv_obj_set_style_text_font(cfl, f14, 0); lv_obj_set_style_text_color(cfl, lv_color_hex(MUTED), 0); lv_obj_set_pos(cfl, 12, 7);
         _pi_conf = lv_label_create(cfb); lv_label_set_recolor(_pi_conf, true); lv_label_set_text(_pi_conf, "-");
@@ -4620,7 +4621,7 @@ void HCCHome::showPanic()
     {
         lv_obj_t *ib = lv_obj_create(c2); lv_obj_set_size(ib, 356, 62); lv_obj_set_pos(ib, 18, 268);
         lv_obj_set_style_bg_color(ib, lv_color_hex(0x10263A), 0); lv_obj_set_style_border_color(ib, lv_color_hex(0x2E4A63), 0);
-        lv_obj_set_style_border_width(ib, 1, 0); lv_obj_set_style_radius(ib, 10, 0); lv_obj_clear_flag(ib, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_border_width(ib, 1, 0); lv_obj_set_style_radius(ib, 10, 0); lv_obj_set_style_pad_all(ib, 0, 0); lv_obj_clear_flag(ib, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *ii = lv_label_create(ib); lv_label_set_text(ii, LV_SYMBOL_WARNING);
         lv_obj_set_style_text_font(ii, f18, 0); lv_obj_set_style_text_color(ii, lv_color_hex(0xE8C14A), 0); lv_obj_set_pos(ii, 12, 11);
         _pi_info = lv_label_create(ib); lv_label_set_text(_pi_info, "-");
@@ -4635,10 +4636,10 @@ void HCCHome::showPanic()
         for (int i = 0; i < 3; ++i) {
             lv_obj_t *rb = lv_obj_create(c3); lv_obj_set_size(rb, 236, 50); lv_obj_set_pos(rb, 14, sy);
             lv_obj_set_style_bg_color(rb, lv_color_hex(BOX_BG), 0); lv_obj_set_style_border_color(rb, lv_color_hex(CARD_BD), 0);
-            lv_obj_set_style_border_width(rb, 1, 0); lv_obj_set_style_radius(rb, 8, 0); lv_obj_clear_flag(rb, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_style_border_width(rb, 1, 0); lv_obj_set_style_radius(rb, 8, 0); lv_obj_set_style_pad_all(rb, 0, 0); lv_obj_clear_flag(rb, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_t *nb = lv_obj_create(rb); lv_obj_set_size(nb, 26, 26); lv_obj_set_pos(nb, 8, 12);
             lv_obj_set_style_bg_color(nb, lv_color_hex(0x1E6FD0), 0); lv_obj_set_style_border_width(nb, 0, 0);
-            lv_obj_set_style_radius(nb, 7, 0); lv_obj_clear_flag(nb, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_style_radius(nb, 7, 0); lv_obj_set_style_pad_all(nb, 0, 0); lv_obj_clear_flag(nb, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_t *nn = lv_label_create(nb); char nnum[2] = {(char)('1' + i), 0}; lv_label_set_text(nn, nnum);
             lv_obj_set_style_text_font(nn, f16, 0); lv_obj_set_style_text_color(nn, lv_color_hex(WHITE), 0); lv_obj_center(nn);
             _pi_steps[i] = lv_label_create(rb); lv_label_set_text(_pi_steps[i], "-");
