@@ -40,7 +40,7 @@ private:
     adc_oneshot_unit_handle_t _adc = nullptr;
     adc_cali_handle_t _cali = nullptr;
     bool _cali_ok = false;
-    int _channel = 0;                   // 0..7
+    int _channel = 4;                   // CH4..7 = GPIO20..23 (CH0-3/GPIO16-19 danh cho SDIO WiFi)
     bool _adc_ready = false;
 
     // Đo

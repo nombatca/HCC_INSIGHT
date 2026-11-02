@@ -147,7 +147,7 @@ void HCCAdcMeter::buildUi(lv_obj_t *parent)
     lv_obj_set_style_text_font(_ch_lbl, f22, 0);
     lv_obj_set_style_text_color(_ch_lbl, lv_color_hex(0xE9FBFF), 0);
     lv_obj_align(_ch_lbl, LV_ALIGN_TOP_LEFT, RX, 74);
-    lv_label_set_text(_ch_lbl, "ADC1 CH0 (GPIO16)");
+    lv_label_set_text(_ch_lbl, "ADC1 CH4 (GPIO20)");
 
     _ratio_lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(_ratio_lbl, f18, 0);
@@ -162,7 +162,8 @@ void HCCAdcMeter::buildUi(lv_obj_t *parent)
     lv_obj_set_style_text_color(_hint, lv_color_hex(0xE08A8A), 0);
     lv_obj_align(_hint, LV_ALIGN_TOP_LEFT, RX, 146);
     lv_label_set_text(_hint,
-        "Dua TRUC TIEP chi <=3.3V vao chan ADC. Ap cao hon (pin, 5V...) phai qua CAU PHAN AP roi dat he so chia. KHONG cham GND chung sai.");
+        "Chan do: CH4-7 = GPIO20,21,22,23 (CH0-3/GPIO16-19 danh cho WiFi, khong dung). "
+        "Dua TRUC TIEP chi <=3.3V; ap cao hon qua CAU PHAN AP + dat he so chia. Noi GND chung.");
 
     // ---- Nút ----
     auto mkBtn = [&](const char *txt, lv_event_cb_t cb, uint32_t col, lv_align_t al, int x, int y, int w) {
@@ -229,7 +230,8 @@ void HCCAdcMeter::chBtnCb(lv_event_t *e)
 {
     HCCAdcMeter *app = static_cast<HCCAdcMeter *>(lv_event_get_user_data(e));
     if (!app) return;
-    app->_channel = (app->_channel + 1) % 8;
+    // Chi dung CH4..7 (GPIO20..23). CH0..3 (GPIO16..19) la SDIO WiFi -> dung la crash.
+    app->_channel = ((app->_channel - 4 + 1) % 4) + 4;
     app->configChannel(app->_channel);
     app->_vmin = 1e9f; app->_vmax = -1e9f;
 }
