@@ -194,6 +194,14 @@ extern "C" void app_main(void)
         return;
     }
 
+    HCCAdcMeter *adc_meter = new HCCAdcMeter();
+    assert(adc_meter != nullptr && "Failed to create adc_meter");
+    if (phone->installApp(adc_meter) < 0) {
+        ESP_LOGE(TAG, "Failed to install adc_meter");
+        bsp_display_unlock();
+        return;
+    }
+
     HCCHome *hcc_home = new HCCHome();
     assert(hcc_home != nullptr && "Failed to create hcc_home");
     if (phone->installApp(hcc_home) < 0) {
