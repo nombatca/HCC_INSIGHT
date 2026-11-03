@@ -17,6 +17,7 @@
 #include "HCCPanicKBv1.hpp"
 #include "HCCiPhoneDiagnostics.hpp"
 #include "HCCAndroidDiagnostics.hpp"
+#include "HCCAndroidApps.hpp"
 class HCCHome : public ESP_Brookesia_PhoneApp {
 private:
     enum class USBMode {
@@ -288,6 +289,17 @@ private:
     volatile bool _cam_job_requested = false;
     bool _hw_last_job_camera = false; // set by the USB task when it starts a job
     char _cam_job_command[1536] = {};
+    // Quét app rác/spam (Android ADB): UI đặt cờ, USB task chạy job, async trả kết quả.
+    volatile bool _apps_scan_requested = false;
+    volatile bool _apps_uninstall_requested = false;
+    volatile bool _apps_error = false;
+    volatile int _apps_job = 0;          // 0 none, 1 list, 2 uninstall
+    char _apps_uninstall_cmd[160] = {};
+    std::vector<HCCAndroidApps::AppEntry> _apps;
+    std::string _apps_pending_pkg;       // gói đang gỡ
+    std::string _apps_note;              // dòng trạng thái sau gỡ
+    lv_obj_t *_apps_list = nullptr;      // container cuộn danh sách
+    lv_obj_t *_apps_status = nullptr;    // nhãn trạng thái
     enum class CamWizardPhase : uint8_t {
         Idle,      // no test (or cancelled)
         Listing,   // reading the camera list
@@ -406,6 +418,14 @@ private:
     static void onUsbDiskBack(lv_event_t *event);
     static void onUsbDiskTimer(lv_timer_t *timer);
     static void onUsbDiskStateDeleted(lv_event_t *event);
+    // QUÉT APP RÁC (Android): liệt kê app bên thứ 3, đánh dấu nghi ngờ, gỡ 1 chạm.
+    void showAppScan();
+    void rebuildAppList();
+    static void applyAppsResult(void *arg);
+    static void onAppScanClicked(lv_event_t *event);  // mở từ USB HUB
+    static void onAppScanBack(lv_event_t *event);
+    static void onAppRescan(lv_event_t *event);
+    static void onAppUninstall(lv_event_t *event);
     // CASE ĐÃ LƯU: xem các case XÁC NHẬN ĐÃ SỬA trên thẻ SD (kb/v1/cases + case cũ)
     lv_obj_t *_case_dialog = nullptr;
     lv_obj_t *_case_text = nullptr;   // nội dung case đang chọn

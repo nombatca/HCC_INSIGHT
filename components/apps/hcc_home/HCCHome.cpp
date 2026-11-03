@@ -1619,11 +1619,29 @@ void HCCHome::usbClientTask(void *arg)
                 lv_async_call(HCCHome::applyAndroidDiagnostics, app);
             }
         }
+        // Quét app rác / gỡ app (chỉ khi không có job chẩn đoán/camera đang chờ chạy).
+        if ((app->_apps_scan_requested || app->_apps_uninstall_requested) &&
+            !app->_hw_android_requested && !app->_cam_job_requested) {
+            const bool uninstall = app->_apps_uninstall_requested;
+            app->_apps_scan_requested = false;
+            app->_apps_uninstall_requested = false;
+            app->_apps_job = uninstall ? 2 : 1;
+            const char *cmd = uninstall ? app->_apps_uninstall_cmd : HCCAndroidApps::listCommand();
+            if (!app->_adb.runJob(cmd)) {
+                app->_apps_job = 0;
+                app->_apps_error = true;
+                lv_async_call(HCCHome::applyAppsResult, app);
+            }
+        }
         if (app->_adb.jobSerial() != app->_adb_job_seen) {
             app->_adb_job_seen = app->_adb.jobSerial();
             if (app->_adb.jobState() == HCCAdbClient::JobState::Done ||
                 app->_adb.jobState() == HCCAdbClient::JobState::TimedOut) {
-                lv_async_call(HCCHome::applyAndroidDiagnostics, app);
+                if (app->_apps_job != 0) {
+                    lv_async_call(HCCHome::applyAppsResult, app);
+                } else {
+                    lv_async_call(HCCHome::applyAndroidDiagnostics, app);
+                }
             }
         }
         if (app->_fastboot.stateSerial() != app->_fastboot_state_seen) {
@@ -3025,6 +3043,17 @@ void HCCHome::showUSB()
     lv_label_set_text(hw_label, "HARDWARE CHECK");
     lv_obj_center(hw_label);
     lv_obj_set_style_text_font(hw_label, &lv_font_be_vietnam_18, 0);
+
+    /* QUÉT APP RÁC (Android) */
+    lv_obj_t *apps_button = lv_btn_create(_screen);
+    lv_obj_set_size(apps_button, 240, 52);
+    lv_obj_align(apps_button, LV_ALIGN_BOTTOM_LEFT, 300, -22);
+    lv_obj_set_style_bg_color(apps_button, lv_color_hex(0x1C7A4E), 0);
+    lv_obj_add_event_cb(apps_button, onAppScanClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *apps_label = lv_label_create(apps_button);
+    lv_label_set_text(apps_label, "QUET APP RAC");
+    lv_obj_center(apps_label);
+    lv_obj_set_style_text_font(apps_label, &lv_font_be_vietnam_18, 0);
 
     /* Back */
     lv_obj_t *back_button = lv_btn_create(_screen);
@@ -6003,6 +6032,198 @@ void HCCHome::onUsbDiskStateDeleted(lv_event_t *event)
 {
     lv_timer_t *t = static_cast<lv_timer_t *>(lv_event_get_user_data(event));
     if (t) lv_timer_del(t);
+}
+
+// ==================== QUÉT APP RÁC (ANDROID) ====================
+
+void HCCHome::onAppScanClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showAppScan();
+}
+
+void HCCHome::showAppScan()
+{
+    if (_screen == nullptr) return;
+    detachUsbLabels();
+    detachHwLabels();   // phòng kết quả chẩn đoán async chạm nhãn đã xoá
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x101820), 0);
+
+    lv_obj_t *title = lv_label_create(_screen);
+    lv_label_set_text(title, "QUÉT APP RÁC");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 18);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
+
+    lv_obj_t *sub = lv_label_create(_screen);
+    lv_label_set_text(sub, "App ben thu 3 tren Android (ADB). Vang = nghi ngo (cai ngoai cua hang). Bam XOA de go.");
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 30, 56);
+    lv_obj_set_style_text_color(sub, lv_color_hex(0x7F96A8), 0);
+    lv_obj_set_style_text_font(sub, &lv_font_be_vietnam_16, 0);
+
+    _apps_status = lv_label_create(_screen);
+    lv_obj_align(_apps_status, LV_ALIGN_TOP_RIGHT, -30, 24);
+    lv_obj_set_style_text_font(_apps_status, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_color(_apps_status, lv_color_hex(0x00D9FF), 0);
+    lv_label_set_text(_apps_status, "...");
+
+    _apps_list = lv_obj_create(_screen);
+    lv_obj_set_size(_apps_list, 968, 388);
+    lv_obj_align(_apps_list, LV_ALIGN_TOP_LEFT, 28, 90);
+    lv_obj_set_style_bg_color(_apps_list, lv_color_hex(0x182630), 0);
+    lv_obj_set_style_border_color(_apps_list, lv_color_hex(0x304553), 0);
+    lv_obj_set_style_border_width(_apps_list, 1, 0);
+    lv_obj_set_style_radius(_apps_list, 12, 0);
+    lv_obj_set_style_pad_all(_apps_list, 8, 0);
+    lv_obj_set_style_pad_row(_apps_list, 6, 0);
+    lv_obj_set_flex_flow(_apps_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(_apps_list, LV_DIR_VER);
+
+    lv_obj_t *rescan = lv_btn_create(_screen);
+    lv_obj_set_size(rescan, 200, 56);
+    lv_obj_align(rescan, LV_ALIGN_TOP_LEFT, 28, 490);
+    lv_obj_set_style_bg_color(rescan, lv_color_hex(0x1C7A4E), 0);
+    lv_obj_add_event_cb(rescan, onAppRescan, LV_EVENT_CLICKED, this);
+    { lv_obj_t *l = lv_label_create(rescan); lv_label_set_text(l, LV_SYMBOL_REFRESH "  QUET LAI"); lv_obj_center(l); lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0); }
+
+    lv_obj_t *back = lv_btn_create(_screen);
+    lv_obj_set_size(back, 160, 56);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 248, 490);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x1F3242), 0);
+    lv_obj_add_event_cb(back, onAppScanBack, LV_EVENT_CLICKED, this);
+    { lv_obj_t *l = lv_label_create(back); lv_label_set_text(l, "QUAY LAI"); lv_obj_center(l); lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0); }
+
+    if (_adb.state() == HCCAdbClient::State::Ready) {
+        lv_label_set_text(_apps_status, "Dang quet...");
+        _apps_note.clear();
+        _apps_scan_requested = true;
+    } else {
+        lv_label_set_text(_apps_status, "Cho ADB ket noi xong roi bam QUET LAI");
+        lv_obj_t *hint = lv_label_create(_apps_list);
+        lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(hint, 900);
+        lv_label_set_text(hint, "Cam Android + bat USB debugging, cho ADB ket noi o man USB HUB roi quay lai bam QUET LAI.");
+        lv_obj_set_style_text_color(hint, lv_color_hex(0xB8C5CF), 0);
+        lv_obj_set_style_text_font(hint, &lv_font_be_vietnam_16, 0);
+    }
+}
+
+void HCCHome::rebuildAppList()
+{
+    if (_apps_list == nullptr) return;
+    lv_obj_clean(_apps_list);
+    int susp = 0;
+    for (const auto &a : _apps) if (a.suspicious) susp++;
+    if (_apps_status) {
+        char s[64]; snprintf(s, sizeof(s), "%d app  (%d nghi ngo)", (int)_apps.size(), susp);
+        lv_label_set_text(_apps_status, s);
+    }
+    if (!_apps_note.empty()) {
+        lv_obj_t *note = lv_label_create(_apps_list);
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, 900);
+        lv_label_set_text(note, _apps_note.c_str());
+        lv_obj_set_style_text_color(note, lv_color_hex(0x9FD8BE), 0);
+        lv_obj_set_style_text_font(note, &lv_font_be_vietnam_16, 0);
+    }
+    for (size_t i = 0; i < _apps.size(); ++i) {
+        const HCCAndroidApps::AppEntry &a = _apps[i];
+        lv_obj_t *row = lv_obj_create(_apps_list);
+        lv_obj_set_size(row, 926, 50);
+        lv_obj_set_style_bg_color(row, lv_color_hex(a.suspicious ? 0x2A2316 : 0x14222C), 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_radius(row, 8, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *dot = lv_label_create(row);
+        lv_label_set_text(dot, a.suspicious ? LV_SYMBOL_WARNING : LV_SYMBOL_OK);
+        lv_obj_set_style_text_color(dot, lv_color_hex(a.suspicious ? 0xF2C94C : 0x3DD66E), 0);
+        lv_obj_set_style_text_font(dot, &lv_font_be_vietnam_18, 0);
+        lv_obj_align(dot, LV_ALIGN_LEFT_MID, 12, 0);
+
+        lv_obj_t *name = lv_label_create(row);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(name, 650);
+        lv_label_set_text(name, a.pkg.c_str());
+        lv_obj_set_style_text_color(name, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(name, &lv_font_be_vietnam_16, 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 44, 0);
+
+        lv_obj_t *del = lv_btn_create(row);
+        lv_obj_set_size(del, 110, 40);
+        lv_obj_align(del, LV_ALIGN_RIGHT_MID, -8, 0);
+        lv_obj_set_style_bg_color(del, lv_color_hex(0xC0392B), 0);
+        lv_obj_set_user_data(del, (void *)(long)i);
+        lv_obj_add_event_cb(del, onAppUninstall, LV_EVENT_CLICKED, this);
+        lv_obj_t *dl = lv_label_create(del); lv_label_set_text(dl, "XOA"); lv_obj_center(dl);
+        lv_obj_set_style_text_font(dl, &lv_font_be_vietnam_16, 0);
+    }
+}
+
+void HCCHome::applyAppsResult(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) return;
+    const int job = app->_apps_job;
+    app->_apps_job = 0;
+    if (app->_apps_list == nullptr) return;  // đã rời màn
+    if (app->_apps_error) {
+        app->_apps_error = false;
+        if (app->_apps_status) lv_label_set_text(app->_apps_status, "Loi: khong chay duoc ADB");
+        return;
+    }
+    const char *out = app->_adb.jobOutput();
+    std::string o = out ? out : "";
+    if (job == 2) {  // kết quả gỡ
+        bool ok = o.find("Success") != std::string::npos;
+        app->_apps_note = (ok ? "Da go: " : "GO LOI: ") + app->_apps_pending_pkg;
+        if (!ok) app->_apps_note += "  (" + o.substr(0, 50) + ")";
+        app->_apps_scan_requested = true;  // tự quét lại
+        if (app->_apps_status) lv_label_set_text(app->_apps_status, "Dang quet lai...");
+    } else {         // danh sách
+        app->_apps = HCCAndroidApps::parseList(o);
+        app->rebuildAppList();
+    }
+}
+
+void HCCHome::onAppRescan(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if (app->_adb.state() == HCCAdbClient::State::Ready) {
+        app->_apps_note.clear();
+        if (app->_apps_status) lv_label_set_text(app->_apps_status, "Dang quet...");
+        app->_apps_scan_requested = true;
+    } else if (app->_apps_status) {
+        lv_label_set_text(app->_apps_status, "Chua ket noi Android");
+    }
+}
+
+void HCCHome::onAppUninstall(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    int i = (int)(long)lv_obj_get_user_data(lv_event_get_target(event));
+    if (i < 0 || i >= (int)app->_apps.size()) return;
+    app->_apps_pending_pkg = app->_apps[i].pkg;
+    std::string cmd = HCCAndroidApps::uninstallCommand(app->_apps_pending_pkg);
+    snprintf(app->_apps_uninstall_cmd, sizeof(app->_apps_uninstall_cmd), "%s", cmd.c_str());
+    app->_apps_uninstall_requested = true;
+    if (app->_apps_status) {
+        std::string s = "Dang go " + app->_apps_pending_pkg + "...";
+        lv_label_set_text(app->_apps_status, s.c_str());
+    }
+}
+
+void HCCHome::onAppScanBack(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    app->_apps_list = nullptr;    // chặn async chạm object đã xoá
+    app->_apps_status = nullptr;
+    app->showUSB();
 }
 
 // ==================== IPHONE HARDWARE CHECK ====================
