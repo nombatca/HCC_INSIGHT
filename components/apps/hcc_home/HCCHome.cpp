@@ -832,7 +832,7 @@ void HCCHome::showHome()
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x060C12), 0);
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* ===== Nền: banner mạch điện (header) + thân tối, nướng sẵn trong ảnh ===== */
+    /* ===== Header: banner mạch điện (ảnh 1024x166); thân tối dùng bg_color ===== */
     lv_obj_t *wp = lv_img_create(_screen);
     lv_img_set_src(wp, &img_hcc_insight_bg);
     lv_obj_set_pos(wp, 0, 0);
