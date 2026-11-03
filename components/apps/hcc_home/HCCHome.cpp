@@ -883,10 +883,11 @@ void HCCHome::showHome()
         lv_obj_set_style_pad_all(t, 0, 0);
         // glow cyan quanh ô cho nổi
         lv_obj_set_style_shadow_color(t, lv_color_hex(HCC_CYAN), 0);
-        lv_obj_set_style_shadow_width(t, 18, 0);
-        lv_obj_set_style_shadow_spread(t, 1, 0);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_40, 0);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_80, LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(t, 32, 0);
+        lv_obj_set_style_shadow_spread(t, 3, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_70, 0);
+        lv_obj_set_style_shadow_width(t, 44, LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_COVER, LV_STATE_PRESSED);
         // child 0 = nhãn tên (onModuleClicked đọc child 0)
         lv_obj_t *nm = lv_label_create(t);
         lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);
