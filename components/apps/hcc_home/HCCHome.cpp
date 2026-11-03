@@ -26,6 +26,7 @@ void hccMemoryReport(const char *where);
 #include "HCCSpmiView.hpp"
 #include "HCCEepromView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
+LV_IMG_DECLARE(img_hcc_home_wallpaper);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
 static const struct {
@@ -831,60 +832,14 @@ void HCCHome::showHome()
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x060C12), 0);
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* ===== Header ===== */
-    lv_obj_t *band = lv_obj_create(_screen);
-    lv_obj_set_size(band, 1024, 104);
-    lv_obj_set_pos(band, 0, 0);
-    lv_obj_set_style_bg_color(band, lv_color_hex(0x0A1826), 0);
-    lv_obj_set_style_bg_grad_color(band, lv_color_hex(0x071019), 0);
-    lv_obj_set_style_bg_grad_dir(band, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_border_width(band, 0, 0);
-    lv_obj_set_style_radius(band, 0, 0);
-    lv_obj_set_style_pad_all(band, 0, 0);
-    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    // gạch sáng cyan dưới header
-    lv_obj_t *line = lv_obj_create(_screen);
-    lv_obj_set_size(line, 1024, 2);
-    lv_obj_set_pos(line, 0, 104);
-    lv_obj_set_style_bg_color(line, lv_color_hex(0x2FD0E8), 0);
-    lv_obj_set_style_border_width(line, 0, 0);
-    lv_obj_set_style_pad_all(line, 0, 0);
-
-    lv_obj_t *h1 = lv_label_create(band);
-    lv_label_set_text(h1, "HCC ");
-    lv_obj_set_style_text_color(h1, lv_color_hex(0x5FE0F5), 0);
-    lv_obj_set_style_text_font(h1, &lv_font_be_vietnam_40, 0);
-    lv_obj_set_pos(h1, 28, 18);
-    lv_obj_t *h2 = lv_label_create(band);
-    lv_label_set_text(h2, "INSIGHT");
-    lv_obj_set_style_text_color(h2, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(h2, &lv_font_be_vietnam_40, 0);
-    lv_obj_align_to(h2, h1, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
-    lv_obj_t *hs = lv_label_create(band);
-    lv_label_set_text(hs, "Repair & Diagnostic Platform");
-    lv_obj_set_style_text_color(hs, lv_color_hex(0x8FB2C4), 0);
-    lv_obj_set_style_text_font(hs, &lv_font_be_vietnam_18, 0);
-    lv_obj_set_pos(hs, 30, 66);
-    // chip trang tri goc phai
-    lv_obj_t *chip = lv_obj_create(band);
-    lv_obj_set_size(chip, 92, 72);
-    lv_obj_set_pos(chip, 900, 16);
-    lv_obj_set_style_bg_color(chip, lv_color_hex(0x103446), 0);
-    lv_obj_set_style_border_color(chip, lv_color_hex(0x2FD0E8), 0);
-    lv_obj_set_style_border_width(chip, 2, 0);
-    lv_obj_set_style_radius(chip, 10, 0);
-    lv_obj_set_style_shadow_color(chip, lv_color_hex(0x2FD0E8), 0);
-    lv_obj_set_style_shadow_width(chip, 16, 0);
-    lv_obj_set_style_shadow_opa(chip, LV_OPA_50, 0);
-    lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *chl = lv_label_create(chip);
-    lv_label_set_text(chl, "HCC");
-    lv_obj_set_style_text_color(chl, lv_color_hex(0x7CE8F8), 0);
-    lv_obj_set_style_text_font(chl, &lv_font_be_vietnam_20, 0);
-    lv_obj_center(chl);
+    /* ===== Nền: banner mạch điện (header) + thân tối, nướng sẵn trong ảnh ===== */
+    lv_obj_t *wp = lv_img_create(_screen);
+    lv_img_set_src(wp, &img_hcc_home_wallpaper);
+    lv_obj_set_pos(wp, 0, 0);
+    lv_obj_move_background(wp);
 
     /* ===== Lưới ô chức năng (4 x 3) ===== */
-    const int TW = 232, TH = 120, GX = 16, GY = 14, X0 = 24, Y0 = 120;
+    const int TW = 232, TH = 114, GX = 16, GY = 10, X0 = 24, Y0 = 180;
     auto tile = [&](int col, int row, const char *sym, const char *tag, const char *name, lv_event_cb_t cb) {
         lv_obj_t *t = lv_btn_create(_screen);
         lv_obj_set_size(t, TW, TH);
