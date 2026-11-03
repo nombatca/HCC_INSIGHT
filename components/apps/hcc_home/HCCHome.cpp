@@ -870,24 +870,30 @@ void HCCHome::showHome()
         lv_obj_t *t = lv_btn_create(_screen);
         lv_obj_set_size(t, TW, TH);
         lv_obj_set_pos(t, X0 + col * (TW + GX), Y0 + row * (TH + GY));
-        // nền gradient xanh đen cho chiều sâu
-        lv_obj_set_style_bg_color(t, lv_color_hex(0x0A2E47), 0);
-        lv_obj_set_style_bg_grad_color(t, lv_color_hex(HCC_CARD_BG), 0);
+        // Soft 3D Neon Industrial: gradient dọc sáng trên -> tối dưới
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x103B55), 0);        // #103B55 trên
+        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x041827), 0);   // #041827 dưới
         lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_color(t, lv_color_hex(HCC_BLUE_DARK), LV_STATE_PRESSED);
         // viền cyan + bo góc
         lv_obj_set_style_border_color(t, lv_color_hex(HCC_CYAN), 0);
         lv_obj_set_style_border_width(t, 2, 0);
-        lv_obj_set_style_border_width(t, 3, LV_STATE_PRESSED);
         lv_obj_set_style_radius(t, 12, 0);
         lv_obj_set_style_pad_all(t, 0, 0);
-        // glow cyan quanh ô cho nổi
-        lv_obj_set_style_shadow_color(t, lv_color_hex(HCC_CYAN), 0);
-        lv_obj_set_style_shadow_width(t, 32, 0);
-        lv_obj_set_style_shadow_spread(t, 3, 0);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_70, 0);
-        lv_obj_set_style_shadow_width(t, 44, LV_STATE_PRESSED);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_COVER, LV_STATE_PRESSED);
+        // bóng đổ đen mềm, lệch xuống 3px -> nút nổi nhẹ (soft 3D)
+        lv_obj_set_style_shadow_color(t, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_shadow_width(t, 8, 0);
+        lv_obj_set_style_shadow_spread(t, 0, 0);
+        lv_obj_set_style_shadow_ofs_x(t, 0, 0);
+        lv_obj_set_style_shadow_ofs_y(t, 3, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_30, 0);
+        // PRESSED: nền tối hơn, viền sáng hơn, nút lún xuống cho cảm giác nhấn
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x02101C), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x010A12), LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(t, lv_color_hex(0x7FF4FF), LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(t, 3, LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_ofs_y(t, 1, LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_50, LV_STATE_PRESSED);
+        lv_obj_set_style_translate_y(t, 2, LV_STATE_PRESSED);
         // child 0 = nhãn tên (onModuleClicked đọc child 0)
         lv_obj_t *nm = lv_label_create(t);
         lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);
