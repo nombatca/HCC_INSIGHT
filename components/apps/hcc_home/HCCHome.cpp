@@ -844,10 +844,10 @@ void HCCHome::showHome()
         lv_obj_t *t = lv_btn_create(_screen);
         lv_obj_set_size(t, TW, TH);
         lv_obj_set_pos(t, X0 + col * (TW + GX), Y0 + row * (TH + GY));
-        lv_obj_set_style_bg_color(t, lv_color_hex(0x10303F), 0);
-        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x0A1A25), 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x1E5C74), 0);
+        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x103446), 0);
         lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_color(t, lv_color_hex(0x16475E), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x2A7690), LV_STATE_PRESSED);
         lv_obj_set_style_border_color(t, lv_color_hex(0x2FD0E8), 0);
         lv_obj_set_style_border_width(t, 2, 0);
         lv_obj_set_style_radius(t, 14, 0);
