@@ -828,536 +828,135 @@ void HCCHome::showHome()
 
     detachScreenObjects();
     lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x060C12), 0);
+    lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Background */
-    lv_obj_set_style_bg_color(
-        _screen,
-        lv_color_hex(0x101820),
-        0
-    );
+    /* ===== Header ===== */
+    lv_obj_t *band = lv_obj_create(_screen);
+    lv_obj_set_size(band, 1024, 104);
+    lv_obj_set_pos(band, 0, 0);
+    lv_obj_set_style_bg_color(band, lv_color_hex(0x0A1826), 0);
+    lv_obj_set_style_bg_grad_color(band, lv_color_hex(0x071019), 0);
+    lv_obj_set_style_bg_grad_dir(band, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_width(band, 0, 0);
+    lv_obj_set_style_radius(band, 0, 0);
+    lv_obj_set_style_pad_all(band, 0, 0);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+    // gạch sáng cyan dưới header
+    lv_obj_t *line = lv_obj_create(_screen);
+    lv_obj_set_size(line, 1024, 2);
+    lv_obj_set_pos(line, 0, 104);
+    lv_obj_set_style_bg_color(line, lv_color_hex(0x2FD0E8), 0);
+    lv_obj_set_style_border_width(line, 0, 0);
+    lv_obj_set_style_pad_all(line, 0, 0);
 
-    /* Header */
-    lv_obj_t *title = lv_label_create(_screen);
-    lv_label_set_text(title, "HCC INSIGHT");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 16);
-    lv_obj_set_style_text_color(
-        title,
-        lv_color_hex(0xFFFFFF),
-        0
-    );
-    lv_obj_set_style_text_font(
-        title,
-        &lv_font_be_vietnam_28,
-        0
-    );
+    lv_obj_t *h1 = lv_label_create(band);
+    lv_label_set_text(h1, "HCC ");
+    lv_obj_set_style_text_color(h1, lv_color_hex(0x5FE0F5), 0);
+    lv_obj_set_style_text_font(h1, &lv_font_be_vietnam_40, 0);
+    lv_obj_set_pos(h1, 28, 18);
+    lv_obj_t *h2 = lv_label_create(band);
+    lv_label_set_text(h2, "INSIGHT");
+    lv_obj_set_style_text_color(h2, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(h2, &lv_font_be_vietnam_40, 0);
+    lv_obj_align_to(h2, h1, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    lv_obj_t *hs = lv_label_create(band);
+    lv_label_set_text(hs, "Repair & Diagnostic Platform");
+    lv_obj_set_style_text_color(hs, lv_color_hex(0x8FB2C4), 0);
+    lv_obj_set_style_text_font(hs, &lv_font_be_vietnam_18, 0);
+    lv_obj_set_pos(hs, 30, 66);
+    // chip trang tri goc phai
+    lv_obj_t *chip = lv_obj_create(band);
+    lv_obj_set_size(chip, 92, 72);
+    lv_obj_set_pos(chip, 900, 16);
+    lv_obj_set_style_bg_color(chip, lv_color_hex(0x103446), 0);
+    lv_obj_set_style_border_color(chip, lv_color_hex(0x2FD0E8), 0);
+    lv_obj_set_style_border_width(chip, 2, 0);
+    lv_obj_set_style_radius(chip, 10, 0);
+    lv_obj_set_style_shadow_color(chip, lv_color_hex(0x2FD0E8), 0);
+    lv_obj_set_style_shadow_width(chip, 16, 0);
+    lv_obj_set_style_shadow_opa(chip, LV_OPA_50, 0);
+    lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *chl = lv_label_create(chip);
+    lv_label_set_text(chl, "HCC");
+    lv_obj_set_style_text_color(chl, lv_color_hex(0x7CE8F8), 0);
+    lv_obj_set_style_text_font(chl, &lv_font_be_vietnam_20, 0);
+    lv_obj_center(chl);
 
-    lv_obj_t *sub = lv_label_create(_screen);
-    lv_label_set_text(
-        sub,
-        "Repair & Diagnostic Platform"
-    );
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 28, 50);
-    lv_obj_set_style_text_color(
-        sub,
-        lv_color_hex(0xB8C5CF),
-        0
-    );
-    lv_obj_set_style_text_font(
-        sub,
-        &lv_font_be_vietnam_18,
-        0
-    );
+    /* ===== Lưới ô chức năng (4 x 3) ===== */
+    const int TW = 232, TH = 120, GX = 16, GY = 14, X0 = 24, Y0 = 120;
+    auto tile = [&](int col, int row, const char *sym, const char *tag, const char *name, lv_event_cb_t cb) {
+        lv_obj_t *t = lv_btn_create(_screen);
+        lv_obj_set_size(t, TW, TH);
+        lv_obj_set_pos(t, X0 + col * (TW + GX), Y0 + row * (TH + GY));
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x10303F), 0);
+        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x0A1A25), 0);
+        lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x16475E), LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(t, lv_color_hex(0x2FD0E8), 0);
+        lv_obj_set_style_border_width(t, 2, 0);
+        lv_obj_set_style_radius(t, 14, 0);
+        lv_obj_set_style_pad_all(t, 0, 0);
+        lv_obj_set_style_shadow_color(t, lv_color_hex(0x1FA9C8), 0);
+        lv_obj_set_style_shadow_width(t, 10, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_30, 0);
+        // child 0 = nhãn tên (onModuleClicked đọc child 0)
+        lv_obj_t *nm = lv_label_create(t);
+        lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(nm, TW - 16);
+        lv_obj_set_style_text_align(nm, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(nm, name);
+        lv_obj_set_style_text_color(nm, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(nm, &lv_font_be_vietnam_18, 0);
+        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -12);
+        lv_obj_t *tg = lv_label_create(t);
+        lv_label_set_text(tg, tag);
+        lv_obj_set_style_text_color(tg, lv_color_hex(0x5FE0F5), 0);
+        lv_obj_set_style_text_font(tg, &lv_font_be_vietnam_22, 0);
+        lv_obj_align(tg, LV_ALIGN_CENTER, 0, 10);
+        if (sym && sym[0]) {
+            lv_obj_t *ic = lv_label_create(t);
+            lv_label_set_text(ic, sym);
+            lv_obj_set_style_text_color(ic, lv_color_hex(0x8FE8F8), 0);
+            lv_obj_set_style_text_font(ic, &lv_font_be_vietnam_28, 0);
+            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 14);
+        }
+        if (cb) lv_obj_add_event_cb(t, cb, LV_EVENT_CLICKED, this);
+        return t;
+    };
 
-    /* Common colors */
-    const lv_color_t button_color = lv_color_hex(0x36C9E8);
-    const lv_color_t button_color_pressed = lv_color_hex(0x25AFCB);
-    const lv_color_t dark_text = lv_color_hex(0x0B1F33);
-    const lv_color_t divider = lv_color_hex(0x1687A3);
+    // Hàng 0
+    tile(0, 0, LV_SYMBOL_SETTINGS, "[I2C]", "I2C",        onI2CClicked);
+    tile(1, 0, LV_SYMBOL_WIFI,     "[RF]",  "RFFE",       onRffeClicked);
+    tile(2, 0, LV_SYMBOL_DRIVE,    "[USB]", "USB HUB",    onUSBClicked);
+    tile(3, 0, LV_SYMBOL_SD_CARD,  "[MEM]", "EEPROM",     onEepromClicked);
+    // Hàng 1
+    tile(0, 1, LV_SYMBOL_CHARGE,   "[BAR]", "BASEBAND",   onModuleClicked);
+    tile(1, 1, LV_SYMBOL_WARNING,  "[DOC]", "PANIC & AI", onPanicClicked);
+    tile(2, 1, LV_SYMBOL_GPS,      "[PM]",  "SPMI",       onSpmiClicked);
+    tile(3, 1, LV_SYMBOL_SD_CARD,  "[SD]",  "USB DISK",   onUsbDiskClicked);
+    // Hàng 2
+    tile(0, 2, LV_SYMBOL_EYE_OPEN, "[LA]",  "LOGIC",      onLogicClicked);
 
-    /*
-     * I2C
-     */
-    lv_obj_t *i2c_button = lv_btn_create(_screen);
-    lv_obj_set_size(i2c_button, 438, 72);
-    lv_obj_align(i2c_button, LV_ALIGN_TOP_LEFT, 28, 96);
-    lv_obj_add_event_cb(
-        i2c_button,
-        onI2CClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(i2c_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        i2c_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(i2c_button, 14, 0);
-    lv_obj_set_style_border_width(i2c_button, 0, 0);
-
-    /* I2C icon */
-    lv_obj_t *i2c_icon = lv_label_create(i2c_button);
-    lv_label_set_text(i2c_icon, "[IC]");
-    lv_obj_align(i2c_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(i2c_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        i2c_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *i2c_div = lv_obj_create(i2c_button);
-    lv_obj_set_size(i2c_div, 2, 48);
-    lv_obj_align(i2c_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(i2c_div, divider, 0);
-    lv_obj_set_style_bg_opa(i2c_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(i2c_div, 0, 0);
-
-    lv_obj_t *i2c_title = lv_label_create(i2c_button);
-    lv_label_set_text(i2c_title, "I2C");
-    lv_obj_align(i2c_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(i2c_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        i2c_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *i2c_sub = lv_label_create(i2c_button);
-    lv_label_set_text(i2c_sub, "Bus diagnostics");
-    lv_obj_align(i2c_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(i2c_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        i2c_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * RFFE
-     */
-    lv_obj_t *rffe_button = lv_btn_create(_screen);
-    lv_obj_set_size(rffe_button, 438, 72);
-    lv_obj_align(rffe_button, LV_ALIGN_TOP_LEFT, 494, 96);
-    lv_obj_add_event_cb(
-        rffe_button,
-        onRffeClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(rffe_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        rffe_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(rffe_button, 14, 0);
-    lv_obj_set_style_border_width(rffe_button, 0, 0);
-
-    lv_obj_t *rffe_icon = lv_label_create(rffe_button);
-    lv_label_set_text(rffe_icon, "[RF]");
-    lv_obj_align(rffe_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(rffe_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        rffe_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *rffe_div = lv_obj_create(rffe_button);
-    lv_obj_set_size(rffe_div, 2, 48);
-    lv_obj_align(rffe_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(rffe_div, divider, 0);
-    lv_obj_set_style_bg_opa(rffe_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(rffe_div, 0, 0);
-
-    lv_obj_t *rffe_title = lv_label_create(rffe_button);
-    lv_label_set_text(rffe_title, "RFFE");
-    lv_obj_align(rffe_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(rffe_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        rffe_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *rffe_sub = lv_label_create(rffe_button);
-    lv_label_set_text(
-        rffe_sub,
-        "RF front-end diagnostics"
-    );
-    lv_obj_align(rffe_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(rffe_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        rffe_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * EEPROM
-     */
-    lv_obj_t *eeprom_button = lv_btn_create(_screen);
-    lv_obj_set_size(eeprom_button, 438, 72);
-    lv_obj_align(eeprom_button, LV_ALIGN_TOP_LEFT, 28, 176);
-    lv_obj_add_event_cb(
-        eeprom_button,
-        onEepromClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(eeprom_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        eeprom_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(eeprom_button, 14, 0);
-    lv_obj_set_style_border_width(eeprom_button, 0, 0);
-
-    lv_obj_t *eeprom_icon = lv_label_create(eeprom_button);
-    lv_label_set_text(eeprom_icon, "[MEM]");
-    lv_obj_align(eeprom_icon, LV_ALIGN_LEFT_MID, 16, 0);
-    lv_obj_set_style_text_color(eeprom_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        eeprom_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *eeprom_div = lv_obj_create(eeprom_button);
-    lv_obj_set_size(eeprom_div, 2, 48);
-    lv_obj_align(eeprom_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(eeprom_div, divider, 0);
-    lv_obj_set_style_bg_opa(eeprom_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(eeprom_div, 0, 0);
-
-    lv_obj_t *eeprom_title = lv_label_create(eeprom_button);
-    lv_label_set_text(eeprom_title, "EEPROM");
-    lv_obj_align(eeprom_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(eeprom_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        eeprom_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *eeprom_sub = lv_label_create(eeprom_button);
-    lv_label_set_text(
-        eeprom_sub,
-        "Memory / data inspection"
-    );
-    lv_obj_align(eeprom_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(eeprom_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        eeprom_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * PANIC / AI ANALYZE
-     */
-    lv_obj_t *panic_button = lv_btn_create(_screen);
-    lv_obj_set_size(panic_button, 438, 72);
-    lv_obj_align(panic_button, LV_ALIGN_TOP_LEFT, 494, 256);
-    lv_obj_add_event_cb(
-        panic_button,
-        onPanicClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(panic_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        panic_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(panic_button, 14, 0);
-    lv_obj_set_style_border_width(panic_button, 0, 0);
-
-    lv_obj_t *panic_icon = lv_label_create(panic_button);
-    lv_label_set_text(panic_icon, "[DOC]");
-    lv_obj_align(panic_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(panic_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        panic_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *panic_div = lv_obj_create(panic_button);
-    lv_obj_set_size(panic_div, 2, 48);
-    lv_obj_align(panic_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(panic_div, divider, 0);
-    lv_obj_set_style_bg_opa(panic_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(panic_div, 0, 0);
-
-    lv_obj_t *panic_title = lv_label_create(panic_button);
-    lv_label_set_text(panic_title, "PANIC & AI ANALYZE");
-    lv_obj_align(panic_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(panic_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        panic_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *panic_sub = lv_label_create(panic_button);
-    lv_label_set_text(
-        panic_sub,
-        "Panic & repair analysis"
-    );
-    lv_obj_align(panic_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(panic_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        panic_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * BASEBAND
-     */
-    lv_obj_t *baseband_button = lv_btn_create(_screen);
-    lv_obj_set_size(baseband_button, 438, 72);
-    lv_obj_align(baseband_button, LV_ALIGN_TOP_LEFT, 28, 256);
-    lv_obj_add_event_cb(
-        baseband_button,
-        onModuleClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(baseband_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        baseband_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(baseband_button, 14, 0);
-    lv_obj_set_style_border_width(baseband_button, 0, 0);
-
-    lv_obj_t *baseband_icon = lv_label_create(baseband_button);
-    lv_label_set_text(baseband_icon, "[BAR]");
-    lv_obj_align(baseband_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(baseband_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        baseband_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *baseband_div = lv_obj_create(baseband_button);
-    lv_obj_set_size(baseband_div, 2, 48);
-    lv_obj_align(baseband_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(baseband_div, divider, 0);
-    lv_obj_set_style_bg_opa(baseband_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(baseband_div, 0, 0);
-
-    lv_obj_t *baseband_title = lv_label_create(baseband_button);
-    lv_label_set_text(baseband_title, "BASEBAND");
-    lv_obj_align(baseband_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(baseband_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        baseband_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *baseband_sub = lv_label_create(baseband_button);
-    lv_label_set_text(
-        baseband_sub,
-        "Baseband rail analysis"
-    );
-    lv_obj_align(baseband_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(baseband_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        baseband_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * USB HUB
-     */
-    lv_obj_t *usb_button = lv_btn_create(_screen);
-    lv_obj_set_size(usb_button, 438, 72);
-    lv_obj_align(usb_button, LV_ALIGN_TOP_LEFT, 494, 176);
-    lv_obj_add_event_cb(
-        usb_button,
-        onUSBClicked,
-        LV_EVENT_CLICKED,
-        this
-    );
-    lv_obj_set_style_bg_color(usb_button, button_color, 0);
-    lv_obj_set_style_bg_color(
-        usb_button,
-        button_color_pressed,
-        LV_STATE_PRESSED
-    );
-    lv_obj_set_style_radius(usb_button, 14, 0);
-    lv_obj_set_style_border_width(usb_button, 0, 0);
-
-    lv_obj_t *usb_icon = lv_label_create(usb_button);
-    lv_label_set_text(usb_icon, "[USB]");
-    lv_obj_align(usb_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(usb_icon, dark_text, 0);
-    lv_obj_set_style_text_font(
-        usb_icon,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *usb_div = lv_obj_create(usb_button);
-    lv_obj_set_size(usb_div, 2, 48);
-    lv_obj_align(usb_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(usb_div, divider, 0);
-    lv_obj_set_style_bg_opa(usb_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(usb_div, 0, 0);
-
-    lv_obj_t *usb_title = lv_label_create(usb_button);
-    lv_label_set_text(usb_title, "USB HUB");
-    lv_obj_align(usb_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(usb_title, dark_text, 0);
-    lv_obj_set_style_text_font(
-        usb_title,
-        &lv_font_be_vietnam_18,
-        0
-    );
-
-    lv_obj_t *usb_sub = lv_label_create(usb_button);
-    lv_label_set_text(
-        usb_sub,
-        "USB diagnostics"
-    );
-    lv_obj_align(usb_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(usb_sub, dark_text, 0);
-    lv_obj_set_style_text_font(
-        usb_sub,
-        &lv_font_be_vietnam_16,
-        0
-    );
-
-    /*
-     * USB DISK: thẻ SD -> máy tính qua cổng Type-C
-     */
-    lv_obj_t *ud_button = lv_btn_create(_screen);
-    lv_obj_set_size(ud_button, 438, 72);
-    lv_obj_align(ud_button, LV_ALIGN_TOP_LEFT, 28, 336);
-    lv_obj_add_event_cb(ud_button, onUsbDiskClicked, LV_EVENT_CLICKED, this);
-    lv_obj_set_style_bg_color(ud_button, button_color, 0);
-    lv_obj_set_style_bg_color(ud_button, button_color_pressed, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(ud_button, 14, 0);
-    lv_obj_set_style_border_width(ud_button, 0, 0);
-
-    lv_obj_t *ud_icon = lv_label_create(ud_button);
-    lv_label_set_text(ud_icon, LV_SYMBOL_SD_CARD);
-    lv_obj_align(ud_icon, LV_ALIGN_LEFT_MID, 32, 0);
-    lv_obj_set_style_text_color(ud_icon, dark_text, 0);
-    lv_obj_set_style_text_font(ud_icon, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *ud_div = lv_obj_create(ud_button);
-    lv_obj_set_size(ud_div, 2, 48);
-    lv_obj_align(ud_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(ud_div, divider, 0);
-    lv_obj_set_style_bg_opa(ud_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(ud_div, 0, 0);
-
-    lv_obj_t *ud_title = lv_label_create(ud_button);
-    lv_label_set_text(ud_title, "USB DISK");
-    lv_obj_align(ud_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(ud_title, dark_text, 0);
-    lv_obj_set_style_text_font(ud_title, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *ud_sub = lv_label_create(ud_button);
-    lv_label_set_text(ud_sub, "Thẻ SD thành ổ USB trên máy tính");
-    lv_obj_align(ud_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(ud_sub, dark_text, 0);
-    lv_obj_set_style_text_font(ud_sub, &lv_font_be_vietnam_16, 0);
-
-    lv_obj_t *spmi_button = lv_btn_create(_screen);
-    lv_obj_set_size(spmi_button, 438, 72);
-    lv_obj_align(spmi_button, LV_ALIGN_TOP_LEFT, 494, 336);
-    lv_obj_add_event_cb(spmi_button, onSpmiClicked, LV_EVENT_CLICKED, this);
-    lv_obj_set_style_bg_color(spmi_button, button_color, 0);
-    lv_obj_set_style_bg_color(spmi_button, button_color_pressed, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(spmi_button, 14, 0);
-    lv_obj_set_style_border_width(spmi_button, 0, 0);
-
-    lv_obj_t *spmi_icon = lv_label_create(spmi_button);
-    lv_label_set_text(spmi_icon, "[PM]");
-    lv_obj_align(spmi_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(spmi_icon, dark_text, 0);
-    lv_obj_set_style_text_font(spmi_icon, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *spmi_div = lv_obj_create(spmi_button);
-    lv_obj_set_size(spmi_div, 2, 48);
-    lv_obj_align(spmi_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(spmi_div, divider, 0);
-    lv_obj_set_style_bg_opa(spmi_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(spmi_div, 0, 0);
-
-    lv_obj_t *spmi_title = lv_label_create(spmi_button);
-    lv_label_set_text(spmi_title, "SPMI");
-    lv_obj_align(spmi_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(spmi_title, dark_text, 0);
-    lv_obj_set_style_text_font(spmi_title, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *spmi_sub = lv_label_create(spmi_button);
-    lv_label_set_text(spmi_sub, "Quét SID 0-15 bus nguồn (chung chân RFFE)");
-    lv_obj_align(spmi_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(spmi_sub, dark_text, 0);
-    lv_obj_set_style_text_font(spmi_sub, &lv_font_be_vietnam_16, 0);
-
-    // LOGIC ANALYZER 8 kênh (PARLIO).
-    lv_obj_t *logic_button = lv_btn_create(_screen);
-    lv_obj_set_size(logic_button, 438, 72);
-    lv_obj_align(logic_button, LV_ALIGN_TOP_LEFT, 28, 416);
-    lv_obj_add_event_cb(logic_button, onLogicClicked, LV_EVENT_CLICKED, this);
-    lv_obj_set_style_bg_color(logic_button, button_color, 0);
-    lv_obj_set_style_bg_color(logic_button, button_color_pressed, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(logic_button, 14, 0);
-    lv_obj_set_style_border_width(logic_button, 0, 0);
-
-    lv_obj_t *logic_icon = lv_label_create(logic_button);
-    lv_label_set_text(logic_icon, "[LA]");
-    lv_obj_align(logic_icon, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_color(logic_icon, dark_text, 0);
-    lv_obj_set_style_text_font(logic_icon, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *logic_div = lv_obj_create(logic_button);
-    lv_obj_set_size(logic_div, 2, 48);
-    lv_obj_align(logic_div, LV_ALIGN_LEFT_MID, 92, 0);
-    lv_obj_set_style_bg_color(logic_div, divider, 0);
-    lv_obj_set_style_bg_opa(logic_div, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(logic_div, 0, 0);
-
-    lv_obj_t *logic_title = lv_label_create(logic_button);
-    lv_label_set_text(logic_title, "LOGIC ANALYZER");
-    lv_obj_align(logic_title, LV_ALIGN_LEFT_MID, 116, -10);
-    lv_obj_set_style_text_color(logic_title, dark_text, 0);
-    lv_obj_set_style_text_font(logic_title, &lv_font_be_vietnam_18, 0);
-
-    lv_obj_t *logic_sub = lv_label_create(logic_button);
-    lv_label_set_text(logic_sub, "8 kênh, tới 80 MHz, giải mã I2C / UART / SPI");
-    lv_obj_align(logic_sub, LV_ALIGN_LEFT_MID, 116, 16);
-    lv_obj_set_style_text_color(logic_sub, dark_text, 0);
-    lv_obj_set_style_text_font(logic_sub, &lv_font_be_vietnam_16, 0);
-
-    /* Status */
-    lv_obj_t *status = lv_label_create(_screen);
+    /* ===== Thanh trạng thái dưới ===== */
+    lv_obj_t *bar = lv_obj_create(_screen);
+    lv_obj_set_size(bar, 1024, 44);
+    lv_obj_set_pos(bar, 0, 556);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x0A1826), 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_pad_all(bar, 0, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *dot = lv_label_create(bar);
+    lv_label_set_text(dot, LV_SYMBOL_OK);
+    lv_obj_set_style_text_color(dot, lv_color_hex(0x4BE08A), 0);
+    lv_obj_set_style_text_font(dot, &lv_font_be_vietnam_18, 0);
+    lv_obj_align(dot, LV_ALIGN_LEFT_MID, 24, 0);
+    lv_obj_t *status = lv_label_create(bar);
     lv_label_set_text(status, "Ready");
-    lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 28, -18);
-    lv_obj_set_style_text_color(
-        status,
-        lv_color_hex(0x69E0C0),
-        0
-    );
-    lv_obj_set_style_text_font(
-        status,
-        &lv_font_be_vietnam_16,
-        0
-    );
+    lv_obj_set_style_text_color(status, lv_color_hex(0x8CF0B4), 0);
+    lv_obj_set_style_text_font(status, &lv_font_be_vietnam_18, 0);
+    lv_obj_align(status, LV_ALIGN_LEFT_MID, 52, 0);
 }
 
 void HCCHome::onModuleClicked(lv_event_t *event)
