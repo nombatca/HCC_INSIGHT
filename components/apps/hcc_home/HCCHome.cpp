@@ -862,7 +862,7 @@ void HCCHome::showHome()
     lv_obj_move_background(wp);
 
     /* ===== Lưới ô chức năng (3 x 3), các ô bằng nhau, lấp đầy màn hình ===== */
-    const int COLS = 3, TW = 312, TH = 115, GX = 18, GY = 16, X0 = 26, Y0 = 172;
+    const int COLS = 3, TW = 312, TH = 108, GX = 18, GY = 12, X0 = 26, Y0 = 168;
     // tile: icon ảnh (Cyan sáng) + tên đầy đủ (trắng, chữ to). Hiệu ứng glow + gradient.
     // child 0 = nhãn tên để onModuleClicked đọc đúng tên module.
     auto tile = [&](int idx, const lv_img_dsc_t *icon, const char *name, lv_event_cb_t cb) {
@@ -901,7 +901,7 @@ void HCCHome::showHome()
         if (icon) {
             lv_obj_t *ic = lv_img_create(t);
             lv_img_set_src(ic, icon);
-            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 12);
+            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 8);
         }
         if (cb) lv_obj_add_event_cb(t, cb, LV_EVENT_CLICKED, this);
         return t;
