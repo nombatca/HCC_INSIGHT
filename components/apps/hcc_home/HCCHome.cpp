@@ -861,55 +861,60 @@ void HCCHome::showHome()
     lv_obj_set_pos(wp, 0, 0);
     lv_obj_move_background(wp);
 
-    /* ===== Lưới ô chức năng (4 x 3), các ô bằng nhau ===== */
-    const int TW = 232, TH = 120, GX = 16, GY = 10, X0 = 24, Y0 = 172;
-    // tile: icon ảnh (Cyan sáng) + tên đầy đủ (trắng, chữ to). Không còn mã [..].
+    /* ===== Lưới ô chức năng (3 x 3), các ô bằng nhau, lấp đầy màn hình ===== */
+    const int COLS = 3, TW = 312, TH = 115, GX = 18, GY = 16, X0 = 26, Y0 = 172;
+    // tile: icon ảnh (Cyan sáng) + tên đầy đủ (trắng, chữ to). Hiệu ứng glow + gradient.
     // child 0 = nhãn tên để onModuleClicked đọc đúng tên module.
-    auto tile = [&](int col, int row, const lv_img_dsc_t *icon, const char *name, lv_event_cb_t cb) {
+    auto tile = [&](int idx, const lv_img_dsc_t *icon, const char *name, lv_event_cb_t cb) {
+        int col = idx % COLS, row = idx / COLS;
         lv_obj_t *t = lv_btn_create(_screen);
         lv_obj_set_size(t, TW, TH);
         lv_obj_set_pos(t, X0 + col * (TW + GX), Y0 + row * (TH + GY));
-        lv_obj_set_style_bg_color(t, lv_color_hex(HCC_CARD_BG), 0);
-        lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_NONE, 0);
+        // nền gradient xanh đen cho chiều sâu
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x0A2E47), 0);
+        lv_obj_set_style_bg_grad_color(t, lv_color_hex(HCC_CARD_BG), 0);
+        lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_VER, 0);
         lv_obj_set_style_bg_color(t, lv_color_hex(HCC_BLUE_DARK), LV_STATE_PRESSED);
+        // viền cyan + bo góc
         lv_obj_set_style_border_color(t, lv_color_hex(HCC_CYAN), 0);
         lv_obj_set_style_border_width(t, 2, 0);
+        lv_obj_set_style_border_width(t, 3, LV_STATE_PRESSED);
         lv_obj_set_style_radius(t, 12, 0);
         lv_obj_set_style_pad_all(t, 0, 0);
+        // glow cyan quanh ô cho nổi
         lv_obj_set_style_shadow_color(t, lv_color_hex(HCC_CYAN), 0);
-        lv_obj_set_style_shadow_width(t, 8, 0);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_20, 0);
+        lv_obj_set_style_shadow_width(t, 18, 0);
+        lv_obj_set_style_shadow_spread(t, 1, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_40, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_80, LV_STATE_PRESSED);
         // child 0 = nhãn tên (onModuleClicked đọc child 0)
         lv_obj_t *nm = lv_label_create(t);
         lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(nm, TW - 12);
+        lv_obj_set_width(nm, TW - 16);
         lv_obj_set_style_text_align(nm, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(nm, name);
         lv_obj_set_style_text_color(nm, lv_color_hex(HCC_TEXT), 0);
-        lv_obj_set_style_text_font(nm, &lv_font_be_vietnam_18, 0);
-        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -8);
+        lv_obj_set_style_text_font(nm, &lv_font_be_vietnam_20, 0);
+        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -10);
         // icon ảnh Cyan sáng phía trên
         if (icon) {
             lv_obj_t *ic = lv_img_create(t);
             lv_img_set_src(ic, icon);
-            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 10);
+            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 12);
         }
         if (cb) lv_obj_add_event_cb(t, cb, LV_EVENT_CLICKED, this);
         return t;
     };
 
-    // Hàng 0
-    tile(0, 0, &icon_i2c,      "I2C",                onI2CClicked);
-    tile(1, 0, &icon_rffe,     "RFFE",               onRffeClicked);
-    tile(2, 0, &icon_usb,      "USB HUB",            onUSBClicked);
-    tile(3, 0, &icon_eeprom,   "EEPROM",             onEepromClicked);
-    // Hàng 1
-    tile(0, 1, &icon_baseband, "BASEBAND",           onModuleClicked);
-    tile(1, 1, &icon_panic,    "PANIC & AI ANALYZE", onPanicClicked);
-    tile(2, 1, &icon_spmi,     "SPMI",               onSpmiClicked);
-    tile(3, 1, &icon_usbdisk,  "USB DISK",           onUsbDiskClicked);
-    // Hàng 2
-    tile(0, 2, &icon_logic,    "LOGIC ANALYZER",     onLogicClicked);
+    tile(0, &icon_i2c,      "I2C",                onI2CClicked);
+    tile(1, &icon_rffe,     "RFFE",               onRffeClicked);
+    tile(2, &icon_usb,      "USB HUB",            onUSBClicked);
+    tile(3, &icon_eeprom,   "EEPROM",             onEepromClicked);
+    tile(4, &icon_baseband, "BASEBAND",           onModuleClicked);
+    tile(5, &icon_panic,    "PANIC & AI ANALYZE", onPanicClicked);
+    tile(6, &icon_spmi,     "SPMI",               onSpmiClicked);
+    tile(7, &icon_usbdisk,  "USB DISK",           onUsbDiskClicked);
+    tile(8, &icon_logic,    "LOGIC ANALYZER",     onLogicClicked);
 
     /* ===== Thanh trạng thái dưới (chỉ Ready, không ESP/PSRAM/Flash) ===== */
     lv_obj_t *bar = lv_obj_create(_screen);
