@@ -28,6 +28,19 @@ void hccMemoryReport(const char *where);
 LV_IMG_DECLARE(img_app_hcc_insight);
 LV_IMG_DECLARE(img_hcc_insight_bg);
 
+/* ===== Bảng màu HCC INSIGHT ===== */
+#define HCC_BG          0x020B16  // nền Dark Navy
+#define HCC_CARD_BG     0x06243A  // nền ô chức năng (xanh đen)
+#define HCC_STATUS_BG   0x092B42  // nền thanh trạng thái
+#define HCC_CYAN        0x00E5F5  // viền / nhấn
+#define HCC_BLUE        0x00BFFF
+#define HCC_BLUE_DARK   0x005C89  // ô khi nhấn
+#define HCC_ICON        0x47EFFF  // icon Cyan sáng
+#define HCC_TEXT        0xFFFFFF  // tên chức năng (trắng)
+#define HCC_TEXT_SUB    0xB8D4E4
+#define HCC_READY       0x27F56B  // trạng thái Ready
+#define HCC_WARNING     0xFFD447
+
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
 static const struct {
     const char *product_type;
@@ -829,7 +842,7 @@ void HCCHome::showHome()
 
     detachScreenObjects();
     lv_obj_clean(_screen);
-    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x060C12), 0);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(HCC_BG), 0);
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
 
     /* ===== Header: banner mạch điện (ảnh 1024x166); thân tối dùng bg_color ===== */
@@ -838,78 +851,75 @@ void HCCHome::showHome()
     lv_obj_set_pos(wp, 0, 0);
     lv_obj_move_background(wp);
 
-    /* ===== Lưới ô chức năng (4 x 3) ===== */
+    /* ===== Lưới ô chức năng (4 x 3), các ô bằng nhau ===== */
     const int TW = 232, TH = 114, GX = 16, GY = 10, X0 = 24, Y0 = 180;
-    auto tile = [&](int col, int row, const char *sym, const char *tag, const char *name, lv_event_cb_t cb) {
+    // tile: chỉ icon (Cyan sáng) + tên đầy đủ (trắng). Không còn mã [..].
+    // child 0 = nhãn tên để onModuleClicked đọc đúng tên module.
+    auto tile = [&](int col, int row, const char *sym, const char *name, lv_event_cb_t cb) {
         lv_obj_t *t = lv_btn_create(_screen);
         lv_obj_set_size(t, TW, TH);
         lv_obj_set_pos(t, X0 + col * (TW + GX), Y0 + row * (TH + GY));
-        lv_obj_set_style_bg_color(t, lv_color_hex(0x1E5C74), 0);
-        lv_obj_set_style_bg_grad_color(t, lv_color_hex(0x103446), 0);
-        lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_color(t, lv_color_hex(0x2A7690), LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(t, lv_color_hex(0x2FD0E8), 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(HCC_CARD_BG), 0);
+        lv_obj_set_style_bg_grad_dir(t, LV_GRAD_DIR_NONE, 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(HCC_BLUE_DARK), LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(t, lv_color_hex(HCC_CYAN), 0);
         lv_obj_set_style_border_width(t, 2, 0);
-        lv_obj_set_style_radius(t, 14, 0);
+        lv_obj_set_style_radius(t, 12, 0);
         lv_obj_set_style_pad_all(t, 0, 0);
-        lv_obj_set_style_shadow_color(t, lv_color_hex(0x1FA9C8), 0);
-        lv_obj_set_style_shadow_width(t, 10, 0);
-        lv_obj_set_style_shadow_opa(t, LV_OPA_30, 0);
+        lv_obj_set_style_shadow_color(t, lv_color_hex(HCC_CYAN), 0);
+        lv_obj_set_style_shadow_width(t, 8, 0);
+        lv_obj_set_style_shadow_opa(t, LV_OPA_20, 0);
         // child 0 = nhãn tên (onModuleClicked đọc child 0)
         lv_obj_t *nm = lv_label_create(t);
-        lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+        lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(nm, TW - 16);
         lv_obj_set_style_text_align(nm, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(nm, name);
-        lv_obj_set_style_text_color(nm, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(nm, &lv_font_be_vietnam_18, 0);
-        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -12);
-        lv_obj_t *tg = lv_label_create(t);
-        lv_label_set_text(tg, tag);
-        lv_obj_set_style_text_color(tg, lv_color_hex(0x5FE0F5), 0);
-        lv_obj_set_style_text_font(tg, &lv_font_be_vietnam_22, 0);
-        lv_obj_align(tg, LV_ALIGN_CENTER, 0, 10);
+        lv_obj_set_style_text_color(nm, lv_color_hex(HCC_TEXT), 0);
+        lv_obj_set_style_text_font(nm, &lv_font_be_vietnam_16, 0);
+        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -10);
+        // icon Cyan sáng phía trên
         if (sym && sym[0]) {
             lv_obj_t *ic = lv_label_create(t);
             lv_label_set_text(ic, sym);
-            lv_obj_set_style_text_color(ic, lv_color_hex(0x8FE8F8), 0);
+            lv_obj_set_style_text_color(ic, lv_color_hex(HCC_ICON), 0);
             lv_obj_set_style_text_font(ic, &lv_font_be_vietnam_28, 0);
-            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 14);
+            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 18);
         }
         if (cb) lv_obj_add_event_cb(t, cb, LV_EVENT_CLICKED, this);
         return t;
     };
 
     // Hàng 0
-    tile(0, 0, LV_SYMBOL_SETTINGS, "[I2C]", "I2C",        onI2CClicked);
-    tile(1, 0, LV_SYMBOL_WIFI,     "[RF]",  "RFFE",       onRffeClicked);
-    tile(2, 0, LV_SYMBOL_DRIVE,    "[USB]", "USB HUB",    onUSBClicked);
-    tile(3, 0, LV_SYMBOL_SD_CARD,  "[MEM]", "EEPROM",     onEepromClicked);
+    tile(0, 0, LV_SYMBOL_SETTINGS, "I2C",                onI2CClicked);
+    tile(1, 0, LV_SYMBOL_WIFI,     "RFFE",               onRffeClicked);
+    tile(2, 0, LV_SYMBOL_DRIVE,    "USB HUB",            onUSBClicked);
+    tile(3, 0, LV_SYMBOL_SD_CARD,  "EEPROM",             onEepromClicked);
     // Hàng 1
-    tile(0, 1, LV_SYMBOL_CHARGE,   "[BAR]", "BASEBAND",   onModuleClicked);
-    tile(1, 1, LV_SYMBOL_WARNING,  "[DOC]", "PANIC & AI", onPanicClicked);
-    tile(2, 1, LV_SYMBOL_GPS,      "[PM]",  "SPMI",       onSpmiClicked);
-    tile(3, 1, LV_SYMBOL_SD_CARD,  "[SD]",  "USB DISK",   onUsbDiskClicked);
+    tile(0, 1, LV_SYMBOL_CHARGE,   "BASEBAND",           onModuleClicked);
+    tile(1, 1, LV_SYMBOL_WARNING,  "PANIC & AI ANALYZE", onPanicClicked);
+    tile(2, 1, LV_SYMBOL_GPS,      "SPMI",               onSpmiClicked);
+    tile(3, 1, LV_SYMBOL_USB,      "USB DISK",           onUsbDiskClicked);
     // Hàng 2
-    tile(0, 2, LV_SYMBOL_EYE_OPEN, "[LA]",  "LOGIC",      onLogicClicked);
+    tile(0, 2, LV_SYMBOL_EYE_OPEN, "LOGIC ANALYZER",     onLogicClicked);
 
-    /* ===== Thanh trạng thái dưới ===== */
+    /* ===== Thanh trạng thái dưới (chỉ Ready, không ESP/PSRAM/Flash) ===== */
     lv_obj_t *bar = lv_obj_create(_screen);
     lv_obj_set_size(bar, 1024, 44);
     lv_obj_set_pos(bar, 0, 556);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x0A1826), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(HCC_STATUS_BG), 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *dot = lv_label_create(bar);
     lv_label_set_text(dot, LV_SYMBOL_OK);
-    lv_obj_set_style_text_color(dot, lv_color_hex(0x4BE08A), 0);
+    lv_obj_set_style_text_color(dot, lv_color_hex(HCC_READY), 0);
     lv_obj_set_style_text_font(dot, &lv_font_be_vietnam_18, 0);
     lv_obj_align(dot, LV_ALIGN_LEFT_MID, 24, 0);
     lv_obj_t *status = lv_label_create(bar);
     lv_label_set_text(status, "Ready");
-    lv_obj_set_style_text_color(status, lv_color_hex(0x8CF0B4), 0);
+    lv_obj_set_style_text_color(status, lv_color_hex(HCC_READY), 0);
     lv_obj_set_style_text_font(status, &lv_font_be_vietnam_18, 0);
     lv_obj_align(status, LV_ALIGN_LEFT_MID, 52, 0);
 }
