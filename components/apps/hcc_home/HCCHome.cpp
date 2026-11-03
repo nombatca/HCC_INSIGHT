@@ -1626,7 +1626,7 @@ void HCCHome::usbClientTask(void *arg)
             app->_apps_scan_requested = false;
             app->_apps_uninstall_requested = false;
             app->_apps_job = uninstall ? 2 : 1;
-            const char *cmd = uninstall ? app->_apps_uninstall_cmd : HCCAndroidApps::listCommand();
+            const char *cmd = uninstall ? app->_apps_uninstall_cmd : HCCAndroidApps::scanCommand();
             if (!app->_adb.runJob(cmd)) {
                 app->_apps_job = 0;
                 app->_apps_error = true;
@@ -6057,7 +6057,7 @@ void HCCHome::showAppScan()
     lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
 
     lv_obj_t *sub = lv_label_create(_screen);
-    lv_label_set_text(sub, "App ben thu 3 tren Android (ADB). Vang = nghi ngo (cai ngoai cua hang). Bam XOA de go.");
+    lv_label_set_text(sub, "Cham diem rui ro theo quyen.  DO = nguy hiem (Tro nang/Admin/SMS/Thong bao), VANG = nghi ngo, XANH = an toan.  Bam XOA de go.");
     lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 30, 56);
     lv_obj_set_style_text_color(sub, lv_color_hex(0x7F96A8), 0);
     lv_obj_set_style_text_font(sub, &lv_font_be_vietnam_16, 0);
@@ -6114,11 +6114,13 @@ void HCCHome::rebuildAppList()
 {
     if (_apps_list == nullptr) return;
     lv_obj_clean(_apps_list);
-    int susp = 0;
-    for (const auto &a : _apps) if (a.suspicious) susp++;
+    int danger = 0, susp = 0;
+    for (const auto &a : _apps) { if (a.level == 2) danger++; else if (a.level == 1) susp++; }
     if (_apps_status) {
-        char s[64]; snprintf(s, sizeof(s), "%d app  (%d nghi ngo)", (int)_apps.size(), susp);
+        char s[80]; snprintf(s, sizeof(s), "%d app  -  %d nguy hiem  -  %d nghi ngo",
+                             (int)_apps.size(), danger, susp);
         lv_label_set_text(_apps_status, s);
+        lv_obj_set_style_text_color(_apps_status, lv_color_hex(danger ? 0xFF5252 : 0x00D9FF), 0);
     }
     if (!_apps_note.empty()) {
         lv_obj_t *note = lv_label_create(_apps_list);
@@ -6130,19 +6132,25 @@ void HCCHome::rebuildAppList()
     }
     for (size_t i = 0; i < _apps.size(); ++i) {
         const HCCAndroidApps::AppEntry &a = _apps[i];
+        // Màu theo mức rủi ro: 2 = đỏ (nguy hiểm), 1 = vàng (nghi ngờ), 0 = xanh (an toàn).
+        const uint32_t rowbg = a.level == 2 ? 0x3A1518 : (a.level == 1 ? 0x2A2316 : 0x14222C);
+        const uint32_t icol  = a.level == 2 ? 0xFF5252 : (a.level == 1 ? 0xF2C94C : 0x3DD66E);
+        const char *icon     = a.level == 0 ? LV_SYMBOL_OK : LV_SYMBOL_WARNING;
+
         lv_obj_t *row = lv_obj_create(_apps_list);
-        lv_obj_set_size(row, 926, 50);
-        lv_obj_set_style_bg_color(row, lv_color_hex(a.suspicious ? 0x2A2316 : 0x14222C), 0);
-        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_size(row, 926, 54);
+        lv_obj_set_style_bg_color(row, lv_color_hex(rowbg), 0);
+        lv_obj_set_style_border_width(row, a.level == 2 ? 1 : 0, 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(0x7A2A2A), 0);
         lv_obj_set_style_radius(row, 8, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t *dot = lv_label_create(row);
-        lv_label_set_text(dot, a.suspicious ? LV_SYMBOL_WARNING : LV_SYMBOL_OK);
-        lv_obj_set_style_text_color(dot, lv_color_hex(a.suspicious ? 0xF2C94C : 0x3DD66E), 0);
+        lv_label_set_text(dot, icon);
+        lv_obj_set_style_text_color(dot, lv_color_hex(icol), 0);
         lv_obj_set_style_text_font(dot, &lv_font_be_vietnam_18, 0);
-        lv_obj_align(dot, LV_ALIGN_LEFT_MID, 12, 0);
+        lv_obj_set_pos(dot, 12, 8);
 
         lv_obj_t *name = lv_label_create(row);
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
@@ -6150,10 +6158,20 @@ void HCCHome::rebuildAppList()
         lv_label_set_text(name, a.pkg.c_str());
         lv_obj_set_style_text_color(name, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(name, &lv_font_be_vietnam_16, 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, 44, 0);
+        lv_obj_set_pos(name, 44, 6);
+
+        // Dòng cờ rủi ro (vì sao bị đánh dấu).
+        std::string reasons = HCCAndroidApps::flagsText(a.flags);
+        lv_obj_t *why = lv_label_create(row);
+        lv_label_set_long_mode(why, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(why, 650);
+        lv_label_set_text(why, reasons.empty() ? "an toan" : reasons.c_str());
+        lv_obj_set_style_text_color(why, lv_color_hex(icol), 0);
+        lv_obj_set_style_text_font(why, &lv_font_be_vietnam_14, 0);
+        lv_obj_set_pos(why, 44, 30);
 
         lv_obj_t *del = lv_btn_create(row);
-        lv_obj_set_size(del, 110, 40);
+        lv_obj_set_size(del, 110, 42);
         lv_obj_align(del, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_set_style_bg_color(del, lv_color_hex(0xC0392B), 0);
         lv_obj_set_user_data(del, (void *)(long)i);
@@ -6185,7 +6203,7 @@ void HCCHome::applyAppsResult(void *arg)
         if (app->_usb_client) usb_host_client_unblock(app->_usb_client);
         if (app->_apps_status) lv_label_set_text(app->_apps_status, "Dang quet lai...");
     } else {         // danh sách
-        app->_apps = HCCAndroidApps::parseList(o);
+        app->_apps = HCCAndroidApps::parseScan(o);
         app->rebuildAppList();
     }
 }
