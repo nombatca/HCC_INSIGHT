@@ -26,7 +26,7 @@ void hccMemoryReport(const char *where);
 #include "HCCSpmiView.hpp"
 #include "HCCEepromView.hpp"
 LV_IMG_DECLARE(img_app_hcc_insight);
-LV_IMG_DECLARE(img_hcc_home_wallpaper);
+LV_IMG_DECLARE(img_hcc_insight_bg);
 
 // Lockdown ProductType -> marketing name. Unknown identifiers are shown as the raw code.
 static const struct {
@@ -834,7 +834,7 @@ void HCCHome::showHome()
 
     /* ===== Nền: banner mạch điện (header) + thân tối, nướng sẵn trong ảnh ===== */
     lv_obj_t *wp = lv_img_create(_screen);
-    lv_img_set_src(wp, &img_hcc_home_wallpaper);
+    lv_img_set_src(wp, &img_hcc_insight_bg);
     lv_obj_set_pos(wp, 0, 0);
     lv_obj_move_background(wp);
 
