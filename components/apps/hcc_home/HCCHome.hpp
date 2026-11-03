@@ -300,6 +300,14 @@ private:
     std::string _apps_note;              // dòng trạng thái sau gỡ
     lv_obj_t *_apps_list = nullptr;      // container cuộn danh sách
     lv_obj_t *_apps_status = nullptr;    // nhãn trạng thái
+    // Đọc log lỗi Android (logcat qua ADB)
+    volatile bool _log_requested = false;
+    volatile int _log_job = 0;           // 0 none, 1 đang chạy
+    volatile int _log_mode = 0;          // 0 = lỗi (*:E), 1 = crash buffer
+    char _log_cmd[128] = {};
+    lv_obj_t *_log_area = nullptr;       // nhãn nội dung log (trong vùng cuộn)
+    lv_obj_t *_log_status = nullptr;
+    lv_obj_t *_log_mode_lbl = nullptr;
     enum class CamWizardPhase : uint8_t {
         Idle,      // no test (or cancelled)
         Listing,   // reading the camera list
@@ -426,6 +434,14 @@ private:
     static void onAppScanBack(lv_event_t *event);
     static void onAppRescan(lv_event_t *event);
     static void onAppUninstall(lv_event_t *event);
+    // XEM LOG LỖI (Android logcat)
+    void showAndroidLog();
+    void requestAndroidLog();
+    static void applyLogResult(void *arg);
+    static void onAndroidLogClicked(lv_event_t *event);
+    static void onLogBack(lv_event_t *event);
+    static void onLogRefresh(lv_event_t *event);
+    static void onLogModeToggle(lv_event_t *event);
     // CASE ĐÃ LƯU: xem các case XÁC NHẬN ĐÃ SỬA trên thẻ SD (kb/v1/cases + case cũ)
     lv_obj_t *_case_dialog = nullptr;
     lv_obj_t *_case_text = nullptr;   // nội dung case đang chọn

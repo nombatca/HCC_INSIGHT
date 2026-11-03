@@ -1633,12 +1633,25 @@ void HCCHome::usbClientTask(void *arg)
                 lv_async_call(HCCHome::applyAppsResult, app);
             }
         }
+        // Đọc log Android (logcat).
+        if (app->_log_requested && app->_apps_job == 0 &&
+            !app->_hw_android_requested && !app->_cam_job_requested) {
+            app->_log_requested = false;
+            app->_log_job = 1;
+            if (!app->_adb.runJob(app->_log_cmd)) {
+                app->_log_job = 0;
+                app->_apps_error = true;  // dùng chung cờ lỗi -> applyLogResult báo lỗi
+                lv_async_call(HCCHome::applyLogResult, app);
+            }
+        }
         if (app->_adb.jobSerial() != app->_adb_job_seen) {
             app->_adb_job_seen = app->_adb.jobSerial();
             if (app->_adb.jobState() == HCCAdbClient::JobState::Done ||
                 app->_adb.jobState() == HCCAdbClient::JobState::TimedOut) {
                 if (app->_apps_job != 0) {
                     lv_async_call(HCCHome::applyAppsResult, app);
+                } else if (app->_log_job != 0) {
+                    lv_async_call(HCCHome::applyLogResult, app);
                 } else {
                     lv_async_call(HCCHome::applyAndroidDiagnostics, app);
                 }
@@ -3054,6 +3067,17 @@ void HCCHome::showUSB()
     lv_label_set_text(apps_label, "QUET APP RAC");
     lv_obj_center(apps_label);
     lv_obj_set_style_text_font(apps_label, &lv_font_be_vietnam_18, 0);
+
+    /* XEM LOG LỖI (Android logcat) */
+    lv_obj_t *log_button = lv_btn_create(_screen);
+    lv_obj_set_size(log_button, 180, 52);
+    lv_obj_align(log_button, LV_ALIGN_BOTTOM_LEFT, 552, -22);
+    lv_obj_set_style_bg_color(log_button, lv_color_hex(0x7A5AD8), 0);
+    lv_obj_add_event_cb(log_button, onAndroidLogClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *log_label = lv_label_create(log_button);
+    lv_label_set_text(log_label, "XEM LOG");
+    lv_obj_center(log_label);
+    lv_obj_set_style_text_font(log_label, &lv_font_be_vietnam_18, 0);
 
     /* Back */
     lv_obj_t *back_button = lv_btn_create(_screen);
@@ -6245,6 +6269,157 @@ void HCCHome::onAppScanBack(lv_event_t *event)
     if (app == nullptr) return;
     app->_apps_list = nullptr;    // chặn async chạm object đã xoá
     app->_apps_status = nullptr;
+    app->showUSB();
+}
+
+// ==================== XEM LOG LỖI (ANDROID logcat) ====================
+
+void HCCHome::onAndroidLogClicked(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showAndroidLog();
+}
+
+void HCCHome::requestAndroidLog()
+{
+    // Giới hạn ~150 dòng cuối (job output ~20KB).
+    if (_log_mode == 1)
+        snprintf(_log_cmd, sizeof(_log_cmd), "logcat -d -b crash -v time -t 150 2>/dev/null");
+    else
+        snprintf(_log_cmd, sizeof(_log_cmd), "logcat -d -v time -t 150 *:E 2>/dev/null");
+    _log_requested = true;
+    if (_usb_client) usb_host_client_unblock(_usb_client);
+}
+
+void HCCHome::showAndroidLog()
+{
+    if (_screen == nullptr) return;
+    detachUsbLabels();
+    detachHwLabels();
+    lv_obj_clean(_screen);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x0E1116), 0);
+
+    lv_obj_t *title = lv_label_create(_screen);
+    lv_label_set_text(title, "LOG LOI ANDROID");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 18);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_be_vietnam_28, 0);
+
+    _log_mode_lbl = lv_label_create(_screen);
+    lv_obj_align(_log_mode_lbl, LV_ALIGN_TOP_LEFT, 30, 58);
+    lv_obj_set_style_text_color(_log_mode_lbl, lv_color_hex(0x7F96A8), 0);
+    lv_obj_set_style_text_font(_log_mode_lbl, &lv_font_be_vietnam_16, 0);
+    lv_label_set_text(_log_mode_lbl, _log_mode ? "Che do: CRASH (treo/crash)" : "Che do: LOI (*:E)");
+
+    _log_status = lv_label_create(_screen);
+    lv_obj_align(_log_status, LV_ALIGN_TOP_RIGHT, -30, 24);
+    lv_obj_set_style_text_font(_log_status, &lv_font_be_vietnam_16, 0);
+    lv_obj_set_style_text_color(_log_status, lv_color_hex(0x00D9FF), 0);
+    lv_label_set_text(_log_status, "...");
+
+    lv_obj_t *box = lv_obj_create(_screen);
+    lv_obj_set_size(box, 968, 388);
+    lv_obj_align(box, LV_ALIGN_TOP_LEFT, 28, 90);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x05080B), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(0x263845), 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 10, 0);
+    lv_obj_set_style_pad_all(box, 10, 0);
+    lv_obj_set_scroll_dir(box, LV_DIR_VER);
+
+    _log_area = lv_label_create(box);
+    lv_label_set_long_mode(_log_area, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_log_area, 938);
+    lv_obj_set_style_text_color(_log_area, lv_color_hex(0xCBD6DF), 0);
+    lv_obj_set_style_text_font(_log_area, &lv_font_be_vietnam_14, 0);
+    lv_label_set_text(_log_area, "...");
+
+    lv_obj_t *mode = lv_btn_create(_screen);
+    lv_obj_set_size(mode, 230, 56);
+    lv_obj_align(mode, LV_ALIGN_TOP_LEFT, 28, 490);
+    lv_obj_set_style_bg_color(mode, lv_color_hex(0x5A4A12), 0);
+    lv_obj_add_event_cb(mode, onLogModeToggle, LV_EVENT_CLICKED, this);
+    { lv_obj_t *l = lv_label_create(mode); lv_label_set_text(l, "DOI: LOI / CRASH"); lv_obj_center(l); lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0); }
+
+    lv_obj_t *refresh = lv_btn_create(_screen);
+    lv_obj_set_size(refresh, 180, 56);
+    lv_obj_align(refresh, LV_ALIGN_TOP_LEFT, 274, 490);
+    lv_obj_set_style_bg_color(refresh, lv_color_hex(0x1C7A4E), 0);
+    lv_obj_add_event_cb(refresh, onLogRefresh, LV_EVENT_CLICKED, this);
+    { lv_obj_t *l = lv_label_create(refresh); lv_label_set_text(l, LV_SYMBOL_REFRESH "  LAY LAI"); lv_obj_center(l); lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0); }
+
+    lv_obj_t *back = lv_btn_create(_screen);
+    lv_obj_set_size(back, 160, 56);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 470, 490);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x1F3242), 0);
+    lv_obj_add_event_cb(back, onLogBack, LV_EVENT_CLICKED, this);
+    { lv_obj_t *l = lv_label_create(back); lv_label_set_text(l, "QUAY LAI"); lv_obj_center(l); lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0); }
+
+    if (_adb.state() == HCCAdbClient::State::Ready) {
+        lv_label_set_text(_log_status, "Dang doc log...");
+        requestAndroidLog();
+    } else {
+        lv_label_set_text(_log_status, "Chua ket noi Android");
+        lv_label_set_text(_log_area, "Cam Android + bat USB debugging, cho ADB ket noi o USB HUB roi bam LAY LAI.");
+    }
+}
+
+void HCCHome::applyLogResult(void *arg)
+{
+    HCCHome *app = static_cast<HCCHome *>(arg);
+    if (app == nullptr) return;
+    app->_log_job = 0;
+    if (app->_log_area == nullptr) return;  // đã rời màn
+    if (app->_apps_error) {
+        app->_apps_error = false;
+        if (app->_log_status) lv_label_set_text(app->_log_status, "Loi: khong chay duoc ADB");
+        return;
+    }
+    const char *out = app->_adb.jobOutput();
+    std::string o = out ? out : "";
+    if (o.empty()) o = "(khong co dong log - may sach hoac buffer trong)";
+    if (o.size() > 12000) o = o.substr(o.size() - 12000);  // cắt bớt cho LVGL render nhẹ
+    lv_label_set_text(app->_log_area, o.c_str());
+    if (app->_log_status) {
+        int lines = 1;
+        for (char c : o) if (c == '\n') lines++;
+        char s[48]; snprintf(s, sizeof(s), "%d dong", lines);
+        lv_label_set_text(app->_log_status, s);
+    }
+}
+
+void HCCHome::onLogModeToggle(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    app->_log_mode = app->_log_mode ? 0 : 1;
+    if (app->_log_mode_lbl)
+        lv_label_set_text(app->_log_mode_lbl, app->_log_mode ? "Che do: CRASH (treo/crash)" : "Che do: LOI (*:E)");
+    if (app->_adb.state() == HCCAdbClient::State::Ready) {
+        if (app->_log_status) lv_label_set_text(app->_log_status, "Dang doc log...");
+        app->requestAndroidLog();
+    }
+}
+
+void HCCHome::onLogRefresh(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if (app->_adb.state() == HCCAdbClient::State::Ready) {
+        if (app->_log_status) lv_label_set_text(app->_log_status, "Dang doc log...");
+        app->requestAndroidLog();
+    } else if (app->_log_status) {
+        lv_label_set_text(app->_log_status, "Chua ket noi Android");
+    }
+}
+
+void HCCHome::onLogBack(lv_event_t *event)
+{
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    app->_log_area = nullptr;
+    app->_log_status = nullptr;
+    app->_log_mode_lbl = nullptr;
     app->showUSB();
 }
 
