@@ -6098,6 +6098,7 @@ void HCCHome::showAppScan()
         lv_label_set_text(_apps_status, "Dang quet...");
         _apps_note.clear();
         _apps_scan_requested = true;
+        if (_usb_client) usb_host_client_unblock(_usb_client);  // đánh thức USB task
     } else {
         lv_label_set_text(_apps_status, "Cho ADB ket noi xong roi bam QUET LAI");
         lv_obj_t *hint = lv_label_create(_apps_list);
@@ -6181,6 +6182,7 @@ void HCCHome::applyAppsResult(void *arg)
         app->_apps_note = (ok ? "Da go: " : "GO LOI: ") + app->_apps_pending_pkg;
         if (!ok) app->_apps_note += "  (" + o.substr(0, 50) + ")";
         app->_apps_scan_requested = true;  // tự quét lại
+        if (app->_usb_client) usb_host_client_unblock(app->_usb_client);
         if (app->_apps_status) lv_label_set_text(app->_apps_status, "Dang quet lai...");
     } else {         // danh sách
         app->_apps = HCCAndroidApps::parseList(o);
@@ -6196,6 +6198,7 @@ void HCCHome::onAppRescan(lv_event_t *event)
         app->_apps_note.clear();
         if (app->_apps_status) lv_label_set_text(app->_apps_status, "Dang quet...");
         app->_apps_scan_requested = true;
+        if (app->_usb_client) usb_host_client_unblock(app->_usb_client);
     } else if (app->_apps_status) {
         lv_label_set_text(app->_apps_status, "Chua ket noi Android");
     }
@@ -6211,6 +6214,7 @@ void HCCHome::onAppUninstall(lv_event_t *event)
     std::string cmd = HCCAndroidApps::uninstallCommand(app->_apps_pending_pkg);
     snprintf(app->_apps_uninstall_cmd, sizeof(app->_apps_uninstall_cmd), "%s", cmd.c_str());
     app->_apps_uninstall_requested = true;
+    if (app->_usb_client) usb_host_client_unblock(app->_usb_client);
     if (app->_apps_status) {
         std::string s = "Dang go " + app->_apps_pending_pkg + "...";
         lv_label_set_text(app->_apps_status, s.c_str());
