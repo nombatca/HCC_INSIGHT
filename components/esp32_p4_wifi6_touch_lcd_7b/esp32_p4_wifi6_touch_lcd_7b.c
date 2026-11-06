@@ -48,8 +48,11 @@ static bool bsp_usb_host_enum_filter(const usb_device_desc_t *dev_desc, uint8_t 
         return false;
     }
 
+    // Thiet bi Apple (iPhone/iPad/iPod) co nhieu configuration: config 1 thuong
+    // chi la PTP/Image, con interface usbmux (FF/FE/02) nam o config 3. Truoc day
+    // chi ep config 3 cho dung PID iPhone 0x12A8 nen iPad (vd 0x12AB) giu config 1
+    // (chi PTP) -> khong tim thay usbmux. Ap cho moi VID Apple co >=3 config.
     if ((dev_desc->idVendor == 0x05AC) &&
-        (dev_desc->idProduct == 0x12A8) &&
         (dev_desc->bNumConfigurations >= 3)) {
         *bConfigurationValue = 3;
     }
