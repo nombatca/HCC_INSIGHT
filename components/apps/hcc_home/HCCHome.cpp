@@ -82,11 +82,80 @@ static const struct {
     {"iPhone18,2", "iPhone 17 Pro Max"},  {"iPhone18,5", "iPhone 17e"},
 };
 
+// Lockdown ProductType -> ten thuong mai iPad / iPod. Ma khong co trong bang
+// se hien nguyen ma tho.
+static const struct {
+    const char *product_type;
+    const char *name;
+} kIPadModelNames[] = {
+    // iPad (so thu tu the he)
+    {"iPad6,11", "iPad (5th gen)"},        {"iPad6,12", "iPad (5th gen)"},
+    {"iPad7,5", "iPad (6th gen)"},         {"iPad7,6", "iPad (6th gen)"},
+    {"iPad7,11", "iPad (7th gen)"},        {"iPad7,12", "iPad (7th gen)"},
+    {"iPad11,6", "iPad (8th gen)"},        {"iPad11,7", "iPad (8th gen)"},
+    {"iPad12,1", "iPad (9th gen)"},        {"iPad12,2", "iPad (9th gen)"},
+    {"iPad13,18", "iPad (10th gen)"},      {"iPad13,19", "iPad (10th gen)"},
+    {"iPad15,7", "iPad (A16)"},            {"iPad15,8", "iPad (A16)"},
+    // iPad mini
+    {"iPad5,1", "iPad mini 4"},            {"iPad5,2", "iPad mini 4"},
+    {"iPad11,1", "iPad mini (5th gen)"},   {"iPad11,2", "iPad mini (5th gen)"},
+    {"iPad14,1", "iPad mini (6th gen)"},   {"iPad14,2", "iPad mini (6th gen)"},
+    {"iPad16,1", "iPad mini (A17 Pro)"},   {"iPad16,2", "iPad mini (A17 Pro)"},
+    // iPad Air
+    {"iPad5,3", "iPad Air 2"},             {"iPad5,4", "iPad Air 2"},
+    {"iPad11,3", "iPad Air (3rd gen)"},    {"iPad11,4", "iPad Air (3rd gen)"},
+    {"iPad13,1", "iPad Air (4th gen)"},    {"iPad13,2", "iPad Air (4th gen)"},
+    {"iPad13,16", "iPad Air (5th gen)"},   {"iPad13,17", "iPad Air (5th gen)"},
+    {"iPad14,8", "iPad Air 11\" (M2)"},    {"iPad14,9", "iPad Air 11\" (M2)"},
+    {"iPad14,10", "iPad Air 13\" (M2)"},   {"iPad14,11", "iPad Air 13\" (M2)"},
+    {"iPad15,3", "iPad Air 11\" (M3)"},    {"iPad15,4", "iPad Air 11\" (M3)"},
+    {"iPad15,5", "iPad Air 13\" (M3)"},    {"iPad15,6", "iPad Air 13\" (M3)"},
+    // iPad Pro
+    {"iPad6,3", "iPad Pro 9.7\""},         {"iPad6,4", "iPad Pro 9.7\""},
+    {"iPad6,7", "iPad Pro 12.9\""},        {"iPad6,8", "iPad Pro 12.9\""},
+    {"iPad7,1", "iPad Pro 12.9\" (2nd gen)"}, {"iPad7,2", "iPad Pro 12.9\" (2nd gen)"},
+    {"iPad7,3", "iPad Pro 10.5\""},        {"iPad7,4", "iPad Pro 10.5\""},
+    {"iPad8,1", "iPad Pro 11\""},          {"iPad8,2", "iPad Pro 11\""},
+    {"iPad8,3", "iPad Pro 11\""},          {"iPad8,4", "iPad Pro 11\""},
+    {"iPad8,5", "iPad Pro 12.9\" (3rd gen)"}, {"iPad8,6", "iPad Pro 12.9\" (3rd gen)"},
+    {"iPad8,7", "iPad Pro 12.9\" (3rd gen)"}, {"iPad8,8", "iPad Pro 12.9\" (3rd gen)"},
+    {"iPad8,9", "iPad Pro 11\" (2nd gen)"}, {"iPad8,10", "iPad Pro 11\" (2nd gen)"},
+    {"iPad8,11", "iPad Pro 12.9\" (4th gen)"}, {"iPad8,12", "iPad Pro 12.9\" (4th gen)"},
+    {"iPad13,4", "iPad Pro 11\" (M1)"},    {"iPad13,5", "iPad Pro 11\" (M1)"},
+    {"iPad13,6", "iPad Pro 11\" (M1)"},    {"iPad13,7", "iPad Pro 11\" (M1)"},
+    {"iPad13,8", "iPad Pro 12.9\" (M1)"},  {"iPad13,9", "iPad Pro 12.9\" (M1)"},
+    {"iPad13,10", "iPad Pro 12.9\" (M1)"}, {"iPad13,11", "iPad Pro 12.9\" (M1)"},
+    {"iPad14,3", "iPad Pro 11\" (M2)"},    {"iPad14,4", "iPad Pro 11\" (M2)"},
+    {"iPad14,5", "iPad Pro 12.9\" (M2)"},  {"iPad14,6", "iPad Pro 12.9\" (M2)"},
+    {"iPad16,3", "iPad Pro 11\" (M4)"},    {"iPad16,4", "iPad Pro 11\" (M4)"},
+    {"iPad16,5", "iPad Pro 13\" (M4)"},    {"iPad16,6", "iPad Pro 13\" (M4)"},
+    // iPad doi cu
+    {"iPad4,1", "iPad Air"},               {"iPad4,2", "iPad Air"},
+    {"iPad4,3", "iPad Air"},               {"iPad4,4", "iPad mini 2"},
+    {"iPad4,5", "iPad mini 2"},            {"iPad4,6", "iPad mini 2"},
+    {"iPad4,7", "iPad mini 3"},            {"iPad4,8", "iPad mini 3"},
+    {"iPad4,9", "iPad mini 3"},
+    // iPod touch
+    {"iPod7,1", "iPod touch (6th gen)"},   {"iPod9,1", "iPod touch (7th gen)"},
+};
+
 static std::string panicMarketingName(const std::string &code);
 
 static const char *iPhoneModelName(const char *product_type)
 {
     for (const auto &entry : kIPhoneModelNames) {
+        if (strcmp(entry.product_type, product_type) == 0) return entry.name;
+    }
+    return nullptr;
+}
+
+// Tra ten thuong mai cho moi thiet bi Apple (iPhone, iPad, iPod).
+static const char *appleModelName(const char *product_type)
+{
+    if (product_type == nullptr || product_type[0] == '\0') return nullptr;
+    const char *name = iPhoneModelName(product_type);
+    if (name != nullptr) return name;
+    for (const auto &entry : kIPadModelNames) {
         if (strcmp(entry.product_type, product_type) == 0) return entry.name;
     }
     return nullptr;
@@ -1153,7 +1222,7 @@ void HCCHome::usbClientTask(void *arg)
             app->_usb_session_reported = true;
             // "iPhone 14 Pro Max (iPhone15,3)", or just the raw code when it is not in the table.
             const char *product_type = app->_usb_transport.productType();
-            const char *model_name = iPhoneModelName(product_type);
+            const char *model_name = appleModelName(product_type);
             char model[80];
             if (model_name != nullptr) {
                 snprintf(model, sizeof(model), "%s (%s)", model_name, product_type);
