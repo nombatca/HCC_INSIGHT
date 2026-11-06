@@ -628,16 +628,19 @@ HCCHome::USBMode HCCHome::detectUSBMode(uint16_t vid, uint16_t pid)
         return USBMode::UNKNOWN;
     }
 
-    if (pid == 0x12A8) {
-        return USBMode::NORMAL;
-    }
-
     if (pid == 0x1227) {
         return USBMode::DFU;
     }
 
     if (pid >= 0x1280 && pid <= 0x1283) {
         return USBMode::RECOVERY;
+    }
+
+    // Normal/iTunes (usbmux) mode. iPhone thuong dung 0x12A8, nhung iPad / iPod
+    // / cac doi iPhone khac dung PID khac trong dai 0x1290-0x12AF. Nhan dien theo
+    // dai nay de iPad cung vao NORMAL (truoc day chi 0x12A8 -> iPad bi UNKNOWN).
+    if (pid >= 0x1290 && pid <= 0x12AF) {
+        return USBMode::NORMAL;
     }
 
     return USBMode::UNKNOWN;
