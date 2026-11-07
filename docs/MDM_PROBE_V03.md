@@ -52,11 +52,10 @@ Core được viết riêng, fixture là dữ liệu tổng hợp; không đưa 
 ## Build trên GitHub Actions
 
 Workflow `.github/workflows/hcc-build.yml` chạy kiểm thử host trước, sau đó dùng
-action chính thức của Espressif build ESP32-P4 với ESP-IDF v5.5, khớp dòng phiên bản
-trong sdkconfig.defaults. Chưa chạy workflow này, nên chưa xác nhận toàn bộ dependency
-trong repo tương thích khi build sạch. Nếu môi trường hiện đang dùng là 5.5.5,
-có thể đổi esp_idf_version thành v5.5.5 trước khi chạy; không tự đổi SDK mặc định
-của bản source đã gửi.
+action chính thức của Espressif build ESP32-P4 với ESP-IDF v5.5.5, phiên bản đang
+dùng cho P4. Lần build đầu với v5.5 đã dừng ở dependency solver với MissingKconfigError
+ESP_HOSTED_HOST_USB_CHERRYUSB_MANIFEST; kiểm thử host trên GitHub đã đạt. Bản cập nhật
+chuyển SDK CI sang v5.5.5 và đang chờ kiểm chứng build sạch.
 
 Sau khi áp dụng bản vá lên repo:
 
