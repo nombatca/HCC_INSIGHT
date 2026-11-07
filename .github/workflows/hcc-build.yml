@@ -1,0 +1,66 @@
+name: HCC INSIGHT build
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcc-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Protocol and transport glue tests
+        run: |
+          sh tests/backup_link/run_tests.sh
+          sh tests/mdm_probe/run_tests.sh
+          python3 -m unittest discover -s tests/firmware_package -v
+      - name: Transport glue memory checks
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          HCC_TEST_FLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer
+        run: sh tests/mdm_probe/run_tests.sh
+
+  firmware:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build ESP32-P4 firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          # sdkconfig.defaults was generated with IDF 5.5.0.
+          esp_idf_version: v5.5
+          target: esp32p4
+          command: idf.py build
+      - name: Package all images referenced by the flash manifest
+        run: python3 tools/package_firmware.py
+      - name: Upload firmware bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: HCC_INSIGHT-esp32p4-${{ github.sha }}
+          path: dist/HCC_INSIGHT_firmware.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HCC_INSIGHT-build-diagnostics-${{ github.sha }}
+          path: |
+            build/log/
+            build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+          retention-days: 7

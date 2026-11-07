@@ -1060,6 +1060,7 @@ void HCCHome::usbClientTask(void *arg)
 
     app->_usb_client_registered = true;
 
+    auto last_mdm_state = app->_usb_transport.mdmState();
     while (!app->_usb_shutdown_requested) {
         // Submit the deferred SETUP before choosing this iteration's event wait.
         // This guarantees a newly submitted SETUP selects the finite diagnostic
@@ -1071,11 +1072,17 @@ void HCCHome::usbClientTask(void *arg)
             printf("[HCC USB] Deferred USBMUX TCP submit failed\n");
         }
 
+        const auto mdm_state = app->_usb_transport.mdmState();
+        if (mdm_state != last_mdm_state) {
+            last_mdm_state = mdm_state;
+            lv_async_call(HCCHome::applyUSBResult, app);
+        }
         const bool dwc_delayed_snapshot_pending = app->_usb_transport.needsDwcDelayedSnapshot();
         const bool pair_time_wait = !dwc_delayed_snapshot_pending && app->_usb_transport.preparePairTimeWait();
         const bool credential_work_wait = !dwc_delayed_snapshot_pending && !pair_time_wait &&
                                           (app->_pair_credentials.hasDeferredWork() ||
-                                           app->_usb_transport.serviceRetryPending());
+                                           app->_usb_transport.serviceRetryPending() ||
+                                           app->_usb_transport.mdmPollingPending());
         const TickType_t event_timeout = dwc_delayed_snapshot_pending ? pdMS_TO_TICKS(250) :
                                          (pair_time_wait ? pdMS_TO_TICKS(1000) :
                                           (credential_work_wait ? pdMS_TO_TICKS(250) : portMAX_DELAY));
@@ -1301,7 +1308,9 @@ void HCCHome::applyUSBResult(void *arg)
     }
 
     if (app->_usb_status_label != nullptr) {
-        lv_label_set_text(app->_usb_status_label, app->_usb_status);
+        lv_label_set_text(app->_usb_status_label,
+            app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Idle
+                ? app->_usb_status : app->_usb_transport.mdmStatusText());
     }
 
     if (app->_usb_mode_label != nullptr) {
@@ -1941,6 +1950,19 @@ void HCCHome::onBackClicked(lv_event_t *event)
     app->showHome();
 }
 
+void HCCHome::onMdmClicked(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    app->_usb_transport.requestMdmProbe();
+    if (app->_usb_status_label != nullptr) {
+        lv_label_set_text(app->_usb_status_label, app->_usb_transport.mdmStatusText());
+    }
+    if (app->_usb_client_registered && app->_usb_client != nullptr) {
+        usb_host_client_unblock(app->_usb_client);
+    }
+}
+
 void HCCHome::onRecoveryClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
@@ -2253,7 +2275,7 @@ void HCCHome::showUSB()
 
     const char *action_names[] = {
         "RECOVERY",
-        "DFU",
+        "MDM",
         "PURPLE",
         "REBOOT"
     };
@@ -2277,10 +2299,12 @@ void HCCHome::showUSB()
         lv_obj_center(label);
         lv_obj_set_style_text_font(label, &lv_font_be_vietnam_16, 0);
 
-        // Only RECOVERY is wired for now; the other actions remain inert placeholders.
+        // RECOVERY controls device mode; MDM arms a diagnostic on the next connection.
         if (i == 0) {
             _recovery_button_label = label;
             lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
+        } else if (i == 1) {
+            lv_obj_add_event_cb(button, onMdmClicked, LV_EVENT_CLICKED, this);
         }
     }
     _recovery_confirm_pending = false;

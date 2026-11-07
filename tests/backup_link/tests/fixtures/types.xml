@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>text</key>
+	<string>Tiếng Việt &lt;&amp;&gt; 😀</string>
+	<key>bool</key>
+	<true/>
+	<key>negative</key>
+	<integer>-19</integer>
+	<key>int</key>
+	<integer>255</integer>
+	<key>float</key>
+	<real>2.1</real>
+	<key>repeat</key>
+	<array>
+		<string>same</string>
+		<string>same</string>
+	</array>
+	<key>long</key>
+	<string>xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</string>
+	<key>empty</key>
+	<array/>
+</dict>
+</plist>

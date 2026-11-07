@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -10,6 +11,7 @@
 #include "mbedtls/x509_crt.h"
 #include "usb/usb_host.h"
 #include "HCCPairCredentials.hpp"
+#include "hcc_backup_link.hpp"
 
 class HCCUSBTransport {
 public:
@@ -104,6 +106,14 @@ public:
     // The caller must unblock the USB client so the request is flushed.
     bool requestEnterRecovery();
 
+    // One-shot diagnostic mode for the NEXT USB connection. The current service
+    // owns TCP #2 until unplug; never replace it underneath an in-flight TLS call.
+    enum class MdmState { Idle, Armed, Opening, Negotiating, Ready, Failed };
+    bool requestMdmProbe();
+    MdmState mdmState() const { return _mdm_state.load(); }
+    const char *mdmStatusText() const;
+    bool mdmPollingPending() const;
+
 private:
     static constexpr size_t kRxMinimumBufferSize = 8192;
     static constexpr size_t kRxTransferCount = 3;
@@ -160,6 +170,7 @@ private:
         NotificationBody,
         OsTraceStart,
         ServiceTlsCiphertext,
+        BackupPlaintext,
     };
 
     enum class LockdownResponse {
@@ -241,6 +252,12 @@ private:
     bool appendServiceTlsRx(const uint8_t *data, size_t length);
     bool drainServiceTls();
     void releaseServiceTls();
+    bool beginMdmProbe();
+    bool pollMdmProbe();
+    void releaseMdmProbe();
+    bool appendMdmPlaintext(const uint8_t *data, size_t length);
+    static hcc::backup::IoResult mdmRead(void *, uint8_t *, size_t);
+    static hcc::backup::IoResult mdmWrite(void *, const uint8_t *, size_t);
     static int serviceTlsBioSend(void *context, const unsigned char *buffer, size_t length);
     static int serviceTlsBioRecv(void *context, unsigned char *buffer, size_t length);
     bool appendTlsRx(const uint8_t *data, size_t length);
@@ -366,6 +383,12 @@ private:
     uint32_t _notification_service_epoch = 0;
     uint16_t _notification_service_port = 0;
     bool _notification_service_ssl = false;
+    struct MdmProbeContext;
+    MdmProbeContext *_mdm_probe = nullptr;
+    std::atomic<MdmState> _mdm_state{MdmState::Idle};
+    bool _mdm_selected = false; // USB task only; fixed for one connection.
+    bool _mdm_service_active = false; // Only the post-session mobilebackup2 socket.
+    uint64_t _mdm_open_started_ms = 0;
     bool _notification_tcp_after_ack = false;
     struct ServiceTcpContext {
         TcpState state = TcpState::Inactive;

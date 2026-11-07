@@ -11,6 +11,8 @@
 
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include <new>
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "hal/usb_dwc_ll.h"
@@ -497,6 +499,18 @@ static constexpr size_t kOsTraceStartActivityBodySize = sizeof(kOsTraceStartActi
 // {"Request":"All"} và DUMP RAW response ra serial. Chưa parser/UI. Đặt false để về os_trace.
 // Service name + request theo libimobiledevice diagnostics_relay.c / pymobiledevice3 diagnostics.
 static constexpr bool kDiagnosticsRelayCapture = true;
+
+static constexpr char kLockdownStartBackupServiceXml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+    "<plist version=\"1.0\"><dict>"
+    "<key>Request</key><string>StartService</string>"
+    "<key>Service</key><string>com.apple.mobilebackup2</string>"
+    "</dict></plist>";
+
+static uint64_t mdmNowMs()
+{
+    return static_cast<uint64_t>(esp_timer_get_time() / 1000);
+}
 
 static constexpr char kLockdownStartDiagnosticsServiceXml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1038,6 +1052,8 @@ struct HCCUSBTransport::ServiceTlsContext {
     bool closed;
 };
 
+#include "HCCMdmProbe.inc"
+
 bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, uint8_t in_endpoint, uint16_t in_mps)
 {
     if (device == nullptr || out_endpoint == 0 || in_endpoint == 0 || in_mps == 0 || hasPendingTransfers()) {
@@ -1113,6 +1129,9 @@ bool HCCUSBTransport::start(usb_device_handle_t device, uint8_t out_endpoint, ui
     _pair_success_epoch = 0;
     clearStartSessionConnectionState(false);
     resetServiceTcpContext();
+    _mdm_selected = _mdm_state.load() == MdmState::Armed;
+    _mdm_state.store(_mdm_selected ? MdmState::Opening : MdmState::Idle);
+    _mdm_open_started_ms = 0;
     _rx_stream_length = 0;
     _lockdown_rx_stream_length = 0;
     mbedtls_platform_zeroize(_device_public_key.data(), _device_public_key.size());
@@ -1230,8 +1249,18 @@ bool HCCUSBTransport::submitPendingSetup()
 
 bool HCCUSBTransport::submitPendingTcp()
 {
+    if (_mdm_selected && mdmPollingPending() && _state == State::Failed) _mdm_state.store(MdmState::Failed);
     if (_stopping || _state == State::Failed || _tx_in_flight) {
         return true;
+    }
+    if (_mdm_selected && mdmPollingPending() && _mdm_open_started_ms != 0 &&
+        mdmNowMs() - _mdm_open_started_ms >= 30000) {
+        _mdm_state.store(MdmState::Failed);
+        printf("[HCC MDM] opening/negotiation deadline expired; reconnect to retry\n");
+    }
+    if (_mdm_selected && _mdm_open_started_ms != 0 && _mdm_state.load() == MdmState::Opening &&
+        (_tcp_state == TcpState::Failed || _tls_state == TlsState::Failed)) {
+        _mdm_state.store(MdmState::Failed);
     }
 
     if (_session_reconnect_pending) {
@@ -1282,9 +1311,14 @@ bool HCCUSBTransport::submitPendingTcp()
         if (!processServiceTls()) {
             printf("[HCC SERVICE TLS] failed - closing service TLS\n");
             releaseServiceTls();
+            if (_mdm_selected) _mdm_state.store(MdmState::Failed);
             _ostrace_active = false;
             _service_tcp.state = TcpState::Failed;
         }
+        if (_tx_in_flight) return true;
+    }
+    if (_mdm_service_active && _service_tcp.state == TcpState::Connected && !_notification_service_ssl) {
+        if (!pollMdmProbe()) _mdm_state.store(MdmState::Failed);
         if (_tx_in_flight) return true;
     }
     if (_ostrace_start_requested) {
@@ -1451,6 +1485,8 @@ uint16_t HCCUSBTransport::allocateServiceSourcePort()
 
 void HCCUSBTransport::resetServiceTcpContext()
 {
+    releaseMdmProbe();
+    _mdm_service_active = false;
     releaseServiceTls();
     _service_tcp = ServiceTcpContext{};
     _notification_tcp_after_ack = false;
@@ -2506,7 +2542,11 @@ void HCCUSBTransport::queueNextTlsLockdownRequest()
     } else {
         _device_info_ready = true;
         const char *xml;
-        if (kDiagnosticsRelayCapture) {
+        if (_mdm_selected) {
+            xml = kLockdownStartBackupServiceXml;
+            body_length = sizeof(kLockdownStartBackupServiceXml) - 1;
+            if (_mdm_open_started_ms == 0) _mdm_open_started_ms = mdmNowMs();
+        } else if (kDiagnosticsRelayCapture) {
             xml = kLockdownStartDiagnosticsServiceXml;
             body_length = kLockdownStartDiagnosticsServiceBodySize;
         } else if (kOsTraceExperiment) {
@@ -2760,10 +2800,11 @@ bool HCCUSBTransport::processTlsApplication()
         _notification_service_generation = _session_generation;
         _notification_service_epoch = _primary_connection_epoch;
         resetServiceTcpContext();
+        _mdm_service_active = _mdm_selected;
         _service_tcp.destination_port = port;
         _service_tcp.generation = _session_generation;
         // An SSL service is connected too when TCP #2 TLS can carry it (os_trace experiment).
-        if (!ssl || kOsTraceExperiment || kDiagnosticsRelayCapture) {
+        if (!ssl || _mdm_selected || kOsTraceExperiment || kDiagnosticsRelayCapture) {
             _service_tcp.syn_requested = true;
         } else {
             _service_tcp.state = TcpState::Failed;
@@ -3221,6 +3262,9 @@ void HCCUSBTransport::stopForDeviceGone()
     _repair_attempted = false;
     clearStartSessionConnectionState(false);
     resetServiceTcpContext();
+    if (_mdm_selected && _mdm_state.load() != MdmState::Armed) _mdm_state.store(MdmState::Idle);
+    _mdm_selected = false;
+    _mdm_open_started_ms = 0;
     destroyPairState();
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
@@ -3280,6 +3324,9 @@ void HCCUSBTransport::stopForShutdown()
     _repair_attempted = false;
     clearStartSessionConnectionState(false);
     resetServiceTcpContext();
+    if (_mdm_selected && _mdm_state.load() != MdmState::Armed) _mdm_state.store(MdmState::Idle);
+    _mdm_selected = false;
+    _mdm_open_started_ms = 0;
     destroyPairState();
     mbedtls_platform_zeroize(_wifi_address.data(), _wifi_address.size());
     _product_version[0] = '\0';
@@ -3662,6 +3709,12 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
                                               const uint8_t *payload,
                                               size_t payload_length)
 {
+    if (_mdm_service_active && (flags & 0x05)) {
+        _mdm_state.store(MdmState::Failed);
+        _service_tcp.state = TcpState::Failed;
+        printf("[HCC MDM] peer closed service TCP\n");
+        return true;
+    }
     if (flags & 0x04) {
         _service_tcp.state = TcpState::Failed;
         _service_tcp.syn_requested = false;
@@ -3691,6 +3744,7 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
 
     if (seq == _service_tcp.ack_seq) {
         const bool appended = _service_tls != nullptr ? appendServiceTlsRx(payload, payload_length)
+                              : _mdm_service_active ? appendMdmPlaintext(payload, payload_length)
                               : (_ostrace_active && _diag_capture) ? appendDiagRx(payload, payload_length)
                               : _ostrace_active       ? appendOsTraceRx(payload, payload_length)
                                                       : appendNotificationRx(payload, payload_length);
@@ -3854,6 +3908,8 @@ bool HCCUSBTransport::drainServiceTls()
 {
     ServiceTlsContext *tls = _service_tls;
     if (tls == nullptr || !tls->established || tls->closed) return true;
+    // BackupLink must own ssl_read, preserving its buffer across WANT retries.
+    if (_mdm_service_active) return true;
     while (true) {
         const int ret = mbedtls_ssl_read(&tls->ssl, tls->plain, sizeof(tls->plain));
         if (ret > 0) {
@@ -3898,6 +3954,7 @@ bool HCCUSBTransport::processServiceTls()
             tls->established = true;
             logTlsMemory("SERVICE-HANDSHAKE-PASS");
             printf("[HCC SERVICE TLS] HANDSHAKE PASS suite=%s\n", mbedtls_ssl_get_ciphersuite(&tls->ssl));
+            if (_mdm_service_active) return beginMdmProbe();
             if (kOsTraceExperiment || kDiagnosticsRelayCapture) _ostrace_start_requested = true;
             return drainServiceTls();
         }
@@ -3907,6 +3964,11 @@ bool HCCUSBTransport::processServiceTls()
     }
 
     if (tls->closed) return true;
+    if (_mdm_service_active) {
+        if (!pollMdmProbe()) return false;
+        if (tls->tx_offset < tls->tx_length) return sendServiceTlsCiphertext();
+        return true;
+    }
     if (tls->app_tx_offset < tls->app_tx_length) {
         const int ret = mbedtls_ssl_write(&tls->ssl, tls->app_tx + tls->app_tx_offset,
                                           tls->app_tx_length - tls->app_tx_offset);
@@ -5310,6 +5372,8 @@ const char *HCCUSBTransport::txKindName(TxKind tx_kind)
         return "OSTRACE_START";
     case TxKind::ServiceTlsCiphertext:
         return "SERVICE_TLS_CIPHERTEXT";
+    case TxKind::BackupPlaintext:
+        return "BACKUP_PLAINTEXT";
     default:
         return "UNKNOWN";
     }
@@ -5626,6 +5690,12 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
                 if (transport->_pair_trust_state == PairTrustState::NotificationServiceReady) {
                     transport->_primary_trust_fin_requested = true;
                     printf("[HCC NOTIFY] TCP #2 connected; primary close pending\n");
+                } else if (transport->_mdm_service_active) {
+                    if (transport->_notification_service_ssl) {
+                        transport->_service_tls_prepare_requested = true;
+                    } else if (!transport->beginMdmProbe()) {
+                        transport->_mdm_state.store(MdmState::Failed);
+                    }
                 } else if (kOsTraceExperiment) {
                     // SSL services handshake on TCP #2 first; StartActivity follows the handshake.
                     if (transport->_notification_service_ssl) {
@@ -5653,6 +5723,10 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
                                               ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
             transport->_service_tcp.tx_seq += static_cast<uint32_t>(payload_length);
             printf("[HCC OSTRACE] StartActivity sent bytes=%u\n", static_cast<unsigned>(payload_length));
+        } else if (tx_kind == TxKind::BackupPlaintext) {
+            const size_t payload_length = actual_num_bytes >= static_cast<int>(kTcpMuxPacketSize)
+                ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
+            transport->_service_tcp.tx_seq += static_cast<uint32_t>(payload_length);
         } else if (tx_kind == TxKind::ServiceTlsCiphertext) {
             const size_t payload_length = actual_num_bytes >= static_cast<int>(kTcpMuxPacketSize)
                                               ? static_cast<size_t>(actual_num_bytes) - kTcpMuxPacketSize : 0;
