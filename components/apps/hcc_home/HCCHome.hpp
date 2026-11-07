@@ -97,6 +97,7 @@ private:
     static void *i2cBusForScope(void *user);
     static void onBackClicked(lv_event_t *event);
     static void onRecoveryClicked(lv_event_t *event);
+    static void onMdmClicked(lv_event_t *event);
     // IPHONE HARDWARE CHECK (trong màn USB HUB).
     static void onHardwareCheckClicked(lv_event_t *event);
     void showHardwareCheck();

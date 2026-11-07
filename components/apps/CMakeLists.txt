@@ -23,7 +23,7 @@ idf_component_register(
     INCLUDE_DIRS ${APPS_DIR}
     # Knowledge Base V1 mặc định cho phân tích panic (HCCPanicKBStore::defaultKbJson).
     EMBED_TXTFILES ${APPS_DIR}/hcc_home/kb/hcc_kb_default.json
-    REQUIRES lvgl__lvgl esp_event esp_wifi esp_http_client esp_http_server nvs_flash esp_driver_jpeg esp_driver_parlio esp_mm esp-brookesia product_audio esp32_p4_wifi6_touch_lcd_7b esp_video vn_fonts esp_netif mbedtls esp_websocket_client json usb mdns esp_tinyusb efuse esp_audio_codec esp_app_format esp_timer libpng esp_adc)
+    REQUIRES lvgl__lvgl esp_event esp_wifi esp_http_client esp_http_server nvs_flash esp_driver_jpeg esp_driver_parlio esp_mm esp-brookesia product_audio esp32_p4_wifi6_touch_lcd_7b esp_video vn_fonts esp_netif mbedtls esp_websocket_client json usb mdns esp_tinyusb efuse esp_audio_codec esp_app_format esp_timer libpng esp_adc hcc_backup)
 
 target_compile_options(
     ${COMPONENT_LIB}
@@ -43,3 +43,6 @@ target_compile_options(
     # Chỉ C/C++: EMBED_TXTFILES sinh file assembly (.S), không được -include header C.
     "$<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_CURRENT_LIST_DIR}/../vn_fonts/include/vn_fonts.h>"
 )
+
+# Backup negotiation uses C++17 interfaces.
+target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
