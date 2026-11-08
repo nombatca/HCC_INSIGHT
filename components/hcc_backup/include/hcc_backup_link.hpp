@@ -30,6 +30,29 @@ struct LinkBuffers {
 LinkError encode_version_reply(std::uint64_t major,std::uint8_t*,std::size_t,std::size_t& written);
 LinkError encode_hello(bool offer_20,bool offer_21,std::uint8_t*,std::size_t,std::size_t& written);
 
+// Bounded status reply: ASCII message (0..255 bytes), signed status code,
+// and either an empty dictionary or the DeviceLink empty-parameter sentinel.
+// This does not acknowledge a SessionObserver request or initiate an operation.
+LinkError encode_status_response(std::int64_t code,const char* message,
+    bool empty_dictionary,std::uint8_t*,std::size_t,std::size_t& written);
+
+// Caller owns storage exclusively until done/error. Do not move this object or
+// modify storage while pending: TLS retries require stable address and length.
+class StatusReplyWriter {
+public:
+    StatusReplyWriter(std::uint8_t* storage,std::size_t capacity):storage_(storage),capacity_(capacity) {}
+    StatusReplyWriter(const StatusReplyWriter&)=delete;
+    StatusReplyWriter& operator=(const StatusReplyWriter&)=delete;
+    Error begin(std::int64_t code,const char* message=nullptr,bool empty_dictionary=true);
+    Error pump(Sink);
+    bool done() const { return done_; }
+private:
+    std::uint8_t* storage_;
+    std::size_t capacity_,size_=0,sent_=0;
+    bool active_=false,done_=false;
+    Error error_=Error::ok;
+};
+
 // Negotiates DeviceLink + mobilebackup2 application versions on an ALREADY
 // connected, paired, service-specific byte stream. Does not create USBMUX/TLS,
 // send restore requests or consume messages beyond the Hello response.

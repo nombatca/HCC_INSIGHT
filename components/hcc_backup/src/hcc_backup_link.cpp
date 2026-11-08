@@ -73,6 +73,54 @@ LinkError encode_hello(bool v20,bool v21,std::uint8_t* b,std::size_t n,std::size
     if(v20&&v21) { w.object();w.real(2.1); }
     return w.finish(written);
 }
+LinkError encode_status_response(std::int64_t code,const char* message,bool dict,
+    std::uint8_t* b,std::size_t n,std::size_t& written) {
+    written=0;
+    if(!b) return LinkError::invalid_argument;
+    std::size_t len=0;
+    if(message) {
+        while(len<=255 && message[len]) {
+            if(static_cast<unsigned char>(message[len])>=128) return LinkError::invalid_argument;
+            ++len;
+        }
+        if(len>255) return LinkError::too_large;
+    }
+    BinaryWriter w(b,n);
+    w.object();w.put(0xa4);w.put(1);w.put(2);w.put(3);w.put(4);
+    w.object();w.string("DLMessageStatusResponse");
+    // Negative status codes use a full-width two's-complement plist integer.
+    w.object();w.put(0x13);w.number(static_cast<std::uint64_t>(code),8);
+    w.object();w.string(message?std::string_view(message,len):"___EmptyParameterString___");
+    w.object();if(dict) w.put(0xd0);else w.string("___EmptyParameterString___");
+    return w.finish(written);
+}
+Error StatusReplyWriter::begin(std::int64_t code,const char* message,bool dict) {
+    if(active_) return Error::busy;
+    done_=false;size_=sent_=0;error_=Error::ok;
+    if(!storage_ || capacity_<4) return error_=Error::invalid_argument;
+    std::size_t body=0;
+    const auto e=encode_status_response(code,message,dict,storage_+4,capacity_-4,body);
+    if(e!=LinkError::ok) return error_=e==LinkError::too_large?Error::too_large:Error::invalid_argument;
+    if(body>UINT32_MAX) return error_=Error::too_large;
+    write_be32(storage_,static_cast<std::uint32_t>(body));size_=body+4;active_=true;
+    return Error::ok;
+}
+Error StatusReplyWriter::pump(Sink sink) {
+    if(error_!=Error::ok) return error_;
+    if(done_) return Error::ok;
+    if(!active_ || !sink.write) return Error::invalid_argument;
+    const auto remaining=size_-sent_;
+    const auto r=sink.write(sink.context,storage_+sent_,remaining);
+    auto fail=[this](Error e) {active_=false;return error_=e;};
+    if(r.bytes>remaining) return fail(Error::io_error);
+    sent_+=r.bytes;
+    if(r.state==IoState::error) return fail(Error::io_error);
+    if(r.state==IoState::closed) return fail(Error::closed);
+    if(sent_==size_) {active_=false;done_=true;return Error::ok;}
+    if(r.state==IoState::would_block) return Error::would_block;
+    if(!r.bytes) return fail(Error::no_progress);
+    return Error::would_block;
+}
 BackupLink::BackupLink(LinkBuffers b):buffers_(b),decoder_(b.receive,b.receive_capacity) {}
 LinkError BackupLink::fail(LinkError e) { phase_=LinkPhase::failed;observer_.transport_failed();return error_=e; }
 LinkError BackupLink::start(std::uint64_t now,LinkConfig config) {

@@ -21,3 +21,13 @@ mkdir -p build
     -I../../components/hcc_backup/include ../../components/hcc_backup/src/hcc_backup_stream.cpp ../../components/hcc_backup/src/hcc_plist.cpp ../../components/hcc_backup/src/hcc_backup_session.cpp \
     ../../components/hcc_backup/src/hcc_backup_link.cpp examples/link_demo.cpp -o build/hcc_link_demo
 ./build/hcc_link_demo
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    -I../../components/hcc_backup/include ../../components/hcc_backup/src/hcc_backup_stream.cpp ../../components/hcc_backup/src/hcc_plist.cpp ../../components/hcc_backup/src/hcc_backup_session.cpp \
+    ../../components/hcc_backup/src/hcc_backup_link.cpp tests/test_status.cpp -o build/hcc_status_tests
+./build/hcc_status_tests
+python3 - <<'PY'
+import plistlib
+with open('build/status.bplist', 'rb') as stream:
+    assert plistlib.load(stream) == ['DLMessageStatusResponse', -1, '___EmptyParameterString___', {}]
+print('Independent plistlib status decoding PASS')
+PY
