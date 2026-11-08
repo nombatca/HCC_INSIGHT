@@ -13,7 +13,7 @@ enum class LinkPhase { idle, await_version, send_version, await_ready,
 enum class LinkError { ok, would_block, yield, invalid_argument, wrong_state,
                        timeout, closed, truncated, io_error, no_progress,
                        too_large, malformed, incompatible_version, remote_error,
-                       clock_error };
+                       clock_error, unsupported_operation };
 struct LinkConfig {
     std::uint64_t major=400,minor=0;
     bool offer_20=true,offer_21=true;

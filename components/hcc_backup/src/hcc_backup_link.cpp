@@ -259,7 +259,12 @@ LinkError BackupLink::receive_event(Duplex io,std::uint64_t now,plist::Document&
         if(decoder_.ready()) {
             const auto e=plist::parse(decoder_.data(),decoder_.size(),buffers_.plist,doc);
             if(e!=plist::Error::ok) return fail(e==plist::Error::too_large||e==plist::Error::no_space?LinkError::too_large:LinkError::malformed);
-            if(observer_.consume(doc,event)!=SessionError::ok) {doc={};event={};return fail(LinkError::malformed);}
+            const auto session_error=observer_.consume(doc,event);
+            if(session_error!=SessionError::ok) {
+                doc={};event={};
+                return fail(session_error==SessionError::unsupported_operation||session_error==SessionError::unsupported_message
+                            ?LinkError::unsupported_operation:LinkError::malformed);
+            }
             decoder_.next_frame();event_partial_=false;available=true;return LinkError::ok;
         }
         if(r.state==IoState::would_block) return LinkError::would_block;
@@ -285,6 +290,7 @@ const char* link_error_name(LinkError e) {
     case LinkError::too_large:return "too_large";case LinkError::malformed:return "malformed";
     case LinkError::incompatible_version:return "incompatible_version";case LinkError::remote_error:return "remote_error";
     case LinkError::clock_error:return "clock_error";
+    case LinkError::unsupported_operation:return "unsupported_operation";
     } return "unknown";
 }
 } // namespace hcc::backup

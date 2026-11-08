@@ -1,6 +1,7 @@
 #include "HCCBackupCapture.hpp"
 #include "HCCBackupUploadRequest.hpp"
 #include "hcc_backup_start.hpp"
+#include "HCCBackupOperation.hpp"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -17,6 +18,9 @@ namespace bb=hcc::backup;
 namespace fs=std::filesystem;
 void* bsp_sdcard=nullptr;
 static int mount_result=0,mount_calls=0;
+static int space_result=0;
+static std::uint64_t space_available=1073741824;
+int esp_vfs_fat_info(const char*,std::uint64_t* total,std::uint64_t* available){*total=1073741824;*available=space_available;return space_result;}
 static const char* mount_point;
 int bsp_sdcard_mount(){++mount_calls;if(!mount_result)bsp_sdcard=reinterpret_cast<void*>(1);return mount_result;}
 const char* hcc_test_mount_point(){return mount_point;}
@@ -127,6 +131,64 @@ static void upload_request_flow(unsigned failure){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     if(!failure){available=false;for(;clock<15000&&!available;++clock){const auto e=link.receive_event(wire.io(),clock,doc,event,available,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}assert(available&&event.kind==bb::EventKind::result&&observer.outcome()==bb::Outcome::success);}
 }
+static void operation_flow(unsigned mode){
+    RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
+    std::size_t pause=0;
+    if(mode==0||mode==3||mode==6||mode==8||mode==13){
+        for(unsigned batch=0;batch<2;++batch){
+            wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
+            wire.name("/device/source");wire.name("backup/test");wire.number(6);wire.input.push_back(0x0c);wire.bytes(batch?"world":"hello");
+            if(batch==0)pause=wire.input.size();
+            wire.number(1);wire.input.push_back(0);wire.number(0);
+        }
+        wire.fixture(mode==8?"result_error.bplist":"result_ok.xml");
+    }else if(mode==7)wire.xml("<array><string>DLContentsOfDirectory</string><string>backup</string></array>");
+    else if(mode==9)wire.fixture("disconnect.xml");
+    std::uint8_t control[8192],output[1024],scratch[3];hcc::plist::Node nodes[128];char text[8192];
+    bb::BackupLink link({control,sizeof(control),output,sizeof(output),{nodes,128,text,sizeof(text)}});
+    assert(link.start(0)==bb::LinkError::ok);
+    for(unsigned i=0;i<5000&&link.phase()!=bb::LinkPhase::ready;++i){auto e=link.poll(wire.io(),i,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}
+    auto* observer=link.session_observer();assert(observer);const auto before=wire.output.size();
+    HCCBackupConfig config;
+    if(mode==1)space_available=0;
+    if(mode==10)space_result=2;
+    if(mode==6)config.limits.max_batch_bytes=7;
+    if(mode==13)config.limits.max_files=1;
+    if(mode==12)config.total_timeout_ms=3;
+    bb::SdLease blocker(HCCSdAccess::gate,bb::SdOwner::usb_disk);
+    if(mode==2)assert(blocker.acquire());
+    {
+        HCCBackupOperation operation(link,scratch,sizeof(scratch),output,sizeof(output));
+        auto started=operation.start(mode==14?"invalid":"00008101-001234567890ABCD",10000,config);
+        if(mode==1||mode==2||mode==10||mode==14){
+            assert(started==(mode==2?HCCBackupError::busy:mode==14?HCCBackupError::invalid_argument:mode==1?HCCBackupError::quota:HCCBackupError::storage));
+            assert(observer->phase()==bb::Phase::ready&&wire.output.size()==before);
+        }else{
+            assert(started==HCCBackupError::ok&&HCCSdAccess::gate.owner()==bb::SdOwner::capture);
+            HCCBackupError result=HCCBackupError::would_block;
+            std::uint64_t clock=10000;
+            for(unsigned i=0;i<30000;++i){
+                if(mode==3&&operation.phase()==HCCBackupPhase::receiving&&wire.offset>=pause){operation.cancel();result=operation.error();break;}
+                if(mode==4&&operation.phase()==HCCBackupPhase::waiting)clock+=config.idle_timeout_ms;
+                if(mode==5)clock=9999;
+                const auto calls=wire.calls;result=operation.poll(wire.io(),clock++,2);assert(wire.calls-calls<=2);
+                if(result!=HCCBackupError::would_block)break;
+            }
+            if(mode==0){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
+            else if(mode==3){assert(result==HCCBackupError::cancelled&&operation.phase()==HCCBackupPhase::cancelled&&operation.committedFiles()==0);assert(fs::is_empty(operation.sessionPath()));}
+            else if(mode==4||mode==12)assert(result==HCCBackupError::timeout);
+            else if(mode==5)assert(result==HCCBackupError::clock);
+            else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
+            else if(mode==7)assert(result==HCCBackupError::unsupported);
+            else if(mode==8)assert(result==HCCBackupError::remote&&operation.remoteCode()==5&&observer->outcome()==bb::Outcome::remote_error);
+            else if(mode==9)assert(result==HCCBackupError::disconnected);
+            assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
+        }
+    }
+    if(mode==2){assert(HCCSdAccess::gate.owner()==bb::SdOwner::usb_disk);blocker.release();}
+    space_available=1073741824;space_result=0;
+    assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
+}
 int main(){
     {
         bb::SdAccess gate;std::atomic<int> inside{0};std::atomic<unsigned> acquired{0};
@@ -174,6 +236,8 @@ int main(){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
+    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14})operation_flow(mode);
+    std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
     fs::remove_all(temp);
     std::puts("PASS: startup rollback and capture mount failure release only safe ownership");
 }

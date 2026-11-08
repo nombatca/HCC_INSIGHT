@@ -264,3 +264,45 @@ running state, write closure/error and cancellation. The host end-to-end upload
 flow now actually sends the encoded Backup request into simulated I/O instead
 of manually setting running; final operation success still requires a separate
 final result. No physical backup/restore is claimed.
+
+## Operation-wide prototype coordinator
+
+`HCCBackupOperation` combines negotiated link, space/mount preflight, one Backup
+request, repeated UploadFiles requests, status replies and final result handling.
+It opens one capture session and retains the SD lease throughout all batches,
+including timeout/cancel/final state until the object is destroyed. Quotas for
+file count and payload bytes are cumulative across requests, not reset per batch.
+Previously committed files survive later failures; pending data is aborted.
+
+It validates configuration/UDID/output bounds before storage preflight, then
+checks free bytes with `esp_vfs_fat_info` before sending anything. Mount, free-space
+query, insufficient free space or ownership failures leave the observer ready
+and send no operation request. Minimum free bytes is a snapshot threshold, not
+reserved capacity or a promise that the whole backup fits. Legacy filesystem
+users can still consume space and actual write failures remain terminal.
+The apps component explicitly depends on fatfs for this API.
+Espressif API reference:
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/storage/fatfs.html
+
+Polling bounds transport calls and tracks successful byte progress. Configurable
+idle and total deadlines default to 60 s and 10 min, with monotonic-clock checks;
+the link's own partial-control-frame timeout may be stricter. Unsupported control
+operations, remote error, disconnect, quota, I/O failure and cancellation remain
+distinct failures. Only a final result with zero code sets succeeded. A named
+process/progress message is not completion. Local cancel does not send a remote
+cancel packet: caller must close/abandon that stream. Calls on this object and
+its transport remain serialized; there are no internal threads or task handoffs.
+
+The prototype handles Backup/UploadFiles only. DownloadFiles and the other
+filesystem requests are still unsupported, as is raw terminal 0x0B. Therefore
+it is NOT a complete device backup workflow and is not enabled by the MDM UI.
+Keep this context and its large handler outside the small USB task stack and
+schedule blocking SD work appropriately before physical integration.
+
+End-to-end host cases cover two upload batches sharing one lease/session, full
+request transmission, physical temporary files and final result; preflight low
+space/query error/USB owner/invalid ID with no writes; cumulative byte/file quota;
+cancel during a staged file; idle/total deadlines; clock reversal; unsupported
+control, remote failure and disconnect. BSP, free-space information and device
+I/O are simulated, while actual production coordinator and file storage run.
+Physical iPad/SD behavior and a complete Apple-restorable output remain untested.

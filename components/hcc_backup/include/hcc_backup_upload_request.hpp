@@ -16,6 +16,7 @@ public:
     Error pump(Duplex,std::size_t max_io_calls=8);
     void cancel();
     UploadRequestPhase phase() const {return phase_;}
+    std::uint64_t completed_payload_bytes() const {return receiver_.completed_payload_bytes();}
     std::uint32_t completed_files() const {return receiver_.completed_files();}
 private:
     Error fail(Error);
