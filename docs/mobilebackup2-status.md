@@ -78,3 +78,45 @@ Host tests exercise fragmented disconnects, long idle, incomplete-frame timeout,
 transport close/truncation, unsolicited download requests before an operation,
 no output after Hello, and actual P4 glue with TLS WANT retry checks. The physical
 iPad has verified negotiation only; this new monitoring needs a hardware test.
+
+## Raw upload receiver (host-tested subset)
+
+`UploadBatchReceiver` handles raw records after an operation driver accepts an
+UploadFiles request. A record has two length-prefixed names (source metadata and
+relative destination), then native data frames and a clean 0x00 file terminator.
+A zero source-name length ends the batch without reading subsequent bytes.
+`completed_payload_bytes()` counts fully accepted data chunks, not durable bytes.
+
+Reference: `mb2_handle_receive_files` in the libimobiledevice source linked above.
+Its 0x0B handling is context-sensitive, including a non-error use after data.
+This first receiver deliberately rejects 0x0B and unknown tags; it is not yet a
+complete substitute for libimobiledevice's UploadFiles handler. No success status
+is automatically sent, and no new backup/restore request is introduced.
+
+Caller supplies scratch storage (1..32768 bytes) and a target with begin/write/
+finish callbacks. Source names are opaque metadata and never used as local
+paths. Destination paths use HCC's relative path validation; the target must
+add root confinement and symlink protection. Target writes may be partial or
+would-block and retain stable retry buffer addresses and lengths. Read/write
+calls share a per-pump budget; synchronous begin/finish callbacks must return a
+final result and must not return would-block.
+
+After each successful begin, finish is called once: commit only after a clean
+file-end, otherwise abort. Stage writes in temporary storage and publish
+atomically on commit. If commit itself fails, finish must clean up its staging
+file. Explicit cancel and receiver destruction abort a pending target; target
+contexts must outlive the receiver. A failed batch can contain previously
+committed files: this is a per-file transaction, not whole-batch rollback.
+Discard a failed protocol stream rather than continuing with an unknown offset.
+
+Default limits: 4096 bytes/name, 1024 files, 1 MiB/frame payload, 64 MiB/file and
+256 MiB/batch. All are checked before accepting the relevant payload; no file is
+opened before its complete destination name is validated. Incoming names and
+all state are bounded, with no heap allocation in the receiver.
+
+Tests cover multiple wire split sizes, long data with small scratch storage,
+empty file/batch, no overread, stable TLS-style and target retries, budgets,
+every truncation position, invalid paths/name sizes, 0x0B rejection, write/commit
+failure, file/batch/frame/count quotas and cancellation. This API is compiled
+into P4 but not wired into its negotiation probe; an operation driver, complete
+UploadFiles control handling and SD-backed staging still need integration.

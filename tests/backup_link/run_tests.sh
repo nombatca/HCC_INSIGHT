@@ -34,3 +34,6 @@ PY
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
     -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_batch.cpp -o build/hcc_batch_tests
 ./build/hcc_batch_tests
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_receive.cpp -o build/hcc_receive_tests
+./build/hcc_receive_tests
