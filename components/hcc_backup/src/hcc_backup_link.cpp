@@ -73,6 +73,32 @@ LinkError encode_hello(bool v20,bool v21,std::uint8_t* b,std::size_t n,std::size
     if(v20&&v21) { w.object();w.real(2.1); }
     return w.finish(written);
 }
+LinkError encode_backup_request(std::string_view udid,bool full,std::uint8_t* b,std::size_t n,std::size_t& written) {
+    written=0;
+    if(!b || (udid.size()!=25&&udid.size()!=40)) return LinkError::invalid_argument;
+    for(std::size_t i=0;i<udid.size();++i) {
+        if(udid.size()==25&&i==8) {if(udid[i]!='-')return LinkError::invalid_argument;continue;}
+        const char c=udid[i];
+        if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return LinkError::invalid_argument;
+    }
+    BinaryWriter w(b,n);
+    w.object();w.put(0xa2);w.put(1);w.put(2);
+    w.object();w.string("DLMessageProcessMessage");
+    w.object();w.put(full?0xd4:0xd3);w.put(3);w.put(4);w.put(5);if(full)w.put(8);
+    w.put(6);w.put(7);w.put(7);if(full)w.put(9);
+    w.object();w.string("MessageName");
+    w.object();w.string("TargetIdentifier");
+    w.object();w.string("SourceIdentifier");
+    w.object();w.string("Backup");
+    w.object();w.string(udid);
+    if(full) {
+        w.object();w.string("Options");
+        w.object();w.put(0xd1);w.put(10);w.put(11);
+        w.object();w.string("ForceFullBackup");
+        w.object();w.put(0x09);
+    }
+    return w.finish(written);
+}
 LinkError encode_status_response(std::int64_t code,const char* message,bool dict,
     std::uint8_t* b,std::size_t n,std::size_t& written) {
     written=0;

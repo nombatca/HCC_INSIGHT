@@ -40,3 +40,18 @@ PY
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
     -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_storage.cpp -o build/hcc_storage_tests
 ./build/hcc_storage_tests
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_backup_start.cpp -o build/hcc_backup_start_tests
+./build/hcc_backup_start_tests
+python3 - <<'PY'
+import plistlib
+for full in (False, True):
+    name = 'build/backup_full.bplist' if full else 'build/backup_default.bplist'
+    with open(name, 'rb') as stream:
+        value = plistlib.load(stream)
+    expected = {'MessageName': 'Backup', 'TargetIdentifier': '00008101-001234567890ABCD', 'SourceIdentifier': '00008101-001234567890ABCD'}
+    if full:
+        expected['Options'] = {'ForceFullBackup': True}
+    assert value == ['DLMessageProcessMessage', expected]
+print('Independent plistlib Backup request decoding PASS')
+PY

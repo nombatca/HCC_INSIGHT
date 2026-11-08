@@ -1,5 +1,6 @@
 #include "HCCBackupCapture.hpp"
 #include "HCCBackupUploadRequest.hpp"
+#include "hcc_backup_start.hpp"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -75,8 +76,17 @@ static void upload_request_flow(unsigned failure){
         assert(invalid.start()==bb::Error::invalid_argument);
         assert(HCCSdAccess::gate.owner()==bb::SdOwner::free&&observer.phase()==bb::Phase::ready);
     }
-    // Synthetic test operation: production caller must first send its real request.
-    assert(observer.mark_operation_started()==bb::SessionError::ok);
+    // Send an actual encoded Backup request into the simulated duplex stream.
+    // This is not a physical device connection or a complete backup driver.
+    const auto request_start=wire.output.size();const auto before_read=wire.offset;
+    bb::BackupStartWriter start(observer,output,sizeof(output));
+    assert(start.begin("00008101-001234567890ABCD")==bb::Error::ok);
+    for(unsigned i=0;i<10000&&start.phase()!=bb::BackupStartPhase::sent;++i){
+        const auto e=start.pump({&wire,RequestWire::write});assert(e==bb::Error::ok||e==bb::Error::would_block);
+        assert(observer.phase()==(start.phase()==bb::BackupStartPhase::sent?bb::Phase::running:bb::Phase::ready));
+    }
+    assert(start.phase()==bb::BackupStartPhase::sent&&wire.offset==before_read);
+    assert(bb::read_be32(wire.output.data()+request_start)==wire.output.size()-request_start-4);
     bool available=false;hcc::plist::Document doc;bb::SessionEvent event;
     for(;clock<10000&&!available;++clock){const auto e=link.receive_event(wire.io(),clock,doc,event,available,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}
     assert(available&&event.kind==bb::EventKind::upload_files);

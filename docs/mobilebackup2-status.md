@@ -228,3 +228,39 @@ name buffers) off the small USB task stack, and schedule synchronous file I/O
 without concurrent access to the USB/TLS transport. The current wrapper does not
 create tasks or make HCCUSBTransport thread-safe; transport/task scheduling is
 part of the still-missing operation driver.
+
+## Backup request preparation and start state
+
+`encode_backup_request` encodes the Backup operation only, wrapped in a DeviceLink
+process message. TargetIdentifier and SourceIdentifier use the same validated
+UDID (40 hex characters or 8 hex + hyphen + 16 hex). Default mode omits Options;
+explicit full mode adds `ForceFullBackup: true`. No restore, encryption change,
+password or management-profile options are supported.
+
+Reference: `mobilebackup2_send_request` / `mobilebackup2_send_message` in
+https://github.com/libimobiledevice/libimobiledevice/blob/master/src/mobilebackup2.c
+and Backup handling in the previously linked idevicebackup2 tool source.
+
+`BackupStartWriter` takes an observer obtained from a negotiated link and a
+caller-owned output buffer. It serializes the request before any writes and
+marks the observer running only after all request bytes are accepted by the
+transport. Each pump makes at most one write callback and retains stable retry
+arguments on would-block. Sent means local transmission, not remote acceptance
+or backup success. Write failure or cancelling a prepared request makes the
+observer fail; abandon that stream rather than replaying a partial operation.
+Invalid identifiers, wrong initial state or insufficient encoding storage do
+not start an operation. Each writer sends at most one request.
+
+Caller must reserve storage and a complete operation handler before using this
+writer with a real device. The current upload wrapper opens capture per request,
+so it is not yet an operation-wide storage reservation or full preflight. A real
+driver must hold the lease for the entire operation, handle other filesystem
+requests, ensure adequate space, schedule file I/O and enforce deadlines.
+The MDM probe does not instantiate this writer or automatically start a backup.
+
+Tests independently decode both encoder modes with Python plistlib, test modern
+and legacy IDs, invalid input and tiny buffers, partial/WANT writes, no early
+running state, write closure/error and cancellation. The host end-to-end upload
+flow now actually sends the encoded Backup request into simulated I/O instead
+of manually setting running; final operation success still requires a separate
+final result. No physical backup/restore is claimed.

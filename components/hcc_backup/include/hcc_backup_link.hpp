@@ -29,6 +29,10 @@ struct LinkBuffers {
 // On failure, written=0; callers must not send partially constructed output.
 LinkError encode_version_reply(std::uint64_t major,std::uint8_t*,std::size_t,std::size_t& written);
 LinkError encode_hello(bool offer_20,bool offer_21,std::uint8_t*,std::size_t,std::size_t& written);
+// Backup only; both identifiers use the same validated device UDID. Optional
+// ForceFullBackup is omitted unless true. No restore/encryption options exist.
+LinkError encode_backup_request(std::string_view udid,bool force_full,
+                                std::uint8_t*,std::size_t,std::size_t& written);
 
 // Bounded status reply: ASCII message (0..255 bytes), signed status code,
 // and either an empty dictionary or the DeviceLink empty-parameter sentinel.
