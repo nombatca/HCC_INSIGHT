@@ -117,6 +117,7 @@ void HCCUSBTransport::releaseMdmProbe()
 bool HCCUSBTransport::appendMdmPlaintext(const uint8_t *data, size_t length)
 {
     if (length > _notification_rx_stream.size() - _notification_rx_stream_length) {
+        if (_mdm_backup_requested.load()) finishMdmBackup(false);
         _mdm_state.store(MdmState::Failed);
         return false;
     }

@@ -1311,6 +1311,7 @@ bool HCCUSBTransport::submitPendingTcp()
     if (_service_tls_prepare_requested || _service_tls != nullptr) {
         if (!processServiceTls()) {
             printf("[HCC SERVICE TLS] failed - closing service TLS\n");
+            if (_mdm_backup_requested.load()) finishMdmBackup(false);
             releaseServiceTls();
             if (_mdm_selected) _mdm_state.store(MdmState::Failed);
             _ostrace_active = false;
@@ -3754,6 +3755,7 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
                               : _ostrace_active       ? appendOsTraceRx(payload, payload_length)
                                                       : appendNotificationRx(payload, payload_length);
         if (!appended) {
+            if (_mdm_backup_requested.load()) finishMdmBackup(false);
             _service_tcp.state = TcpState::Failed;
             return false;
         }
@@ -5511,6 +5513,7 @@ void HCCUSBTransport::onTxComplete(usb_transfer_t *transfer)
            transfer->status);
 
     if (!tx_completed) {
+        if (transport->_mdm_backup_requested.load()) transport->finishMdmBackup(false);
         if (tx_kind == TxKind::TlsCiphertext) {
             transport->clearStartSessionConnectionState(true);
             transport->_tls_state = TlsState::Failed;

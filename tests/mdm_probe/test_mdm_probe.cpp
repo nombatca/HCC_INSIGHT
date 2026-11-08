@@ -199,7 +199,7 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<6;++mode){
+    for(unsigned mode=0;mode<7;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
@@ -219,6 +219,10 @@ int main() {
         for(unsigned i=0;i<5000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){
             ++now_ms;const auto ok=t.pollMdmProbe();
             if(mode==2&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting)now_ms+=60000;
+            if(mode==6&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){
+                t._notification_rx_stream_length=t._notification_rx_stream.size();
+                const std::uint8_t byte=0;assert(!t.appendMdmPlaintext(&byte,1));break;
+            }
             if(mode==5&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::receiving){
                 bool staged=false;for(const auto& e:fs::recursive_directory_iterator(sd_root))if(e.path().extension()==".part")staged=true;
                 if(staged){t.releaseMdmProbe();break;}
