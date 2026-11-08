@@ -85,5 +85,24 @@ int main(){
     assert(over.pump({nullptr,close},0)==bb::Error::invalid_argument);
     auto oversized=[](void*,const std::uint8_t*,std::size_t n)->bb::IoResult{return {n+1,bb::IoState::ok};};
     assert(over.pump({nullptr,oversized})==bb::Error::io_error&&!over.done());
-    std::cout<<"Download batch: ordered files, empty file/list, budgets, retries, invalid paths and source failure PASS\n";
+    // Fresh-backup response: every requested file is absent (null source) -> each
+    // gets a CODE_ERROR_LOCAL frame and the final status is a DeviceLink multi-status.
+    bb::DownloadFile absent[]={{"Status.plist",{}},{"Manifest.db",{}}};
+    bb::DownloadBatchSender nf(names.data(),names.size(),scratch.data(),scratch.size());Wire nw;
+    assert(nf.start(absent,2)==bb::Error::ok);
+    for(unsigned i=0;i<10000&&!nf.done();++i){const auto e=nf.pump({&nw,Wire::write},2);assert(e==bb::Error::ok||e==bb::Error::would_block);}
+    assert(nf.done()&&nf.completed_files()==2);
+    std::size_t np=0;
+    for(unsigned i=0;i<2;++i){
+        const auto plen=bb::read_be32(nw.data.data()+np);np+=4;
+        assert(plen==absent[i].path.size()&&std::memcmp(nw.data.data()+np,absent[i].path.data(),plen)==0);np+=plen;
+        const auto elen=bb::read_be32(nw.data.data()+np);np+=4;
+        assert(elen>=1&&nw.data[np]==0x06);np+=elen; // CODE_ERROR_LOCAL + reason bytes
+    }
+    assert(bb::read_be32(nw.data.data()+np)==0);np+=4; // batch terminator
+    const auto nslen=bb::read_be32(nw.data.data()+np);np+=4;
+    hcc::plist::Node nns[32];char ntx[512];hcc::plist::Document nd;
+    assert(hcc::plist::parse(nw.data.data()+np,nslen,{nns,32,ntx,512},nd)==hcc::plist::Error::ok);
+    assert(nd.string(nd.at(nd.root,0))=="DLMessageStatusResponse"&&nd.get(nd.at(nd.root,1))->integer==-13);
+    std::cout<<"Download batch: ordered files, empty file/list, budgets, retries, invalid paths, source failure and absent-file multi-status PASS\n";
 }

@@ -147,7 +147,7 @@ static void upload_request_flow(unsigned failure){
 static void operation_flow(unsigned mode){
     RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
     std::size_t pause=0;
-    if(mode==0||mode==3||mode==6||mode==8||mode==13||(mode>=15&&mode!=27)){
+    if(mode==0||mode==3||mode==6||mode==8||mode==13||(mode>=15&&mode!=27&&mode!=28)){
         for(unsigned batch=0;batch<2;++batch){
             if(mode>=15&&mode<21)wire.xml("<array><string>DLMessageGetFreeDiskSpace</string></array>");
             if(mode>=21){
@@ -175,6 +175,13 @@ static void operation_flow(unsigned mode){
         wire.name("/device/source");wire.name("backup/two");wire.number(6);wire.input.push_back(0x0c);wire.bytes("world");
         wire.number(1);wire.input.push_back(0);wire.number(0);
         wire.xml("<array><string>DLContentsOfDirectory</string><string>backup</string></array>");
+        wire.fixture("result_ok.xml");
+    }else if(mode==28){
+        // Device asks to download existing backup files (none present), then uploads one.
+        wire.xml("<array><string>DLMessageDownloadFiles</string><array><string>Status.plist</string><string>Manifest.db</string></array></array>");
+        wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
+        wire.name("/device/source");wire.name("backup/one");wire.number(6);wire.input.push_back(0x0c);wire.bytes("hello");
+        wire.number(1);wire.input.push_back(0);wire.number(0);
         wire.fixture("result_ok.xml");
     }
     else if(mode==9)wire.fixture("disconnect.xml");
@@ -227,6 +234,7 @@ static void operation_flow(unsigned mode){
             else if(mode==5)assert(result==HCCBackupError::clock);
             else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
             else if(mode==7)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==0&&observer->outcome()==bb::Outcome::success);
+            else if(mode==28)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::success);
             else if(mode==8)assert(result==HCCBackupError::remote&&operation.remoteCode()==5&&observer->outcome()==bb::Outcome::remote_error);
             else if(mode==16||mode==23||mode==25)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
             else if(mode==17||mode==24)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
@@ -289,6 +297,8 @@ static void operation_flow(unsigned mode){
                 }
                 assert(contents_replies==1);
             }
+            // mode 28: reaching succeeded with one committed upload proves the
+            // DLMessageDownloadFiles reply was handled (it previously failed unsupported).
             if(mode==9)assert(result==HCCBackupError::disconnected);
             assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
         }
@@ -344,7 +354,7 @@ int main(){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
-    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27})operation_flow(mode);
+    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28})operation_flow(mode);
     std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
     {
         using R=HCCBackupSdSelfTest::Result;

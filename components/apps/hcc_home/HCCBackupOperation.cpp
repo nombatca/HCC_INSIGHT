@@ -2,6 +2,7 @@
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "esp_vfs_fat.h"
 #include <algorithm>
+#include <cstring>
 namespace bb=hcc::backup;
 HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
     reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
@@ -59,6 +60,15 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         files_+=upload_->completed_files();bytes_+=upload_->completed_payload_bytes();upload_.reset();
         phase_=HCCBackupPhase::waiting;return HCCBackupError::would_block;
     }
+    if(phase_==HCCBackupPhase::downloading){
+        const auto e=download_->pump({tracked.context,tracked.write},budget);
+        if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
+        if(download_->done()){
+            if(observer_->complete_request(true)!=bb::SessionError::ok)return fail(HCCBackupError::transfer);
+            download_.reset();phase_=HCCBackupPhase::waiting;
+        }
+        return HCCBackupError::would_block;
+    }
     hcc::plist::Document doc;bb::SessionEvent event;bool available=false;
     const auto e=link_.receive_event(tracked,now,doc,event,available,budget);
     if(e==bb::LinkError::would_block||e==bb::LinkError::yield)return HCCBackupError::would_block;
@@ -104,6 +114,25 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity)!=bb::Error::ok)
             return fail(HCCBackupError::transfer);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
+    if(event.kind==bb::EventKind::download_files){
+        // Fresh-backup response: every requested file is reported absent so the
+        // device proceeds to send a full backup. Serving existing capture files
+        // (incremental backup) is future work. Paths are copied because the plist
+        // document is reused by the next receive.
+        const auto files_node=event.payload;const auto* arr=doc.get(files_node);
+        if(arr==nullptr)return fail(HCCBackupError::transfer);
+        std::size_t n=0,used=0;
+        for(std::size_t i=0;i<arr->count;++i){
+            const auto path=doc.string(doc.at(files_node,i));
+            if(n>=kMaxDownloadFiles||used+path.size()>sizeof(download_arena_))return fail(HCCBackupError::quota);
+            std::memcpy(download_arena_+used,path.data(),path.size());
+            download_entries_[n]={std::string_view(download_arena_+used,path.size()),{nullptr,nullptr}};
+            used+=path.size();++n;
+        }
+        download_.emplace(output_,output_capacity_,scratch_,capacity_);
+        if(download_->start(download_entries_,n)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        phase_=HCCBackupPhase::downloading;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::upload_files){
         if(files_>=config_.limits.max_files||bytes_>=config_.limits.max_batch_bytes)return fail(HCCBackupError::quota);
