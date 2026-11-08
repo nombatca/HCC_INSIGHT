@@ -56,3 +56,16 @@ là ngân sách nhận hiệu dụng: nhỏ hơn giữa dung lượng FAT còn t
 payload còn lại. Metadata cũng dùng SD nên con số này không bảo đảm toàn bộ
 quota sẽ ghi được; lỗi ghi vẫn phải dừng. Chỉ trả trạng thái request về running
 sau khi phản hồi được gửi đủ. Tính năng này chưa nối vào nút MDM.
+
+## Bản tích hợp mới: bước thử nhận dữ liệu
+
+Sau khi cập nhật đúng nhánh và build/nạp thành công, chờ protocol 2.1, giữ MDM
+để chạy SD test. Sau PASS, nút đổi thành `Giữ: nhận backup`; giữ lần nữa để chạy
+capture thử nghiệm có giới hạn. Chờ log `[HCC MDM] BACKUP started`, các dòng
+`[HCC BACKUP]`, rồi `BACKUP complete` hoặc `BACKUP stopped`. Dừng/lỗi có thể giữ
+file đã chốt để chẩn đoán; không có nghĩa backup hoàn chỉnh hoặc đã gỡ MDM.
+
+Mỗi phiên chỉ chạy một lượt. Rút/cắm và thương lượng lại trước lượt tiếp theo.
+Rút thiết bị khi đang nhận phải hủy file tạm và nhả quyền SD. Khi gửi log kết quả,
+ưu tiên các dòng `[HCC MDM]`, `[HCC BACKUP]`, SD/FAT và lỗi; không cần gửi lại
+IMEI, serial, ICCID hay số điện thoại. Không dùng erase-flash.

@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
+#include "HCCBackupOperation.hpp"
 #include <iterator>
 #include <new>
 #include <string_view>
@@ -18,6 +20,12 @@
 #undef private
 
 namespace bb = hcc::backup;
+namespace fs = std::filesystem;
+static std::string sd_root;
+void* bsp_sdcard=reinterpret_cast<void*>(1);
+int bsp_sdcard_mount(){return 0;}
+const char* hcc_test_mount_point(){return sd_root.c_str();}
+int esp_vfs_fat_info(const char*,std::uint64_t* total,std::uint64_t* available){*total=*available=1073741824;return 0;}
 static uint64_t now_ms = 0;
 static uint64_t mdmNowMs() { return now_ms; }
 static bool allocation_fails = false;
@@ -110,6 +118,7 @@ static void check_output(const std::vector<uint8_t> &out) {
     assert(count == 2); // version reply and Hello only.
 }
 int main() {
+    char temp[]="/tmp/hcc-mdm-glue-XXXXXX";assert(mkdtemp(temp));sd_root=temp;
     using State = HCCUSBTransport::MdmState;
     {
         HCCUSBTransport t;
@@ -190,6 +199,53 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
+    for(unsigned mode=0;mode<6;++mode){
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
+        t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
+        assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
+        for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        std::strcpy(t._session_udid.data(),mode==1?"invalid":"00008101-001234567890ABCD");
+        if(mode==0||mode==5){
+            auto& bytes=tls.ssl.input;
+            auto length=[&](std::uint32_t n){std::uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
+            auto name=[&](const char* s){length(std::strlen(s));bytes.insert(bytes.end(),s,s+std::strlen(s));};
+            const char* xml="<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array></plist>";
+            name(xml);name("/device/source");name("backup/glue.bin");
+            length(6);bytes.push_back(0x0c);for(char c:std::string_view("hello"))bytes.push_back(c);
+            if(mode==0){length(1);bytes.push_back(0x0b);length(0);add_frame(bytes,"result_ok.xml");}
+        }
+        assert(t.requestMdmBackup()&&!t.requestMdmBackup());
+        if(mode==4)tls.ssl.close=true;
+        for(unsigned i=0;i<5000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){
+            ++now_ms;const auto ok=t.pollMdmProbe();
+            if(mode==2&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting)now_ms+=60000;
+            if(mode==5&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::receiving){
+                bool staged=false;for(const auto& e:fs::recursive_directory_iterator(sd_root))if(e.path().extension()==".part")staged=true;
+                if(staged){t.releaseMdmProbe();break;}
+            }
+            if(mode==3&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){t.releaseMdmProbe();break;}
+            if(!ok)break;
+        }
+        assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
+        assert(HCCSdAccess::gate.owner()==bb::SdOwner::free&&!t._mdm_backup_requested.load());
+        assert(!t.requestMdmBackup());
+        for(const auto& e:fs::recursive_directory_iterator(sd_root))assert(e.path().extension()!=".part");
+        if(mode==0){
+            assert(t.mdmState()==State::Ready&&!t.mdmPollingPending());
+            assert(t.mdmBackupFiles()==1);
+            bool found=false;
+            for(const auto& entry:fs::recursive_directory_iterator(sd_root)){
+                if(entry.path().filename()=="payload.bin"){
+                    std::ifstream f(entry.path(),std::ios::binary);std::string body{std::istreambuf_iterator<char>(f),{}};assert(body=="hello");found=true;
+                }
+            }
+            assert(found);
+            const auto before=tls.ssl.offset;assert(t.pollMdmProbe());assert(tls.ssl.offset==before);
+        }
+        t.releaseMdmProbe();t._service_tls=nullptr;
+    }
+    std::puts("PASS: backup completion, preflight/transport/timeout failure and teardown release SD; no terminal stream restart");
+    fs::remove_all(sd_root);
     assert(allocations == 0);
-    std::puts("7 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
+    std::puts("8 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
 }

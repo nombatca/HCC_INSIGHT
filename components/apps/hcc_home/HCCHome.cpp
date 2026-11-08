@@ -1582,7 +1582,12 @@ void HCCHome::updateActionLabels(HCCHome *app)
     if (app->_bootloader_button_label != nullptr) {
         lv_label_set_text(app->_bootloader_button_label,
                           !android ? (app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Ready
-                              ? "MDM\nGiữ: kiểm tra SD" : "MDM")
+                              ? (app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::done
+                                  ? "MDM\nĐã xong - cắm lại"
+                                  : app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::running
+                                      ? "MDM\nĐang nhận backup"
+                                      : HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::passed
+                                          ? "MDM\nGiữ: nhận backup" : "MDM\nGiữ: kiểm tra SD") : "MDM")
                               : (app->_usb_mode == USBMode::ANDROID ? "FASTBOOT" : "-"));
     }
     if (app->_purple_button_label != nullptr) {

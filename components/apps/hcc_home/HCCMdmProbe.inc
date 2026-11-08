@@ -13,36 +13,46 @@ struct HCCUSBTransport::MdmProbeContext {
     hcc::backup::DirectoryEntry list_entries[kListEntries]{};
     uint32_t list_offsets[hcc::backup::contents_object_count(kListEntries)]{};
     hcc::backup::ListingScratch list_scratch{};
-    HCCBackupOperation operation;
+    std::optional<HCCBackupOperation> operation;
     MdmProbeContext()
-        : link({control, sizeof(control), output, sizeof(output), {nodes, 128, text, sizeof(text)}}),
-          operation(link, op_scratch, sizeof(op_scratch), op_output, sizeof(op_output),
-                    {list_entries, kListEntries, list_offsets,
-                     hcc::backup::contents_object_count(kListEntries), &list_scratch}) {}
+        : link({control, sizeof(control), output, sizeof(output), {nodes, 128, text, sizeof(text)}}) {}
 };
 
 bool HCCUSBTransport::requestMdmBackup()
 {
-    // Only meaningful while the negotiated service is (coming) up; the USB task
-    // starts the operation once it reaches Ready. One backup at a time.
-    if (_mdm_backup_requested.load()) return false;
-    const auto state = _mdm_state.load();
-    if (state != MdmState::Armed && state != MdmState::Opening &&
-        state != MdmState::Negotiating && state != MdmState::Ready) return false;
-    _mdm_backup_state.store(MdmBackupState::none);
+    // One operation per negotiated stream. A terminal stream must be reconnected.
+    if (_mdm_state.load() != MdmState::Ready) return false;
+    auto expected = MdmBackupState::none;
+    if (!_mdm_backup_state.compare_exchange_strong(expected, MdmBackupState::running)) return false;
     _mdm_backup_files.store(0);
     _mdm_backup_requested.store(true);
+    if (_mdm_state.load() != MdmState::Ready) {
+        _mdm_backup_requested.store(false);
+        _mdm_backup_state.store(MdmBackupState::failed);
+        return false;
+    }
     return true;
+}
+
+void HCCUSBTransport::finishMdmBackup(bool success)
+{
+    if (_mdm_probe && _mdm_probe->operation) {
+        _mdm_backup_files.store(_mdm_probe->operation->committedFiles());
+        _mdm_probe->operation.reset(); // abort pending file, then release SD ownership
+    }
+    _mdm_backup_state.store(success ? MdmBackupState::done : MdmBackupState::failed);
+    _mdm_backup_requested.store(false);
+    if (!success) _mdm_state.store(MdmState::Failed); // never reuse failed TLS/DeviceLink I/O
 }
 
 const char *HCCUSBTransport::mdmBackupStatusText()
 {
     const unsigned files = _mdm_backup_files.load();
     switch (_mdm_backup_state.load()) {
-    case MdmBackupState::none:    return "Backup: chua chay";
-    case MdmBackupState::running: snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Backup: dang keu du lieu... (%u tep)", files); break;
-    case MdmBackupState::done:    snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Backup xong (mot phan): %u tep -> SD", files); break;
-    case MdmBackupState::failed:  snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Backup dung/loi: %u tep da luu", files); break;
+    case MdmBackupState::none:    return "Backup: chưa chạy";
+    case MdmBackupState::running: snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Backup: đang nhận dữ liệu... (%u tệp)", files); break;
+    case MdmBackupState::done:    snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Capture xong: %u tệp -> SD", files); break;
+    case MdmBackupState::failed:  snprintf(_mdm_backup_text, sizeof(_mdm_backup_text), "Backup dừng/lỗi: %u tệp đã lưu", files); break;
     }
     return _mdm_backup_text;
 }
@@ -59,7 +69,8 @@ bool HCCUSBTransport::requestMdmProbe()
 bool HCCUSBTransport::mdmPollingPending() const
 {
     const auto state = _mdm_state.load();
-    return state == MdmState::Opening || state == MdmState::Negotiating || state == MdmState::Ready;
+    return state == MdmState::Opening || state == MdmState::Negotiating ||
+           (state == MdmState::Ready && _mdm_backup_state.load() != MdmBackupState::done);
 }
 
 const char *HCCUSBTransport::mdmStatusText() const
@@ -83,6 +94,9 @@ bool HCCUSBTransport::beginMdmProbe()
     void *storage = heap_caps_malloc(sizeof(MdmProbeContext), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (storage == nullptr) return false;
     _mdm_probe = new (storage) MdmProbeContext();
+    _mdm_backup_requested.store(false);
+    _mdm_backup_files.store(0);
+    _mdm_backup_state.store(MdmBackupState::none);
     if (_mdm_probe->link.start(mdmNowMs()) != hcc::backup::LinkError::ok) return false;
     _mdm_state.store(MdmState::Negotiating);
     printf("[HCC MDM] mobilebackup2 negotiation started; context=%u bytes SSL=%u\n",
@@ -92,6 +106,7 @@ bool HCCUSBTransport::beginMdmProbe()
 
 void HCCUSBTransport::releaseMdmProbe()
 {
+    if (_mdm_backup_requested.load()) finishMdmBackup(false);
     if (_mdm_probe == nullptr) return;
     _mdm_probe->~MdmProbeContext();
     mbedtls_platform_zeroize(_mdm_probe, sizeof(MdmProbeContext));
@@ -164,7 +179,14 @@ bool HCCUSBTransport::pollMdmProbe()
         if (_mdm_backup_requested.load()) {
             // Owner-consented device->SD data pull. Prototype: bounded partial
             // backup (coordinator caps files/bytes/time). No restore, no MDM change.
-            auto &op = _mdm_probe->operation;
+            if (!_mdm_probe->operation) {
+                auto &ctx = *_mdm_probe;
+                ctx.operation.emplace(ctx.link, ctx.op_scratch, sizeof(ctx.op_scratch),
+                                      ctx.op_output, sizeof(ctx.op_output),
+                                      HCCBackupContentsBuffers{ctx.list_entries, ctx.kListEntries,
+                                      ctx.list_offsets, hcc::backup::contents_object_count(ctx.kListEntries), &ctx.list_scratch});
+            }
+            auto &op = *_mdm_probe->operation;
             if (op.phase() == HCCBackupPhase::idle) {
                 const char *udid = _session_udid.data();
                 const size_t ulen = strnlen(udid, _session_udid.size());
@@ -172,9 +194,8 @@ bool HCCUSBTransport::pollMdmProbe()
                 const auto started = op.start(std::string_view(udid, ulen), mdmNowMs(), config);
                 if (started != HCCBackupError::ok) {
                     printf("[HCC MDM] BACKUP start failed: %d\n", static_cast<int>(started));
-                    _mdm_backup_state.store(MdmBackupState::failed);
-                    _mdm_backup_requested.store(false);
-                    return true;
+                    finishMdmBackup(false);
+                    return false;
                 }
                 _mdm_backup_state.store(MdmBackupState::running);
                 printf("[HCC MDM] BACKUP started (prototype partial pull to SD)\n");
@@ -186,17 +207,20 @@ bool HCCUSBTransport::pollMdmProbe()
                 if (ph == HCCBackupPhase::succeeded) {
                     printf("[HCC MDM] BACKUP complete files=%u path=%s\n",
                            static_cast<unsigned>(op.committedFiles()), op.sessionPath());
-                    _mdm_backup_state.store(MdmBackupState::done);
-                    _mdm_backup_requested.store(false);
+                    finishMdmBackup(true);
+                    return true;
                 } else if (ph == HCCBackupPhase::failed || ph == HCCBackupPhase::cancelled) {
                     printf("[HCC MDM] BACKUP stopped err=%d files=%u\n",
                            static_cast<int>(op.error()), static_cast<unsigned>(op.committedFiles()));
-                    _mdm_backup_state.store(MdmBackupState::failed);
-                    _mdm_backup_requested.store(false);
+                    finishMdmBackup(false);
+                    return false;
                 }
             }
             return true;
         }
+        // Completed captures park the negotiated stream; do not read a final-result
+        // observer again or silently restart the same operation.
+        if (_mdm_backup_state.load() == MdmBackupState::done) return true;
         hcc::plist::Document doc;
         hcc::backup::SessionEvent event;
         bool available = false;

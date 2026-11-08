@@ -147,7 +147,7 @@ static void upload_request_flow(unsigned failure){
 static void operation_flow(unsigned mode){
     RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
     std::size_t pause=0;
-    if(mode==0||mode==3||mode==6||mode==8||mode==13||(mode>=15&&mode!=27&&mode!=28)){
+    if(mode==0||mode==3||mode==6||mode==8||mode==13||(mode>=15&&mode<27)){
         for(unsigned batch=0;batch<2;++batch){
             if(mode>=15&&mode<21)wire.xml("<array><string>DLMessageGetFreeDiskSpace</string></array>");
             if(mode>=21){
@@ -176,7 +176,12 @@ static void operation_flow(unsigned mode){
         wire.number(1);wire.input.push_back(0);wire.number(0);
         wire.xml("<array><string>DLContentsOfDirectory</string><string>backup</string></array>");
         wire.fixture("result_ok.xml");
-    }else if(mode==28){
+    }else if(mode==32){
+        wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
+        wire.name("/device/source");wire.name("Status.plist");wire.number(6);wire.input.push_back(0x0c);wire.bytes("hello");
+        wire.number(1);wire.input.push_back(0);wire.number(0);
+        wire.xml("<array><string>DLMessageDownloadFiles</string><array><string>Status.plist</string></array></array>");
+    }else if(mode>=28){
         // Device asks to download existing backup files (none present), then uploads one.
         wire.xml("<array><string>DLMessageDownloadFiles</string><array><string>Status.plist</string><string>Manifest.db</string></array></array>");
         wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
@@ -212,6 +217,11 @@ static void operation_flow(unsigned mode){
             HCCBackupError result=HCCBackupError::would_block;
             std::uint64_t clock=10000;
             for(unsigned i=0;i<30000;++i){
+                if(operation.phase()==HCCBackupPhase::downloading){
+                    if(mode==29){const auto sent=wire.output.size();operation.cancel();result=operation.error();assert(operation.poll(wire.io(),clock,2)==HCCBackupError::cancelled&&wire.output.size()==sent);break;}
+                    if(mode==30)clock+=config.idle_timeout_ms;
+                    if(mode==31)wire.close_write=true;
+                }
                 if(mode==3&&operation.phase()==HCCBackupPhase::receiving&&wire.offset>=pause){operation.cancel();result=operation.error();break;}
                 if(mode>=16&&operation.phase()==HCCBackupPhase::replying){
                     assert(observer->phase()==bb::Phase::request_pending);
@@ -230,14 +240,15 @@ static void operation_flow(unsigned mode){
             }
             if(mode==0||mode==15||mode==19||mode==21||mode==27){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
             else if(mode==3){assert(result==HCCBackupError::cancelled&&operation.phase()==HCCBackupPhase::cancelled&&operation.committedFiles()==0);assert(fs::is_empty(operation.sessionPath()));}
-            else if(mode==4||mode==12)assert(result==HCCBackupError::timeout);
+            else if(mode==4||mode==12||mode==30)assert(result==HCCBackupError::timeout);
             else if(mode==5)assert(result==HCCBackupError::clock);
             else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
             else if(mode==7)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==0&&observer->outcome()==bb::Outcome::success);
+            else if(mode==32)assert(result==HCCBackupError::unsupported&&operation.committedFiles()==1);
             else if(mode==28)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::success);
             else if(mode==8)assert(result==HCCBackupError::remote&&operation.remoteCode()==5&&observer->outcome()==bb::Outcome::remote_error);
-            else if(mode==16||mode==23||mode==25)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
-            else if(mode==17||mode==24)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==16||mode==23||mode==25||mode==31)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==17||mode==24||mode==29)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
             else if(mode==18||mode==20||mode==22)assert(result==HCCBackupError::storage&&observer->outcome()==bb::Outcome::local_error);
             else if(mode==26)assert(result==HCCBackupError::quota);
             if(mode==21){
@@ -354,7 +365,7 @@ int main(){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
-    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28})operation_flow(mode);
+    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32})operation_flow(mode);
     std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
     {
         using R=HCCBackupSdSelfTest::Result;

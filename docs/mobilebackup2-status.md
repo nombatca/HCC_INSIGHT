@@ -440,3 +440,37 @@ empty and a real multi-entry listing to completion. All pass under
 AddressSanitizer/UndefinedBehaviorSanitizer. No restore or MDM-changing operation
 is introduced, and no listing is started from the MDM UI. Physical iPad/SD
 behavior for this command remains untested.
+
+## Current P4 integration and lifecycle review
+
+The latest branch includes a prototype capture action: after DeviceLink Ready,
+long-press MDM for the SD self-test; after PASS, long-press again to request a
+bounded device-to-SD Backup. Labels distinguish these steps. DownloadFiles
+currently reports requested files absent only while the fresh capture has no
+committed files; after an upload, nonempty download requests fail explicitly
+until lookup/serving existing records is implemented. Listing, capture and final
+result handling do not make this an Apple-restorable backup or an MDM change.
+
+Each negotiated stream accepts one operation. Operation state is constructed on
+demand in PSRAM. Completion/failure/disconnect destroys the operation, aborts any
+pending staged file, preserves committed files/count and releases its SD lease.
+Completed streams are parked; failed streams stop protocol I/O. Neither silently
+restarts; reconnect and negotiate before another capture. Cancelling DownloadFiles
+now follows the same terminal path as upload/reply, with no further writes.
+
+The firmware-glue host runner now links the real coordinator, storage and core
+sources with BSP/I/O stubs. Tests include real staged payload/metadata files,
+TLS-style partial retries, final result, invalid ID/preflight, timeout, closed
+transport, teardown while waiting and teardown during an open upload. Successful
+completion and every failure release the SD lease; a second request on the same
+stream is rejected. Tests do not replace firmware/hardware validation.
+
+Listing review also rejects symlinks in namespace ancestors, out-of-range source
+metadata lengths, invalid stored destinations and trailing identity bytes. These
+conditions fail the operation instead of exposing an ambiguous listing.
+
+Hardware evidence so far: protocol 2.1 negotiation and the small 64-byte SD test.
+The supplied log ends with no Backup/Restore request sent; it does not establish
+that this capture action has run on P4. Synchronous FAT work is still on the USB
+owner task; physical bulk-transfer timing and unsupported control requests need
+the next hardware test. Never erase flash/NVS as part of this test.

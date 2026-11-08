@@ -5,11 +5,11 @@
 #include <cstring>
 namespace bb=hcc::backup;
 HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
-    reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
+    download_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -122,6 +122,9 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         // document is reused by the next receive.
         const auto files_node=event.payload;const auto* arr=doc.get(files_node);
         if(arr==nullptr)return fail(HCCBackupError::transfer);
+        // Only the initial empty capture can truthfully report every file absent.
+        // Existing-record download lookup is not implemented; never invent ENOENT.
+        if(arr->count&&capture_.committedFiles()!=0)return fail(HCCBackupError::unsupported);
         std::size_t n=0,used=0;
         for(std::size_t i=0;i<arr->count;++i){
             const auto path=doc.string(doc.at(files_node,i));

@@ -27,8 +27,8 @@ struct HCCBackupContentsBuffers {
     hcc::backup::ListingScratch* scratch=nullptr; // path working buffers, kept off-stack
 };
 // Bounded prototype driver for Backup, UploadFiles, GetFreeDiskSpace, CreateDirectory and
-// DLContentsOfDirectory. Other filesystem commands fail explicitly. NOT connected
-// to the MDM button or a complete Apple-restorable backup workflow. Allocate off
+// DLContentsOfDirectory. Other filesystem commands fail explicitly. Used by the
+// experimental MDM capture action; not an Apple-restorable backup. Allocate off
 // the small USB task stack. Caller owns transport scheduling, independent buffers,
 // link lifetime, and must close/abandon the stream on failure/cancel. No internal
 // tasks are created.

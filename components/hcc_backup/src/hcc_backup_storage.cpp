@@ -173,12 +173,14 @@ bool read_record(const char* record_dir,char* dest,std::size_t dest_cap,std::siz
     FILE* f=std::fopen(path,"rb"); if(!f)return false;
     std::uint8_t head[12]; bool ok=std::fread(head,1,12,f)==12&&std::memcmp(head,"HCCU0001",8)==0;
     std::uint32_t src_len=ok?read_be32(head+8):0;
+    if(ok&&(src_len==0||src_len>4096))ok=false;
     if(ok&&std::fseek(f,static_cast<long>(src_len),SEEK_CUR)!=0)ok=false;      // skip source metadata
     std::uint8_t dl[4]; ok=ok&&std::fread(dl,1,4,f)==4;
     const std::uint32_t d_len=ok?read_be32(dl):0;
     if(ok&&(d_len==0||d_len>dest_cap))ok=false;
     if(ok&&std::fread(dest,1,d_len,f)!=d_len)ok=false;
-    std::fclose(f);
+    if(ok&&(!valid_relative_backup_path({dest,d_len})||std::fgetc(f)!=EOF||std::ferror(f)))ok=false;
+    if(std::fclose(f)!=0)ok=false;
     if(!ok)return false;
     dest_len=d_len;
     if(snprintf(path,sizeof(path),"%s/payload.bin",record_dir)<=0)return false;
@@ -188,6 +190,7 @@ bool read_record(const char* record_dir,char* dest,std::size_t dest_cap,std::siz
 #else
     if(lstat(path,&ps)!=0||!S_ISREG(ps.st_mode))return false;
 #endif
+    if(ps.st_size<0)return false;
     size=static_cast<std::uint64_t>(ps.st_size); mtime=static_cast<std::int64_t>(ps.st_mtime);
     return true;
 }
@@ -196,6 +199,7 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     if(!out.entries||!out.capacity)return Error::invalid_argument;
     out.count=0;
     if(!root_[0])return Error::invalid_argument;
+    if(!plain_directory(root_))return Error::io_error;
     // Normalize the requested prefix: '/' separators, no trailing slash. "" = root.
     char* prefix=scratch.prefix; std::size_t plen=0;
     if(!request.empty()){
@@ -260,6 +264,23 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     if(snprintf(nsdir,sizeof(scratch.nsdir),"%s/directories%s%s",root_,plen?"/":"",prefix)<=0)return Error::io_error;
     if(!plen){ // trim the trailing separator produced for the root case
         nsdir[std::strlen(root_)+std::strlen("/directories")]=0;
+    }
+    // Check every ancestor before opendir: lstat on the final path alone would
+    // follow a symlink planted in an intermediate namespace component.
+    const auto root_length=std::strlen(root_);
+    for(std::size_t i=root_length+1;;++i){
+        if(nsdir[i]!='/'&&nsdir[i]!=0)continue;
+        const auto saved=nsdir[i];nsdir[i]=0;
+        struct stat ancestor{};
+#ifdef ESP_PLATFORM
+        const auto found=stat(nsdir,&ancestor);
+#else
+        const auto found=lstat(nsdir,&ancestor);
+#endif
+        const auto lookup_error=errno;nsdir[i]=saved;
+        if(found!=0)return lookup_error==ENOENT?Error::ok:Error::io_error;
+        if(!S_ISDIR(ancestor.st_mode))return Error::io_error;
+        if(!saved)break;
     }
     struct stat ns{};
 #ifdef ESP_PLATFORM

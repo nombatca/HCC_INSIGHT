@@ -3711,6 +3711,7 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
                                               size_t payload_length)
 {
     if (_mdm_service_active && (flags & 0x05)) {
+        if (_mdm_backup_requested.load()) finishMdmBackup(false);
         const auto state = _mdm_state.load();
         const bool truncated = _mdm_probe != nullptr && _mdm_probe->link.control_frame_pending();
         _mdm_state.store(!(flags & 0x04) && !truncated && (state == MdmState::Ready || state == MdmState::Disconnected)

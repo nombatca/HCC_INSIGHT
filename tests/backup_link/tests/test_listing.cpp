@@ -137,6 +137,25 @@ int main(){
     }
     std::cout<<"PASS: namespace symlink entries are rejected\n";
 
+    {
+        bb::StagedUploadTarget t;assert(t.open_session(tmpl)==bb::Error::ok);
+        assert(t.create_directory("s")==bb::Error::ok);
+        fs::create_directories(parent/"outside/child");
+        fs::create_directory_symlink(parent/"outside",fs::path(t.session_path())/"directories/s/link");
+        assert(t.list_directory("s/link/child",list,scratch)==bb::Error::io_error);
+    }
+    for(unsigned mode=0;mode<3;++mode){
+        bb::StagedUploadTarget t;assert(t.open_session(tmpl)==bb::Error::ok);upload(t,"c/keep","data");
+        const auto path=fs::path(t.session_path())/"000001.ready/identity.bin";
+        if(mode==0){std::ofstream f(path,std::ios::binary|std::ios::app);f.put('x');}
+        else {
+            std::fstream f(path,std::ios::binary|std::ios::in|std::ios::out);
+            if(mode==1){f.seekp(8);const char bad[4]={0x7f,0x7f,0x7f,0x7f};f.write(bad,4);}
+            else {f.seekg(8);std::uint8_t n[4];f.read(reinterpret_cast<char*>(n),4);f.seekp(12+bb::read_be32(n)+4);f.put('/');}
+        }
+        assert(t.list_directory("c",list,scratch)==bb::Error::io_error);
+    }
+    std::cout<<"PASS: namespace ancestors, trailing metadata, source bounds and corrupt destination are rejected\n";
     fs::remove_all(parent);
     std::cout<<"All DLContentsOfDirectory listing tests passed; no device connection performed.\n";
     return 0;
