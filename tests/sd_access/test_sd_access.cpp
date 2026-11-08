@@ -2,6 +2,7 @@
 #include "HCCBackupUploadRequest.hpp"
 #include "hcc_backup_start.hpp"
 #include "HCCBackupOperation.hpp"
+#include "HCCBackupSdSelfTest.hpp"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -24,6 +25,16 @@ int esp_vfs_fat_info(const char*,std::uint64_t* total,std::uint64_t* available){
 static const char* mount_point;
 int bsp_sdcard_mount(){++mount_calls;if(!mount_result)bsp_sdcard=reinterpret_cast<void*>(1);return mount_result;}
 const char* hcc_test_mount_point(){return mount_point;}
+static void (*test_worker)(void*)=nullptr;
+static void* test_argument=nullptr;
+static bool test_task_fails=false;
+int xTaskCreatePinnedToCore(void(*entry)(void*),const char*,std::uint32_t stack,void* argument,unsigned,void*,int core){
+    assert(stack==8192&&core==0);
+    if(test_task_fails)return 0;
+    test_worker=entry;test_argument=argument;return 1;
+}
+void vTaskDelete(void*){}
+static void run_selftest_worker(){assert(test_worker);auto* worker=test_worker;test_worker=nullptr;worker(test_argument);}
 namespace HCCUsbDisk {
 static std::atomic<State> s_state{State::Off};
 static bb::SdLease s_sd_lease(HCCSdAccess::gate,bb::SdOwner::usb_disk);
@@ -238,6 +249,19 @@ int main(){
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
     for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14})operation_flow(mode);
     std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
+    {
+        using R=HCCBackupSdSelfTest::Result;
+        assert(HCCBackupSdSelfTest::request());assert(HCCBackupSdSelfTest::result()==R::running);
+        assert(!HCCBackupSdSelfTest::request()&&!HCCBackupSdSelfTest::clear());
+        run_selftest_worker();assert(HCCBackupSdSelfTest::result()==R::passed&&HCCSdAccess::gate.owner()==bb::SdOwner::free);
+        assert(HCCBackupSdSelfTest::clear());
+        bb::SdLease disk(HCCSdAccess::gate,bb::SdOwner::usb_disk);assert(disk.acquire());
+        assert(HCCBackupSdSelfTest::request());run_selftest_worker();assert(HCCBackupSdSelfTest::result()==R::busy&&HCCSdAccess::gate.owner()==bb::SdOwner::usb_disk);disk.release();
+        space_available=0;assert(HCCBackupSdSelfTest::request());run_selftest_worker();assert(HCCBackupSdSelfTest::result()==R::storage);space_available=1073741824;
+        test_task_fails=true;assert(!HCCBackupSdSelfTest::request()&&HCCBackupSdSelfTest::result()==R::task);test_task_fails=false;
+        assert(HCCBackupSdSelfTest::clear());
+    }
+    std::puts("PASS: SD readiness self-test worker (host files), verification, abort cleanup, duplicate/busy/space/task failures");
     fs::remove_all(temp);
     std::puts("PASS: startup rollback and capture mount failure release only safe ownership");
 }

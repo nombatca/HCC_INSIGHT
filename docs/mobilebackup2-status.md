@@ -306,3 +306,23 @@ cancel during a staged file; idle/total deadlines; clock reversal; unsupported
 control, remote failure and disconnect. BSP, free-space information and device
 I/O are simulated, while actual production coordinator and file storage run.
 Physical iPad/SD behavior and a complete Apple-restorable output remain untested.
+
+## Physical SD readiness test
+
+`HCCBackupSdSelfTest` runs a pinned worker with the production capture/storage
+adapter. On Apple Normal mode after MDM Ready, long-press MDM starts it; short
+press retains the probe action and clears a completed test result. Android
+FASTBOOT remains short-click only. UI status reads atomic result codes and the
+USB task uses finite polling while the test runs. No LVGL objects or device
+transport are accessed by the file worker.
+
+The test writes 64 known binary bytes plus identity metadata, flushes/syncs/
+closes and renames via the actual target, reads back exact content/EOF, then
+checks abort cleanup of a second file and preservation of the first. A newly
+created HCC capture directory retains the committed sample. Ownership blocks
+USB DISK and is released before publishing the final result. Duplicate requests
+are rejected; startup, SD busy and low-space failures report explicit states.
+
+Host tests execute the production worker with a task-launch stub and real local
+files. GUI gesture, physical task stack, FAT sync/rename and hardware mount must
+be verified on P4. See P4_SD_SELFTEST.md for the actual hardware test procedure.
