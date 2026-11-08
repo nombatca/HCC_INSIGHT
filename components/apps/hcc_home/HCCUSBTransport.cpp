@@ -1,4 +1,5 @@
 #include "HCCUSBTransport.hpp"
+#include "HCCBackupOperation.hpp"
 
 #include "mbedtls/base64.h"
 #include "mbedtls/ctr_drbg.h"

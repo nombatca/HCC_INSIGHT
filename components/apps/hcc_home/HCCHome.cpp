@@ -1157,6 +1157,8 @@ void HCCHome::usbClientTask(void *arg)
 
     auto last_mdm_state = app->_usb_transport.mdmState();
     auto last_sd_test = HCCBackupSdSelfTest::result();
+    auto last_backup_state = app->_usb_transport.mdmBackupState();
+    std::uint32_t last_backup_files = 0;
     while (!app->_usb_shutdown_requested) {
         // Submit the deferred SETUP before choosing this iteration's event wait.
         // This guarantees a newly submitted SETUP selects the finite diagnostic
@@ -1170,9 +1172,14 @@ void HCCHome::usbClientTask(void *arg)
 
         const auto mdm_state = app->_usb_transport.mdmState();
         const auto sd_test = HCCBackupSdSelfTest::result();
-        if (mdm_state != last_mdm_state || sd_test != last_sd_test) {
+        const auto backup_state = app->_usb_transport.mdmBackupState();
+        const std::uint32_t backup_files = app->_usb_transport.mdmBackupFiles();
+        if (mdm_state != last_mdm_state || sd_test != last_sd_test ||
+            backup_state != last_backup_state || backup_files != last_backup_files) {
             last_mdm_state = mdm_state;
             last_sd_test = sd_test;
+            last_backup_state = backup_state;
+            last_backup_files = backup_files;
             lv_async_call(HCCHome::applyUSBResult, app);
         }
         const bool dwc_delayed_snapshot_pending = app->_usb_transport.needsDwcDelayedSnapshot();
@@ -1487,6 +1494,9 @@ void HCCHome::applyUSBResult(void *arg)
             status = app->_usb_transport.mdmStatusText();
         if (apple && HCCBackupSdSelfTest::result() != HCCBackupSdSelfTest::Result::idle)
             status = HCCBackupSdSelfTest::statusText();
+        // A running/finished backup supersedes the generic MDM/self-test line.
+        if (apple && app->_usb_transport.mdmBackupState() != HCCUSBTransport::MdmBackupState::none)
+            status = app->_usb_transport.mdmBackupStatusText();
         lv_label_set_text(app->_usb_status_label, status);
     }
 
@@ -2354,8 +2364,15 @@ void HCCHome::onBootloaderClicked(lv_event_t *event)
     if (app != nullptr) {
         if (lv_event_get_code(event) == LV_EVENT_LONG_PRESSED) {
             if (app->_usb_mode == USBMode::NORMAL && app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Ready) {
-                HCCBackupSdSelfTest::request();
-                if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, HCCBackupSdSelfTest::statusText());
+                if (HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::passed) {
+                    // SD proven by the self-test: a further long-press starts the
+                    // owner-consented partial data pull to SD (prototype).
+                    app->_usb_transport.requestMdmBackup();
+                    if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, app->_usb_transport.mdmBackupStatusText());
+                } else {
+                    HCCBackupSdSelfTest::request();
+                    if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, HCCBackupSdSelfTest::statusText());
+                }
                 if (app->_usb_client_registered && app->_usb_client) usb_host_client_unblock(app->_usb_client);
             }
             return;

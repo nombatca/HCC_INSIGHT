@@ -113,6 +113,14 @@ public:
     MdmState mdmState() const { return _mdm_state.load(); }
     const char *mdmStatusText() const;
     bool mdmPollingPending() const;
+    // Prototype device->SD backup over the negotiated mobilebackup2 session.
+    // Owner-consented data pull only; no restore or MDM-changing operation.
+    // Bounded by the coordinator's prototype caps (partial backup).
+    enum class MdmBackupState { none, running, done, failed };
+    bool requestMdmBackup();
+    MdmBackupState mdmBackupState() const { return _mdm_backup_state.load(); }
+    uint32_t mdmBackupFiles() const { return _mdm_backup_files.load(); }
+    const char *mdmBackupStatusText();
 
 private:
     static constexpr size_t kRxMinimumBufferSize = 8192;
@@ -386,6 +394,10 @@ private:
     struct MdmProbeContext;
     MdmProbeContext *_mdm_probe = nullptr;
     std::atomic<MdmState> _mdm_state{MdmState::Idle};
+    std::atomic<bool> _mdm_backup_requested{false};
+    std::atomic<MdmBackupState> _mdm_backup_state{MdmBackupState::none};
+    std::atomic<uint32_t> _mdm_backup_files{0};
+    char _mdm_backup_text[96]{};
     bool _mdm_selected = false; // USB task only; fixed for one connection.
     bool _mdm_service_active = false; // Only the post-session mobilebackup2 socket.
     uint64_t _mdm_open_started_ms = 0;
