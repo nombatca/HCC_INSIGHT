@@ -23,11 +23,38 @@ results remain failures even if the callback reports the final bytes written.
 The firmware probe does not call this writer yet. An operation driver must first
 send a real operation request, validate incoming requests, perform the requested
 file operation, then send its actual result. Never report success merely because
-a request was received. Download batch filenames, batch termination, uploads,
-filesystem operations and final remote results still need integration and tests.
+a request was received. Download batch framing is now implemented in `DownloadBatchSender` and tested
+on host. Uploads, filesystem operations and final remote results still need
+integration and tests.
 No restore payload or MDM removal is implemented.
 
 Validation: existing stream/parser/link and P4 adapter tests; status sender tests
 cover signed limits, sentinel/dictionary shape, tiny buffers, invalid ASCII,
 backpressure, stable retry arguments, closure, oversized callback results and
 zero progress. Python plistlib independently decodes a generated negative status.
+
+## Download batch sender
+
+`hcc_backup_batch.hpp` combines explicit caller-supplied `DownloadFile` entries,
+the existing `BlobSender`, and `StatusReplyWriter`. For each entry it emits a
+big-endian path byte length, exact path bytes without a NUL, native data frames,
+and a file-end frame. It then emits a zero DWORD and a status reply. Empty files
+and empty lists are valid. All paths and source callbacks are validated before
+any output; lists are limited to 1024 entries and paths to 4096 bytes.
+
+Wire reference: `mb2_handle_send_file` and `mb2_handle_send_files` in
+https://github.com/libimobiledevice/libimobiledevice/blob/master/tools/idevicebackup2.c
+
+Callers supply separate, nonoverlapping name and scratch buffers and retain all
+paths/source contexts until done/error. One object handles one batch. Each pump
+bounds sink calls (8 by default); `would_block` also means budget exhausted.
+Source callbacks must be nonblocking. The source provider remains responsible
+for opening/closing files and confining paths and symlinks to the backup root.
+On failure the sender stops with a sticky error and does not append success;
+there is no per-file multistatus recovery, so discard the failed stream.
+
+Host tests reconstruct the complete wire sequence for multiple files, an empty
+file/list, partial writes and TLS-style stable retries. They verify budgets,
+path rejection, source failure, closed transport and invalid callback results.
+This component is compiled into P4 but is not called by its negotiation probe.
+No device transfer or restore is claimed by these tests.

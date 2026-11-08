@@ -31,3 +31,6 @@ with open('build/status.bplist', 'rb') as stream:
     assert plistlib.load(stream) == ['DLMessageStatusResponse', -1, '___EmptyParameterString___', {}]
 print('Independent plistlib status decoding PASS')
 PY
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_batch.cpp -o build/hcc_batch_tests
+./build/hcc_batch_tests
