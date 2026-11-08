@@ -66,6 +66,12 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:
         e==bb::LinkError::too_large?HCCBackupError::quota:HCCBackupError::transfer);
     if(!available)return HCCBackupError::would_block;
+#ifdef ESP_PLATFORM
+    // Diagnostic: show every control message the device sends during a backup so
+    // unhandled requests (e.g. DownloadFiles) are visible instead of a silent stall.
+    printf("[HCC BACKUP] event kind=%d msg=%.*s\n",static_cast<int>(event.kind),
+           static_cast<int>(event.message.size()),event.message.data());
+#endif
     if(event.kind==bb::EventKind::create_directory){
         reply_.emplace(output_,output_capacity_);
         // Validate response storage before mutating the capture namespace.
