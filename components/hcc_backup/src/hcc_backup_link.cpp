@@ -130,6 +130,124 @@ LinkError encode_free_space_response(std::uint64_t bytes,std::uint8_t* b,std::si
     w.object();w.integer(bytes);
     return w.finish(written);
 }
+namespace {
+// General bounded binary-plist builder for the ContentsOfDirectory reply. Unlike
+// BinaryWriter it supports an arbitrary (bounded) object count with variable
+// object-reference and offset-integer widths, UTF-16 strings and date values.
+constexpr double kMacEpochSeconds = 978307200.0; // 2001-01-01 UTC in Unix seconds.
+
+struct ListBuilder {
+    std::uint8_t* out; std::size_t cap; std::size_t pos;
+    std::uint32_t* offsets; std::size_t offset_cap;
+    unsigned ref_size; bool ok;
+
+    void u8(std::uint8_t v){ if(!ok||pos>=cap){ok=false;return;} out[pos++]=v; }
+    void be(std::uint64_t v,unsigned width){ for(unsigned i=width;i>0;--i) u8(std::uint8_t(v>>((i-1)*8))); }
+    void ref(std::uint32_t idx){ be(idx,ref_size); }
+    void mark(std::uint32_t idx){ if(idx>=offset_cap){ok=false;return;} offsets[idx]=std::uint32_t(pos); }
+    void integer(std::uint64_t v){
+        const unsigned power = v<=0xFF?0 : v<=0xFFFF?1 : v<=0xFFFFFFFFull?2 : 3;
+        u8(std::uint8_t(0x10|power)); be(v,1u<<power);
+    }
+    void container(std::uint8_t base,std::size_t n){
+        if(n<15) u8(std::uint8_t(base|n)); else { u8(std::uint8_t(base|0x0F)); integer(n); }
+    }
+    void ascii(const char* s,std::size_t n){
+        if(n<15) u8(std::uint8_t(0x50|n)); else { u8(0x5F); integer(n); }
+        for(std::size_t i=0;i<n;++i) u8(std::uint8_t(s[i]));
+    }
+    void date(std::int64_t unix_seconds){
+        const double seconds = static_cast<double>(unix_seconds) - kMacEpochSeconds;
+        std::uint64_t bits; std::memcpy(&bits,&seconds,8);
+        u8(0x33); be(bits,8);
+    }
+    static bool decode_utf8(const char* s,std::size_t n,std::size_t i,std::uint32_t& cp,std::size_t& adv){
+        const auto b0=static_cast<unsigned char>(s[i]);
+        if(b0<0x80){cp=b0;adv=1;return true;}
+        unsigned char c1=0,c2=0,c3=0;
+        auto cont=[&](std::size_t k,unsigned char& c){ if(i+k>=n) return false; c=static_cast<unsigned char>(s[i+k]); return (c&0xC0)==0x80; };
+        if((b0&0xE0)==0xC0){ if(!cont(1,c1))return false; cp=((b0&0x1Fu)<<6)|(c1&0x3Fu); adv=2; return cp>=0x80; }
+        if((b0&0xF0)==0xE0){ if(!cont(1,c1)||!cont(2,c2))return false; cp=((b0&0x0Fu)<<12)|((c1&0x3Fu)<<6)|(c2&0x3Fu); adv=3; return cp>=0x800&&!(cp>=0xD800&&cp<=0xDFFF); }
+        if((b0&0xF8)==0xF0){ if(!cont(1,c1)||!cont(2,c2)||!cont(3,c3))return false; cp=((b0&0x07u)<<18)|((c1&0x3Fu)<<12)|((c2&0x3Fu)<<6)|(c3&0x3Fu); adv=4; return cp>=0x10000&&cp<=0x10FFFF; }
+        return false;
+    }
+    static bool count_utf16(const char* s,std::size_t n,std::size_t& units){
+        units=0; std::size_t i=0;
+        while(i<n){ std::uint32_t cp; std::size_t adv; if(!decode_utf8(s,n,i,cp,adv)) return false; i+=adv; units+=cp<0x10000?1:2; }
+        return true;
+    }
+    bool utf16(const char* s,std::size_t n){
+        std::size_t units=0; if(!count_utf16(s,n,units)) return false;
+        if(units<15) u8(std::uint8_t(0x60|units)); else { u8(0x6F); integer(units); }
+        std::size_t i=0;
+        while(i<n){ std::uint32_t cp; std::size_t adv; (void)decode_utf8(s,n,i,cp,adv); i+=adv;
+            if(cp<0x10000) be(cp,2); else { cp-=0x10000; be(0xD800|(cp>>10),2); be(0xDC00|(cp&0x3FF),2); } }
+        return true;
+    }
+    bool text(const char* s,std::size_t n){
+        for(std::size_t i=0;i<n;++i) if(static_cast<unsigned char>(s[i])>=0x80) return utf16(s,n);
+        ascii(s,n); return true;
+    }
+};
+} // namespace
+LinkError encode_contents_of_directory_response(const DirectoryListing& list,
+    std::uint32_t* offset_scratch,std::size_t offset_capacity,
+    std::uint8_t* b,std::size_t n,std::size_t& written) {
+    written=0;
+    if(!b||!offset_scratch) return LinkError::invalid_argument;
+    if(list.count&&!list.entries) return LinkError::invalid_argument;
+    const std::size_t count=list.count;
+    if(count>(0xFFFFu-10)/4) return LinkError::too_large;       // keep object refs within two bytes
+    const std::size_t object_count=contents_object_count(count);
+    if(offset_capacity<object_count) return LinkError::too_large;
+    for(std::size_t e=0;e<count;++e){
+        const auto& it=list.entries[e];
+        if(it.name_length==0||it.name_length>255) return LinkError::invalid_argument;
+        for(std::size_t i=0;i<it.name_length;++i){
+            const auto c=static_cast<unsigned char>(it.name[i]);
+            if(c==0||c=='/'||c=='\\') return LinkError::invalid_argument; // basenames only
+        }
+    }
+    ListBuilder w{b,n,0,offset_scratch,offset_capacity,object_count<=256?1u:2u,true};
+    const char header[]="bplist00"; for(unsigned i=0;i<8;++i) w.u8(std::uint8_t(header[i]));
+    const std::uint32_t idx_root=0,idx_name=1,idx_code=2,idx_msg=3,idx_dict=4,
+                        idx_key_type=5,idx_key_size=6,idx_key_date=7,idx_type_reg=8,idx_type_dir=9;
+    auto name_idx=[&](std::size_t e){return std::uint32_t(10+4*e+0);};
+    auto sub_idx =[&](std::size_t e){return std::uint32_t(10+4*e+1);};
+    auto size_idx=[&](std::size_t e){return std::uint32_t(10+4*e+2);};
+    auto date_idx=[&](std::size_t e){return std::uint32_t(10+4*e+3);};
+    w.mark(idx_root); w.container(0xA0,4); w.ref(idx_name);w.ref(idx_code);w.ref(idx_msg);w.ref(idx_dict);
+    w.mark(idx_name); w.ascii("DLMessageStatusResponse",23);
+    w.mark(idx_code); w.integer(0);
+    w.mark(idx_msg);  w.ascii("___EmptyParameterString___",26);
+    w.mark(idx_dict); w.container(0xD0,count);
+    for(std::size_t e=0;e<count;++e) w.ref(name_idx(e));
+    for(std::size_t e=0;e<count;++e) w.ref(sub_idx(e));
+    w.mark(idx_key_type); w.ascii("DLFileType",10);
+    w.mark(idx_key_size); w.ascii("DLFileSize",10);
+    w.mark(idx_key_date); w.ascii("DLFileModificationDate",22);
+    w.mark(idx_type_reg); w.ascii("DLFileTypeRegular",17);
+    w.mark(idx_type_dir); w.ascii("DLFileTypeDirectory",19);
+    for(std::size_t e=0;e<count;++e){
+        const auto& it=list.entries[e];
+        w.mark(name_idx(e)); if(!w.text(it.name,it.name_length)) return LinkError::invalid_argument;
+        w.mark(sub_idx(e)); w.container(0xD0,3);
+        w.ref(idx_key_type);w.ref(idx_key_size);w.ref(idx_key_date);
+        w.ref(it.type==EntryType::directory?idx_type_dir:idx_type_reg);
+        w.ref(size_idx(e)); w.ref(date_idx(e));
+        w.mark(size_idx(e)); w.integer(it.type==EntryType::directory?0:it.size);
+        w.mark(date_idx(e)); w.date(it.modification_time);
+    }
+    if(!w.ok) return LinkError::too_large;
+    const std::size_t table=w.pos;
+    const unsigned off_size = table<=0xFF?1 : table<=0xFFFF?2 : table<=0xFFFFFFFFull?4 : 8;
+    for(std::size_t i=0;i<object_count;++i) w.be(w.offsets[i],off_size);
+    for(unsigned i=0;i<6;++i) w.u8(0);
+    w.u8(std::uint8_t(off_size)); w.u8(std::uint8_t(w.ref_size));
+    w.be(object_count,8); w.be(idx_root,8); w.be(table,8);
+    if(!w.ok) return LinkError::too_large;
+    written=w.pos; return LinkError::ok;
+}
 Error StatusReplyWriter::begin_free_space(std::uint64_t bytes) {
     if(active_)return Error::busy;
     done_=false;size_=sent_=0;error_=Error::ok;
@@ -148,6 +266,17 @@ Error StatusReplyWriter::begin(std::int64_t code,const char* message,bool dict) 
     std::size_t body=0;
     const auto e=encode_status_response(code,message,dict,storage_+4,capacity_-4,body);
     if(e!=LinkError::ok) return error_=e==LinkError::too_large?Error::too_large:Error::invalid_argument;
+    if(body>UINT32_MAX) return error_=Error::too_large;
+    write_be32(storage_,static_cast<std::uint32_t>(body));size_=body+4;active_=true;
+    return Error::ok;
+}
+Error StatusReplyWriter::begin_contents(const DirectoryListing& list,std::uint32_t* offsets,std::size_t offsets_cap) {
+    if(active_) return Error::busy;
+    done_=false;size_=sent_=0;error_=Error::ok;
+    if(!storage_||capacity_<4) return error_=Error::invalid_argument;
+    std::size_t body=0;
+    const auto e=encode_contents_of_directory_response(list,offsets,offsets_cap,storage_+4,capacity_-4,body);
+    if(e!=LinkError::ok) return error_=(e==LinkError::too_large?Error::too_large:Error::invalid_argument);
     if(body>UINT32_MAX) return error_=Error::too_large;
     write_be32(storage_,static_cast<std::uint32_t>(body));size_=body+4;active_=true;
     return Error::ok;

@@ -9,8 +9,8 @@ enum class Phase { await_version, version_decision, await_ready, ready,
 enum class Outcome { none, success, remote_error, local_error };
 enum class SessionError { ok, malformed_message, wrong_state, unsupported_message,
                           unsupported_operation, invalid_path, incompatible_version };
-enum class EventKind { version_offer, device_ready, download_files, upload_files, free_disk_space, create_directory, process_message,
-                       result, disconnect, unsupported };
+enum class EventKind { version_offer, device_ready, download_files, upload_files, free_disk_space, create_directory,
+                       contents_of_directory, process_message, result, disconnect, unsupported };
 struct SessionEvent {
     EventKind kind=EventKind::unsupported;
     std::uint32_t payload=plist::none;

@@ -84,6 +84,21 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(reply_->begin_free_space(std::min(available_bytes,remaining))!=bb::Error::ok)return fail(HCCBackupError::transfer);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
+    if(event.kind==bb::EventKind::contents_of_directory){
+        // Caller must provision listing storage; otherwise directory listing is refused.
+        if(!contents_.entries||!contents_.entry_capacity||
+           contents_.offset_capacity<bb::contents_object_count(contents_.entry_capacity))
+            return fail(HCCBackupError::unsupported);
+        bb::DirectoryListing listing{contents_.entries,contents_.entry_capacity,0};
+        // Too many children or any storage/metadata error fails the operation; the
+        // listing is never silently truncated or replaced with an empty reply.
+        const auto result=capture_.listDirectory(doc.string(event.payload),listing);
+        if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
+        reply_.emplace(output_,output_capacity_);
+        if(reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity)!=bb::Error::ok)
+            return fail(HCCBackupError::transfer);
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::upload_files){
         if(files_>=config_.limits.max_files||bytes_>=config_.limits.max_batch_bytes)return fail(HCCBackupError::quota);
         auto limits=config_.limits;limits.max_files-=files_;limits.max_batch_bytes-=bytes_;

@@ -125,6 +125,14 @@ struct Parser {
                 else std::memcpy(&w.nodes[id].real,&v,8);
                 if (!std::isfinite(w.nodes[id].real)) fail();
             }
+        } else if (hi==3) {
+            // Date: 8-byte big-endian IEEE754 double, seconds since 2001-01-01.
+            // Exposed as a real so containers holding dates parse without a new kind.
+            if (lo!=3) { fail(Error::unsupported); return none; }
+            std::uint64_t v=0; if (!integer_at(p,8,table,v)) return none;
+            id=node(Kind::real); if (id==none) return none;
+            std::memcpy(&w.nodes[id].real,&v,8);
+            if (!std::isfinite(w.nodes[id].real)) fail();
         } else if (hi==4 || hi==5 || hi==6 || hi==10 || hi==13) {
             std::uint64_t n=0; if (!binary_length(p,lo,n)) return none;
             if (hi==4 || hi==5 || hi==6) {

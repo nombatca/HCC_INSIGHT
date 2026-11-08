@@ -1,6 +1,7 @@
 #include "hcc_backup_storage.hpp"
 #include <cerrno>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -142,5 +143,151 @@ Error StagedUploadTarget::finish(bool commit){
     if(stat(ready_,&existing)==0||errno!=ENOENT){cleanup();return Error::io_error;}
     if(rename(stage_,ready_)!=0){cleanup();return Error::io_error;}
     active_=false;++committed_;return Error::ok;
+}
+namespace {
+// `NNNNNN.ready` committed-file record (exactly six digits + ".ready").
+bool ready_record(const char* name){
+    if(std::strlen(name)!=12)return false;
+    for(int i=0;i<6;++i)if(name[i]<'0'||name[i]>'9')return false;
+    return std::strcmp(name+6,".ready")==0;
+}
+// Real directory that is NOT a symlink. ESP FAT VFS has no symlinks; the mount
+// ownership contract is the caller's. On host lstat rejects a planted symlink.
+bool plain_directory(const char* path){
+    struct stat s{};
+#ifdef ESP_PLATFORM
+    return stat(path,&s)==0&&S_ISDIR(s.st_mode);
+#else
+    return lstat(path,&s)==0&&S_ISDIR(s.st_mode);
+#endif
+}
+// Reads a committed record's destination path from identity.bin and stats its
+// payload. Returns false (io_error) on any malformed/short metadata or symlink.
+bool read_record(const char* record_dir,char* dest,std::size_t dest_cap,std::size_t& dest_len,
+                 std::uint64_t& size,std::int64_t& mtime){
+    char path[320];
+    if(snprintf(path,sizeof(path),"%s/identity.bin",record_dir)<=0)return false;
+#ifndef ESP_PLATFORM
+    struct stat ls{}; if(lstat(path,&ls)!=0||!S_ISREG(ls.st_mode))return false;
+#endif
+    FILE* f=std::fopen(path,"rb"); if(!f)return false;
+    std::uint8_t head[12]; bool ok=std::fread(head,1,12,f)==12&&std::memcmp(head,"HCCU0001",8)==0;
+    std::uint32_t src_len=ok?read_be32(head+8):0;
+    if(ok&&std::fseek(f,static_cast<long>(src_len),SEEK_CUR)!=0)ok=false;      // skip source metadata
+    std::uint8_t dl[4]; ok=ok&&std::fread(dl,1,4,f)==4;
+    const std::uint32_t d_len=ok?read_be32(dl):0;
+    if(ok&&(d_len==0||d_len>dest_cap))ok=false;
+    if(ok&&std::fread(dest,1,d_len,f)!=d_len)ok=false;
+    std::fclose(f);
+    if(!ok)return false;
+    dest_len=d_len;
+    if(snprintf(path,sizeof(path),"%s/payload.bin",record_dir)<=0)return false;
+    struct stat ps{};
+#ifdef ESP_PLATFORM
+    if(stat(path,&ps)!=0||!S_ISREG(ps.st_mode))return false;
+#else
+    if(lstat(path,&ps)!=0||!S_ISREG(ps.st_mode))return false;
+#endif
+    size=static_cast<std::uint64_t>(ps.st_size); mtime=static_cast<std::int64_t>(ps.st_mtime);
+    return true;
+}
+}
+Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListing& out) const {
+    if(!out.entries||!out.capacity)return Error::invalid_argument;
+    out.count=0;
+    if(!root_[0])return Error::invalid_argument;
+    // Normalize the requested prefix: '/' separators, no trailing slash. "" = root.
+    char prefix[4096]; std::size_t plen=0;
+    if(!request.empty()){
+        if(!valid_relative_backup_path(request))return Error::invalid_argument;
+        if(request.size()>=sizeof(prefix))return Error::too_large;
+        for(char c:request)prefix[plen++]=(c=='\\')?'/':c;
+        while(plen&&prefix[plen-1]=='/')--plen;
+    }
+    prefix[plen]=0;
+    auto add=[&](const char* name,std::size_t nlen,EntryType type,std::uint64_t size,std::int64_t mtime)->Error{
+        if(nlen==0||nlen>255)return Error::io_error;
+        for(std::size_t k=0;k<out.count;++k){
+            DirectoryEntry& ex=out.entries[k];
+            if(ex.name_length==nlen&&std::memcmp(ex.name,name,nlen)==0){
+                // Same name may legitimately recur only as a directory from both sources.
+                if(ex.type==EntryType::directory&&type==EntryType::directory){
+                    if(mtime>ex.modification_time)ex.modification_time=mtime;
+                    return Error::ok;
+                }
+                return Error::io_error; // file/dir or file/file collision = ambiguous tree
+            }
+        }
+        if(out.count>=out.capacity)return Error::too_large; // never truncate the listing
+        DirectoryEntry& e=out.entries[out.count++];
+        std::memcpy(e.name,name,nlen);e.name[nlen]=0;e.name_length=static_cast<std::uint16_t>(nlen);
+        e.type=type;e.size=(type==EntryType::directory)?0:size;e.modification_time=mtime;
+        return Error::ok;
+    };
+    // Map one normalized destination to its immediate child under the prefix.
+    auto classify=[&](const char* norm,std::size_t nlen,std::size_t& cstart,std::size_t& clen,bool& leaf)->bool{
+        std::size_t rstart;
+        if(plen==0)rstart=0;
+        else{
+            if(nlen<=plen||norm[plen]!='/'||std::memcmp(norm,prefix,plen)!=0)return false;
+            rstart=plen+1;
+        }
+        if(rstart>=nlen)return false; // destination equals the prefix, not a child
+        std::size_t sep=rstart; while(sep<nlen&&norm[sep]!='/')++sep;
+        cstart=rstart; clen=sep-rstart; leaf=(sep==nlen);
+        return clen>0;
+    };
+    // 1) Committed files (.ready records): destination -> file leaf or implied dir.
+    DIR* dir=opendir(root_); if(!dir)return Error::io_error;
+    Error err=Error::ok;
+    for(struct dirent* ent; err==Error::ok&&(ent=readdir(dir));){
+        if(!ready_record(ent->d_name))continue; // skip .part, directories, anything internal
+        char record[300];
+        if(snprintf(record,sizeof(record),"%s/%s",root_,ent->d_name)<=0){err=Error::io_error;break;}
+        if(!plain_directory(record)){err=Error::io_error;break;}
+        char dest[4096]; std::size_t dlen=0; std::uint64_t size=0; std::int64_t mtime=0;
+        if(!read_record(record,dest,sizeof(dest),dlen,size,mtime)){err=Error::io_error;break;}
+        char norm[4096]; for(std::size_t i=0;i<dlen;++i)norm[i]=(dest[i]=='\\')?'/':dest[i];
+        std::size_t cs=0,cl=0; bool leaf=false;
+        if(!classify(norm,dlen,cs,cl,leaf))continue;
+        err=leaf?add(norm+cs,cl,EntryType::regular,size,mtime)
+                :add(norm+cs,cl,EntryType::directory,0,0);
+    }
+    closedir(dir);
+    if(err!=Error::ok)return err;
+    // 2) Created-directory namespace: immediate subdirectories of the prefix.
+    char nsdir[4120];
+    if(snprintf(nsdir,sizeof(nsdir),"%s/directories%s%s",root_,plen?"/":"",prefix)<=0)return Error::io_error;
+    if(!plen){ // trim the trailing separator produced for the root case
+        nsdir[std::strlen(root_)+std::strlen("/directories")]=0;
+    }
+    struct stat ns{};
+#ifdef ESP_PLATFORM
+    const int seen=stat(nsdir,&ns);
+#else
+    const int seen=lstat(nsdir,&ns);
+#endif
+    if(seen!=0){
+        if(errno==ENOENT)return Error::ok; // no namespace dir: valid empty contribution
+        return Error::io_error;
+    }
+    if(!S_ISDIR(ns.st_mode))return Error::io_error; // symlink or file where a dir is expected
+    DIR* nd=opendir(nsdir); if(!nd)return Error::io_error;
+    for(struct dirent* ent; (ent=readdir(nd));){
+        if(std::strcmp(ent->d_name,".")==0||std::strcmp(ent->d_name,"..")==0)continue;
+        char sub[4400];
+        if(snprintf(sub,sizeof(sub),"%s/%s",nsdir,ent->d_name)<=0){err=Error::io_error;break;}
+        struct stat ss{};
+#ifdef ESP_PLATFORM
+        if(stat(sub,&ss)!=0){err=Error::io_error;break;}
+#else
+        if(lstat(sub,&ss)!=0){err=Error::io_error;break;}
+#endif
+        if(!S_ISDIR(ss.st_mode)){err=Error::io_error;break;} // only directories live here
+        err=add(ent->d_name,std::strlen(ent->d_name),EntryType::directory,0,static_cast<std::int64_t>(ss.st_mtime));
+        if(err!=Error::ok)break;
+    }
+    closedir(nd);
+    return err;
 }
 } // namespace hcc::backup

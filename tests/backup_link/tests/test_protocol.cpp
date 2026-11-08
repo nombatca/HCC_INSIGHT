@@ -200,6 +200,34 @@ void directory_request_lifecycle() {
     CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
     CHECK(s.complete_request(true)==bb::SessionError::ok&&s.phase()==bb::Phase::running&&s.outcome()==bb::Outcome::none);
 }
+void contents_request_lifecycle() {
+    Memory m;bb::SessionObserver s;bb::SessionEvent e;
+    CHECK(m.parse(fixture("version.xml"))==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::ok);
+    CHECK(s.acknowledge_version(true)==bb::SessionError::ok);
+    CHECK(m.parse(fixture("ready.xml"))==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::ok);
+    // Rejected before the operation is marked running.
+    CHECK(m.xml("<array><string>DLContentsOfDirectory</string><string>backup</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.mark_operation_started()==bb::SessionError::ok);
+    // Missing/typed path is malformed.
+    for(const auto* body:{"<array><string>DLContentsOfDirectory</string></array>","<array><string>DLContentsOfDirectory</string><integer>1</integer></array>"}){
+        CHECK(m.xml(body)==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::malformed_message);
+    }
+    // Traversal is rejected without leaving the running phase.
+    CHECK(m.xml("<array><string>DLContentsOfDirectory</string><string>../escape</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::invalid_path&&s.phase()==bb::Phase::running);
+    // A valid relative path becomes a pending contents request carrying the path.
+    CHECK(m.xml("<array><string>DLContentsOfDirectory</string><string>backup/sub</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok&&e.kind==bb::EventKind::contents_of_directory);
+    CHECK(m.doc.string(e.payload)=="backup/sub"&&s.pending_request()==bb::EventKind::contents_of_directory);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.complete_request(true)==bb::SessionError::ok&&s.phase()==bb::Phase::running&&s.outcome()==bb::Outcome::none);
+    // An empty path lists the backup root and is accepted.
+    CHECK(m.xml("<array><string>DLContentsOfDirectory</string><string></string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok&&e.kind==bb::EventKind::contents_of_directory);
+    CHECK(m.doc.string(e.payload).empty()&&s.pending_request()==bb::EventKind::contents_of_directory);
+    CHECK(s.complete_request(true)==bb::SessionError::ok&&s.phase()==bb::Phase::running);
+}
 void framed_session_one_byte_at_a_time() {
     std::vector<std::uint8_t> wire;
     for(const auto name:{"version.xml","ready.bplist","hello.xml","download.bplist","result_ok.xml","disconnect.bplist"}) {
@@ -253,6 +281,7 @@ int main() {
         {"request types, relative paths and unsupported operations",request_validation_and_unsupported},
         {"free-space request requires running and explicit acknowledgement",free_space_request_lifecycle},
         {"directory request validation and lifecycle",directory_request_lifecycle},
+        {"contents-of-directory request validation and lifecycle",contents_request_lifecycle},
         {"framed mixed XML/binary session fragmented by byte",framed_session_one_byte_at_a_time},
         {"4000 deterministic binary-plist mutations",deterministic_mutation_corpus},
     };

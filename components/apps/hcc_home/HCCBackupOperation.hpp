@@ -12,16 +12,31 @@ struct HCCBackupConfig {
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
 };
-// Bounded prototype driver for Backup, UploadFiles, GetFreeDiskSpace and CreateDirectory. Other filesystem
-// commands fail explicitly. NOT connected to the MDM button or a complete
-// Apple-restorable backup workflow. Allocate off the small USB task stack.
-// Caller owns transport scheduling, independent buffers, link lifetime, and
-// must close/abandon the stream on failure/cancel. No internal tasks are created.
+// Caller-owned storage for DLContentsOfDirectory listings, kept out of this
+// object so it stays small enough for the USB worker. `entries`/`entry_capacity`
+// hold the reconstructed children; `offsets`/`offset_capacity` back the binary
+// plist object table and must provide at least
+// hcc::backup::contents_object_count(entry_capacity) slots. Leave empty to refuse
+// directory listings. All buffers must outlive the operation.
+struct HCCBackupContentsBuffers {
+    hcc::backup::DirectoryEntry* entries=nullptr;
+    std::size_t entry_capacity=0;
+    std::uint32_t* offsets=nullptr;
+    std::size_t offset_capacity=0;
+};
+// Bounded prototype driver for Backup, UploadFiles, GetFreeDiskSpace, CreateDirectory and
+// DLContentsOfDirectory. Other filesystem commands fail explicitly. NOT connected
+// to the MDM button or a complete Apple-restorable backup workflow. Allocate off
+// the small USB task stack. Caller owns transport scheduling, independent buffers,
+// link lifetime, and must close/abandon the stream on failure/cancel. No internal
+// tasks are created.
 class HCCBackupOperation {
 public:
     HCCBackupOperation(hcc::backup::BackupLink& link,std::uint8_t* scratch,std::size_t capacity,
-                       std::uint8_t* output,std::size_t output_capacity)
-        :link_(link),scratch_(scratch),capacity_(capacity),output_(output),output_capacity_(output_capacity) {}
+                       std::uint8_t* output,std::size_t output_capacity,
+                       HCCBackupContentsBuffers contents={})
+        :link_(link),scratch_(scratch),capacity_(capacity),output_(output),output_capacity_(output_capacity),
+         contents_(contents) {}
     ~HCCBackupOperation(){cancel();}
     HCCBackupError start(std::string_view udid,std::uint64_t now,HCCBackupConfig={});
     HCCBackupError poll(hcc::backup::Duplex,std::uint64_t now,std::size_t budget=8);
@@ -40,6 +55,7 @@ private:
     };
     hcc::backup::BackupLink& link_;
     std::uint8_t* scratch_;std::size_t capacity_;std::uint8_t* output_;std::size_t output_capacity_;
+    HCCBackupContentsBuffers contents_;
     hcc::backup::SessionObserver* observer_=nullptr;
     HCCBackupCapture capture_; // Destroy handlers before target and SD lease.
     std::optional<hcc::backup::StatusReplyWriter> reply_;

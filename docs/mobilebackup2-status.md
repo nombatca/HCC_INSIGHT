@@ -390,3 +390,53 @@ upload state, prevalidation limits, collisions/symlinks and directory quota; the
 production coordinator runs create/status/upload/final-result with real local
 files, fragmented I/O, failed send, cancellation and storage/path/quota failure.
 Physical iPad/SD behavior for this command remains untested.
+
+## DLContentsOfDirectory listing
+
+The running operation now accepts `DLContentsOfDirectory` with a string path and
+replies with a `DLMessageStatusResponse` whose fourth item is a dictionary mapping
+each immediate child name to a sub-dictionary of `DLFileType`
+(`DLFileTypeRegular`/`DLFileTypeDirectory`), `DLFileSize` and
+`DLFileModificationDate` (a Mac-epoch date). An empty string lists the backup
+root; any other path must be relative and traversal-free. It acknowledges the
+pending request only after the whole status frame is accepted.
+
+Wire reference: `mb2_handle_list_directory` in
+https://github.com/libimobiledevice/libimobiledevice/blob/master/tools/idevicebackup2.c
+The implementation is independent; the reply is serialized by a new bounded
+binary-plist writer (`encode_contents_of_directory_response`) that supports an
+arbitrary object count with variable object-reference and offset-integer widths,
+UTF-16 names and date values — the existing 16-object BinaryWriter cannot encode a
+listing. The project parser now also decodes bplist dates (exposed as reals).
+
+Because the capture is NOT a materialized Apple backup tree, the listing is
+reconstructed in `StagedUploadTarget::list_directory`: it reads every committed
+`NNNNNN.ready` record's destination from identity.bin and combines those with the
+`<session>/directories/` namespace. A destination directly inside the requested
+path is a regular file (size and modification time taken from payload.bin); a
+deeper destination contributes its first component as an implied directory; the
+namespace supplies explicitly created subdirectories. Internal capture names
+(NNNNNN.ready/.part, payload.bin, identity.bin) are never exposed.
+
+Safety and bounds: the requested path is validated (no absolute/traversal
+components); host enumeration rejects symlinks per record and per namespace entry
+(ESP FAT has none); a name that is both a file and a directory prefix, or corrupt
+metadata, is a loud error, never a dropped entry. A directory with no children is
+a valid empty dictionary with status 0, but an I/O/metadata error or exceeding the
+caller's bounded entry capacity fails the operation rather than truncating or
+returning an empty listing on error. Listing storage (entries + the plist object
+table) is caller-owned and kept outside the operation object so it stays off the
+small USB task stack; the coordinator refuses listings when it is not provisioned.
+Partial/TLS-retry writes keep the observer request-pending until the whole frame
+is sent, matching CreateDirectory/GetFreeDiskSpace.
+
+Host tests (`test_listing`, `test_protocol`, `test_sd_access`) cover the
+reconstructed tree (nested files, implied and created directories, root
+collapsing), empty and missing directories, traversal rejection, capacity
+overflow, file/directory collision, corrupt identity metadata, namespace symlink
+rejection, the encoded reply decoded back to the expected envelope and file
+dictionary (empty and populated), and the production coordinator driving a real
+empty and a real multi-entry listing to completion. All pass under
+AddressSanitizer/UndefinedBehaviorSanitizer. No restore or MDM-changing operation
+is introduced, and no listing is started from the MDM UI. Physical iPad/SD
+behavior for this command remains untested.

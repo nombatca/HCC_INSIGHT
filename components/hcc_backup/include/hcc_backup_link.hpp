@@ -1,6 +1,7 @@
 #pragma once
 #include "hcc_backup_stream.hpp"
 #include "hcc_backup_session.hpp"
+#include "hcc_backup_listing.hpp"
 
 namespace hcc::backup {
 struct Duplex {
@@ -43,6 +44,18 @@ LinkError encode_status_response(std::int64_t code,const char* message,
 // Success status with a nonnegative integer capacity (bounded to INT64_MAX).
 LinkError encode_free_space_response(std::uint64_t bytes,std::uint8_t*,std::size_t,std::size_t& written);
 
+// DLContentsOfDirectory success reply: a DLMessageStatusResponse whose fourth
+// item is a dictionary mapping each immediate child name to a sub-dictionary of
+// DLFileType ("DLFileTypeRegular"/"DLFileTypeDirectory"), DLFileSize and
+// DLFileModificationDate (Mac-epoch date). An empty listing yields an empty
+// dictionary with code 0. Entry names must be nonempty basenames (no separators).
+// `offset_scratch` supplies at least contents_object_count(list.count) uint32
+// slots. On any failure written=0 and nothing is sent; the listing is never
+// partially encoded or silently truncated.
+LinkError encode_contents_of_directory_response(const DirectoryListing& list,
+    std::uint32_t* offset_scratch,std::size_t offset_capacity,
+    std::uint8_t*,std::size_t,std::size_t& written);
+
 // Caller owns storage exclusively until done/error. Do not move this object or
 // modify storage while pending: TLS retries require stable address and length.
 class StatusReplyWriter {
@@ -52,6 +65,10 @@ public:
     StatusReplyWriter& operator=(const StatusReplyWriter&)=delete;
     Error begin(std::int64_t code,const char* message=nullptr,bool empty_dictionary=true);
     Error begin_free_space(std::uint64_t bytes);
+    // Frames a DLContentsOfDirectory reply for `list`. `offset_scratch` must hold
+    // at least contents_object_count(list.count) uint32 slots and remain unused by
+    // the caller until done/error. Encoding failures keep the writer inactive.
+    Error begin_contents(const DirectoryListing& list,std::uint32_t* offset_scratch,std::size_t offset_capacity);
     Error pump(Sink);
     bool done() const { return done_; }
 private:

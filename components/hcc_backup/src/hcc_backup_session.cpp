@@ -81,6 +81,16 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         out.kind=EventKind::free_disk_space;pending_=out.kind;
         phase_=Phase::request_pending;return SessionError::ok;
     }
+    if(tag=="DLContentsOfDirectory") {
+        if(phase_!=Phase::running) return SessionError::wrong_state;
+        const auto path=d.at(d.root,1); const auto* node=d.get(path);
+        if(!node||node->kind!=plist::Kind::string) return SessionError::malformed_message;
+        // Empty string lists the backup root; any other path must be relative and
+        // traversal-free. payload borrows the request path for the operation driver.
+        if(!d.string(path).empty()&&!valid_relative_backup_path(d.string(path))) return SessionError::invalid_path;
+        out.kind=EventKind::contents_of_directory;out.payload=path;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessageUploadFiles") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         // Known UploadFiles shape has four or more elements. The fourth value
@@ -115,8 +125,7 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         return SessionError::ok;
     }
     out.kind=EventKind::unsupported;
-    if(tag=="DLContentsOfDirectory"||
-       tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
+    if(tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
        tag=="DLMessageRemoveItems") return SessionError::unsupported_operation;
     return SessionError::unsupported_message;
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "hcc_backup_receive.hpp"
+#include "hcc_backup_listing.hpp"
 #include <cstdio>
 namespace hcc::backup {
 // Synchronous filesystem target for an ALREADY mounted, exclusively owned
@@ -18,6 +19,15 @@ public:
     // Exclusive ownership/trusted ancestors required; no symlinks on host.
     // Existing directories succeed. Failure may leave newly made parents.
     Error create_directory(std::string_view relative_path);
+    // Reconstructs the immediate children of a logical backup directory by
+    // combining committed .ready destinations (from identity.bin) with the
+    // created-directory namespace. `request` is "" for the backup root or a
+    // validated relative path. A directory with no children is a valid empty
+    // listing (out.count==0, Error::ok). Overflow of out.capacity, an I/O error,
+    // a symlink, or corrupt metadata returns an error and never a partial or
+    // silently truncated/empty-on-error listing. Internal capture names
+    // (NNNNNN.ready/.part, payload.bin, identity.bin) are never exposed.
+    Error list_directory(std::string_view request, DirectoryListing& out) const;
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
     std::uint32_t committed_files() const {return committed_;}
