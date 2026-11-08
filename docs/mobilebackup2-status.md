@@ -83,14 +83,18 @@ iPad has verified negotiation only; this new monitoring needs a hardware test.
 
 `UploadBatchReceiver` handles raw records after an operation driver accepts an
 UploadFiles request. A record has two length-prefixed names (source metadata and
-relative destination), then native data frames and a clean 0x00 file terminator.
+relative destination), then native data frames and a 0x00 or context-valid 0x0B terminal.
 A zero source-name length ends the batch without reading subsequent bytes.
 `completed_payload_bytes()` counts fully accepted data chunks, not durable bytes.
 
 Reference: `mb2_handle_receive_files` in the libimobiledevice source linked above.
 Its 0x0B handling is context-sensitive, including a non-error use after data.
-This first receiver deliberately rejects 0x0B and unknown tags; it is not yet a
-complete substitute for libimobiledevice's UploadFiles handler. No success status
+The receiver accepts 0x0B after a fully delivered data frame, consumes its entire
+bounded body without writing it as payload, then commits the file. A first-frame
+0x0B drains its bounded body and aborts. A truncated body, unknown tag, cancellation
+or storage failure never commits that file. Both bodyless and nonempty terminals
+are supported. This follows the reference last-data rule; physical iPad capture
+is still needed to validate device-specific sequences. No success status
 is automatically sent, and no new backup/restore request is introduced.
 
 Caller supplies scratch storage (1..32768 bytes) and a target with begin/write/
@@ -116,7 +120,7 @@ all state are bounded, with no heap allocation in the receiver.
 
 Tests cover multiple wire split sizes, long data with small scratch storage,
 empty file/batch, no overread, stable TLS-style and target retries, budgets,
-every truncation position, invalid paths/name sizes, 0x0B rejection, write/commit
+every truncation position, invalid paths/name sizes, 0x0B context/fragmentation/truncation, write/commit
 failure, file/batch/frame/count quotas and cancellation. This API is compiled
 into P4 but not wired into its negotiation probe; an operation driver, complete
 UploadFiles control handling and SD-backed staging still need integration.
@@ -220,8 +224,8 @@ status transport closure, undersized output storage and cancellation before
 status transmission, with no false local success.
 
 This does not send Backup/Restore and is not wired to start captures from the
-MDM button. Full operation initiation, other filesystem control requests, 0x0B
-semantics and physical iPad/SD testing are still outstanding.
+MDM button. Other filesystem control requests and physical bulk iPad-to-SD
+testing are still outstanding.
 
 P4 integration must allocate the handler's bounded state (including two 4096-byte
 name buffers) off the small USB task stack, and schedule synchronous file I/O
@@ -294,7 +298,8 @@ cancel packet: caller must close/abandon that stream. Calls on this object and
 its transport remain serialized; there are no internal threads or task handoffs.
 
 The prototype handles Backup/UploadFiles and GetFreeDiskSpace. DownloadFiles and the other
-filesystem requests are still unsupported, as is raw terminal 0x0B. Therefore
+filesystem requests are still unsupported. Raw 0x0B follows the reference
+context rule described above. Therefore
 it is NOT a complete device backup workflow and is not enabled by the MDM UI.
 Keep this context and its large handler outside the small USB task stack and
 schedule blocking SD work appropriately before physical integration.
@@ -345,3 +350,12 @@ The observer remains request-pending through partial/TLS retry writes and only
 returns to running after the whole status frame is accepted. Query failure,
 invalid FAT totals, failed writes, cancel and deadlines fail the operation.
 This handler is part of the prototype coordinator, not enabled in the MDM UI.
+
+### Terminal regression tests
+
+Host tests cover 0x0B with zero/one/multiple scratch chunks of terminal body,
+with and without preceding data, fragmented reads and stable retry arguments;
+every truncation before terminal completion; terminal size limits, cancellation
+and commit failure. A real local staged file and the UploadFiles/status/final
+result pipeline also exercise the after-data terminal. None is a physical iPad
+backup test. No restore or MDM-changing operation is introduced.

@@ -70,7 +70,7 @@ int main(){
         Wire w;Target t;
         if(kind==0)record(w.input,"../escape",payload);
         if(kind==1){name(w.input,"/opaque/device/name");number(w.input,4097);}
-        if(kind==2)record(w.input,"backup/a",payload,0x0b);
+        if(kind==2)record(w.input,"backup/a",payload,0x0d);
         if(kind==3){record(w.input,"backup/a",payload);t.fail_write=true;}
         if(kind==4){record(w.input,"backup/a",payload);t.fail_commit=true;}
         if(kind==5||kind==6||kind==7)record(w.input,"backup/a",payload);
@@ -90,5 +90,40 @@ int main(){
     std::cout<<"PASS: paths, bounded lengths, remote terminal, write/commit failure and byte limits\n";
     {Wire w;number(w.input,0);Target t;bb::UploadBatchReceiver r(scratch.data(),scratch.size());assert(r.start(t.io())==bb::Error::ok);assert(drive(r,w,t)==bb::Error::ok&&r.done()&&!t.begun);}
     {Wire w;record(w.input,"backup/a",payload);Target t;bb::UploadBatchReceiver r(scratch.data(),scratch.size());assert(r.start(t.io())==bb::Error::ok);while(!t.begun)assert(r.pump(w.io(),1)==bb::Error::would_block);r.cancel();r.cancel();assert(t.aborted==1&&!r.done());}
+    for(bool with_data:{false,true})for(unsigned body_size:{0u,1u,41u}){
+        std::vector<std::uint8_t> full;name(full,"/opaque/device/name");name(full,"backup/terminal");
+        if(with_data){number(full,4);full.push_back(0x0c);full.insert(full.end(),{1,2,3});}
+        number(full,body_size+1);full.push_back(0x0b);full.insert(full.end(),body_size,0x7f);
+        const auto terminal_end=full.size();number(full,0);full.push_back(0x99);
+        for(auto chunk:{1u,7u,4096u}){
+            Wire w;w.input=full;w.chunk=chunk;Target t;bb::UploadBatchReceiver r(scratch.data(),scratch.size());
+            assert(r.start(t.io())==bb::Error::ok);const auto e=drive(r,w,t);
+            if(with_data){assert(e==bb::Error::ok&&r.done()&&t.committed.size()==1&&t.committed[0]==std::vector<std::uint8_t>({1,2,3}));assert(w.offset+1==full.size());}
+            else {assert(e==bb::Error::invalid_frame&&t.aborted==1&&t.committed.empty()&&w.offset==terminal_end);}
+        }
+        // Every cut before the terminal body ends must abort, never publish.
+        for(std::size_t cut=0;cut<terminal_end;++cut){
+            Wire w;w.input.assign(full.begin(),full.begin()+cut);w.close=true;Target t;
+            bb::UploadBatchReceiver r(scratch.data(),scratch.size());assert(r.start(t.io())==bb::Error::ok);
+            assert(drive(r,w,t)==bb::Error::truncated&&t.committed.empty());
+            assert(t.begun==t.aborted);
+        }
+    }
+    for(unsigned mode=0;mode<3;++mode){
+        Wire w;name(w.input,"/opaque/device/name");name(w.input,"backup/a");
+        number(w.input,2);w.input.push_back(0x0c);w.input.push_back(42);
+        const auto terminal_start=w.input.size();number(w.input,42);w.input.push_back(0x0b);w.input.insert(w.input.end(),41,0);
+        number(w.input,0);Target t;bb::UploadLimits limits;
+        if(mode==0)limits.max_frame_payload=40;
+        if(mode==1)t.fail_commit=true;
+        bb::UploadBatchReceiver r(scratch.data(),scratch.size());assert(r.start(t.io(),limits)==bb::Error::ok);
+        if(mode==2){
+            while(w.offset<=terminal_start+5)assert(r.pump(w.io(),1)==bb::Error::would_block);
+            r.cancel();r.cancel();assert(t.aborted==1&&t.committed.empty());
+        }else {
+            assert(drive(r,w,t)==(mode==0?bb::Error::too_large:bb::Error::io_error));assert(t.committed.empty());
+        }
+    }
+    std::cout<<"PASS: 0x0b data terminal, first-frame error, body draining and all truncation positions\n";
     std::cout<<"PASS: empty batch and explicit cancellation\n";
 }

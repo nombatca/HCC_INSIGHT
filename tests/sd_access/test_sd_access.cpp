@@ -79,7 +79,9 @@ static void upload_request_flow(unsigned failure){
     RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
     wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
     wire.name("/device/source");wire.name("backup/test");wire.number(6);wire.input.push_back(0x0c);wire.bytes("hello");
-    wire.number(1);wire.input.push_back(failure==1?0x0b:0);wire.number(0);
+    if(!failure){wire.number(10);wire.input.push_back(0x0b);wire.bytes("end text!");}
+    else {wire.number(1);wire.input.push_back(failure==1?0x0d:0);}
+    wire.number(0);
     const auto raw_end=wire.input.size();wire.fixture("result_ok.xml");
     std::uint8_t control[8192],output[1024],scratch[3];hcc::plist::Node nodes[128];char text[8192];
     bb::BackupLink link({control,sizeof(control),output,sizeof(output),{nodes,128,text,sizeof(text)}});

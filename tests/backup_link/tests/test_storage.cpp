@@ -25,7 +25,7 @@ int main(){
     {
         bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);
         assert(target.open_session(temp)==bb::Error::busy);const fs::path root(target.session_path());
-        Wire w;w.file("backup/a","abcdef");w.file("backup/empty","");w.number(0);
+        Wire w;w.file("backup/a","abcdef",0x0b);w.file("backup/empty","");w.number(0);
         std::uint8_t scratch[2];bb::UploadBatchReceiver r(scratch,sizeof(scratch));
         assert(r.start(target.target())==bb::Error::ok&&drive(r,w)==bb::Error::ok&&r.done());
         assert(target.committed_files()==2&&!fs::exists(root/"000001.part"));
@@ -37,7 +37,7 @@ int main(){
     std::cout<<"PASS: real filesystem upload receiver, staged payload/identity publication and empty file\n";
     {
         bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);const fs::path root(target.session_path());
-        Wire w;w.file("backup/a","incomplete",0x0b);std::uint8_t scratch[4];bb::UploadBatchReceiver r(scratch,sizeof(scratch));
+        Wire w;w.file("backup/a","incomplete",0x0d);std::uint8_t scratch[4];bb::UploadBatchReceiver r(scratch,sizeof(scratch));
         assert(r.start(target.target())==bb::Error::ok&&drive(r,w)==bb::Error::invalid_frame);
         assert(fs::is_empty(root)&&!target.committed_files());
         auto cb=target.target();assert(cb.begin(cb.context,"source","../escape")==bb::Error::invalid_argument);
@@ -47,7 +47,7 @@ int main(){
         assert(cb.finish(cb.context,true)==bb::Error::io_error);
         assert(fs::is_directory(root/"000002.ready")&&!fs::exists(root/"000002.part"));
     }
-    std::cout<<"PASS: remote failure aborts staged data and commit collision preserves existing directory\n";
+    std::cout<<"PASS: unknown terminal aborts staged data and commit collision preserves existing directory\n";
     fs::path pending;
     {
         bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);pending=target.session_path();

@@ -43,8 +43,7 @@ Bấm ngắn MDM sau khi bài thử kết thúc để trở về trạng thái p
 nút FASTBOOT của Android không chạy bài thử SD; bấm ngắn vẫn dùng FASTBOOT.
 
 Kết quả host/CI không xác nhận SD thật. Cần PASS trên P4 trước khi tích hợp
-backup capture vào UI. Các filesystem control chưa hỗ trợ và raw 0x0B vẫn cần
-hoàn thiện; PASS SD không có nghĩa đã backup hoặc gỡ MDM.
+backup capture vào UI. Các filesystem control còn thiếu và raw 0x0B cần xác nhận thêm trên iPad; PASS SD không có nghĩa đã backup hoặc gỡ MDM.
 
 ## Kết quả thực tế đã nhận — 08/11/2026
 

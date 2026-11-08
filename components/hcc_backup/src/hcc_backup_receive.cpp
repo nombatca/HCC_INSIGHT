@@ -11,6 +11,11 @@ Error UploadBatchReceiver::start(UploadTarget target,UploadLimits limits){
        !limits.max_files||!limits.max_frame_payload||!limits.max_file_bytes||!limits.max_batch_bytes)return Error::invalid_argument;
     target_=target;limits_=limits;length(State::source_length);return Error::ok;
 }
+void UploadBatchReceiver::finish_file(){
+    opened_=false;const auto e=target_.finish(target_.context,true);
+    if(e!=Error::ok){fail(e==Error::would_block?Error::io_error:e);return;}
+    ++files_;length(State::source_length);
+}
 void UploadBatchReceiver::read_complete(){
     if(state_==State::source_length||state_==State::destination_length){
         const auto n=read_be32(header_);
@@ -26,7 +31,7 @@ void UploadBatchReceiver::read_complete(){
         if(!valid_relative_backup_path({destination_,destination_size_})){fail(Error::invalid_frame);return;}
         const auto e=target_.begin(target_.context,{source_,source_size_},{destination_,destination_size_});
         if(e!=Error::ok){fail(e==Error::would_block?Error::io_error:e);return;}
-        opened_=true;file_bytes_=0;length(State::frame_length);
+        opened_=true;had_data_=false;file_bytes_=0;length(State::frame_length);
     }else if(state_==State::frame_length){
         const auto n=read_be32(header_);
         if(!n){fail(Error::invalid_frame);return;}
@@ -35,13 +40,18 @@ void UploadBatchReceiver::read_complete(){
         state_=State::tag;need_=1;used_=0;
     }else if(state_==State::tag){
         if(tag_==0 && !frame_left_){
-            opened_=false;const auto e=target_.finish(target_.context,true);
-            if(e!=Error::ok){fail(e==Error::would_block?Error::io_error:e);return;}
-            ++files_;length(State::source_length);
+            finish_file();
         }else if(tag_==0x0c && frame_left_){
             if(frame_left_>limits_.max_file_bytes-file_bytes_||frame_left_>limits_.max_batch_bytes-total_){fail(Error::too_large);return;}
             state_=State::data;need_=std::min<std::size_t>(capacity_,frame_left_);used_=0;
+        }else if(tag_==0x0b){
+            if(!frame_left_){if(had_data_)finish_file();else fail(Error::invalid_frame);}
+            else {state_=State::terminal;need_=std::min<std::size_t>(capacity_,frame_left_);used_=0;}
         }else fail(Error::invalid_frame);
+    }else if(state_==State::terminal){
+        frame_left_-=static_cast<std::uint32_t>(need_);
+        if(!frame_left_){if(had_data_)finish_file();else fail(Error::invalid_frame);}
+        else {need_=std::min<std::size_t>(capacity_,frame_left_);used_=0;}
     }else if(state_==State::data){pending_=need_;written_=0;state_=State::flush;}
 }
 Error UploadBatchReceiver::pump(Duplex io,std::size_t budget){
@@ -58,7 +68,7 @@ Error UploadBatchReceiver::pump(Duplex io,std::size_t budget){
             if(r.state==IoState::closed)return fail(Error::closed);
             if(written_==pending_){
                 frame_left_-=static_cast<std::uint32_t>(pending_);file_bytes_+=pending_;total_+=pending_;
-                if(!frame_left_)length(State::frame_length);
+                if(!frame_left_){had_data_=true;length(State::frame_length);}
                 else {state_=State::data;need_=std::min<std::size_t>(capacity_,frame_left_);used_=0;}
             }
             if(r.state==IoState::would_block)return Error::would_block;
@@ -66,7 +76,7 @@ Error UploadBatchReceiver::pump(Duplex io,std::size_t budget){
         }else{
             auto* bytes=state_==State::source?reinterpret_cast<std::uint8_t*>(source_):
                         state_==State::destination?reinterpret_cast<std::uint8_t*>(destination_):
-                        state_==State::tag?&tag_:state_==State::data?scratch_:header_;
+                        state_==State::tag?&tag_:(state_==State::data||state_==State::terminal)?scratch_:header_;
             const auto remaining=need_-used_;
             const auto r=io.read(io.context,bytes+used_,remaining);
             if(r.bytes>remaining)return fail(Error::io_error);
