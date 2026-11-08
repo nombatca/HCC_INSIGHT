@@ -149,7 +149,12 @@ static void operation_flow(unsigned mode){
     std::size_t pause=0;
     if(mode==0||mode==3||mode==6||mode==8||mode==13||mode>=15){
         for(unsigned batch=0;batch<2;++batch){
-            if(mode>=15)wire.xml("<array><string>DLMessageGetFreeDiskSpace</string></array>");
+            if(mode>=15&&mode<21)wire.xml("<array><string>DLMessageGetFreeDiskSpace</string></array>");
+            if(mode>=21){
+                std::string path=mode==22?"bad.":mode==25?"../escape":"backup/nested";
+                if(mode==26)path=std::string(256,'a');
+                wire.xml("<array><string>DLMessageCreateDirectory</string><string>"+path+"</string></array>");
+            }
             wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
             wire.name("/device/source");wire.name("backup/test");wire.number(6);wire.input.push_back(0x0c);wire.bytes(batch?"world":"hello");
             if(batch==0)pause=wire.input.size();
@@ -185,8 +190,8 @@ static void operation_flow(unsigned mode){
                 if(mode==3&&operation.phase()==HCCBackupPhase::receiving&&wire.offset>=pause){operation.cancel();result=operation.error();break;}
                 if(mode>=16&&operation.phase()==HCCBackupPhase::replying){
                     assert(observer->phase()==bb::Phase::request_pending);
-                    if(mode==16)wire.close_write=true;
-                    if(mode==17){operation.cancel();result=operation.error();break;}
+                    if(mode==16||mode==23)wire.close_write=true;
+                    if(mode==17||mode==24){operation.cancel();result=operation.error();break;}
                 }
                 if((mode==18||mode==19||mode==20)&&operation.phase()==HCCBackupPhase::waiting){
                     if(mode==18)space_result=2;
@@ -198,16 +203,32 @@ static void operation_flow(unsigned mode){
                 const auto calls=wire.calls;result=operation.poll(wire.io(),clock++,2);assert(wire.calls-calls<=2);
                 if(result!=HCCBackupError::would_block)break;
             }
-            if(mode==0||mode==15||mode==19){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
+            if(mode==0||mode==15||mode==19||mode==21){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
             else if(mode==3){assert(result==HCCBackupError::cancelled&&operation.phase()==HCCBackupPhase::cancelled&&operation.committedFiles()==0);assert(fs::is_empty(operation.sessionPath()));}
             else if(mode==4||mode==12)assert(result==HCCBackupError::timeout);
             else if(mode==5)assert(result==HCCBackupError::clock);
             else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
             else if(mode==7)assert(result==HCCBackupError::unsupported);
             else if(mode==8)assert(result==HCCBackupError::remote&&operation.remoteCode()==5&&observer->outcome()==bb::Outcome::remote_error);
-            else if(mode==16)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
-            else if(mode==17)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
-            else if(mode==18||mode==20)assert(result==HCCBackupError::storage&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==16||mode==23||mode==25)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==17||mode==24)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==18||mode==20||mode==22)assert(result==HCCBackupError::storage&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==26)assert(result==HCCBackupError::quota);
+            if(mode==21){
+                assert(fs::is_directory(fs::path(operation.sessionPath())/"directories/backup/nested"));
+                std::size_t offset=before;unsigned replies=0;
+                while(offset<wire.output.size()){
+                    const auto n=bb::read_be32(wire.output.data()+offset);offset+=4;assert(offset+n<=wire.output.size());
+                    hcc::plist::Document d;hcc::plist::Node ns[128];char arena[8192];
+                    assert(hcc::plist::parse(wire.output.data()+offset,n,{ns,128,arena,sizeof(arena)},d)==hcc::plist::Error::ok);
+                    if(d.string(d.at(d.root,0))=="DLMessageStatusResponse"){
+                        assert(d.get(d.at(d.root,1))->integer==0);
+                        if(d.string(d.at(d.root,3))=="___EmptyParameterString___")++replies;
+                    }
+                    offset+=n;
+                }
+                assert(replies==2);
+            }
             if(mode==15||mode==19){
                 std::size_t offset=before;unsigned replies=0;
                 while(offset<wire.output.size()){
@@ -277,7 +298,7 @@ int main(){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
-    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20})operation_flow(mode);
+    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26})operation_flow(mode);
     std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
     {
         using R=HCCBackupSdSelfTest::Result;

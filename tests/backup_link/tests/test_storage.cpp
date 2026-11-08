@@ -57,6 +57,37 @@ int main(){
     {bb::StagedUploadTarget target;assert(target.open_session("/path/that/does/not/exist")==bb::Error::io_error);}
     fs::create_directory_symlink(parent,parent/"alias");
     {bb::StagedUploadTarget target;assert(target.open_session((parent/"alias").c_str())==bb::Error::io_error);}
+    {
+        bb::StagedUploadTarget target;assert(target.create_directory("a")==bb::Error::invalid_argument);
+        assert(target.open_session(temp)==bb::Error::ok);const fs::path root(target.session_path());
+        for(const auto* path:{"../escape","a/../b","/absolute","a//b","a/","a./b","a /b","a/*"}){
+            assert(target.create_directory(path)==bb::Error::invalid_argument);assert(fs::is_empty(root));
+        }
+        assert(target.create_directory(std::string(256,'x'))==bb::Error::too_large&&fs::is_empty(root));
+        assert(target.create_directory(std::string(255,'a')+"/"+std::string(255,'b'))==bb::Error::too_large&&fs::is_empty(root));
+        std::string deep="a";for(unsigned i=0;i<32;++i)deep+="/a";
+        assert(target.create_directory(deep)==bb::Error::too_large&&fs::is_empty(root));
+        assert(target.create_directory("backup/a/b")==bb::Error::ok);
+        assert(target.create_directory("backup\\a/b")==bb::Error::ok);
+        assert(fs::is_directory(root/"directories/backup/a/b"));
+        const auto cb=target.target();assert(cb.begin(cb.context,"source","backup/file")==bb::Error::ok);
+        assert(target.create_directory("busy")==bb::Error::busy);assert(cb.finish(cb.context,false)==bb::Error::ok);
+        std::ofstream(root/"directories/regular")<<"preserve";
+        assert(target.create_directory("regular/child")==bb::Error::io_error);
+        const auto preserved=read(root/"directories/regular");assert(std::string(preserved.begin(),preserved.end())=="preserve");
+        fs::create_directory_symlink(parent,root/"directories/link");
+        assert(target.create_directory("link/outside")==bb::Error::io_error&&!fs::exists(parent/"outside"));
+        // Quota includes namespace root and each newly created parent.
+        for(unsigned i=0;i<252;++i)assert(target.create_directory("dir"+std::to_string(i))==bb::Error::ok);
+        assert(target.create_directory("overflow")==bb::Error::too_large&&!fs::exists(root/"directories/overflow"));
+        assert(target.create_directory("backup/a/b")==bb::Error::ok);
+    }
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);const fs::path root(target.session_path());
+        fs::create_directory_symlink(parent,root/"directories");
+        assert(target.create_directory("outside")==bb::Error::io_error&&!fs::exists(parent/"outside"));
+    }
+    std::cout<<"PASS: confined directory namespace, validation before mutation, duplicates, busy, collisions, symlinks and quota\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

@@ -12,7 +12,7 @@ struct HCCBackupConfig {
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
 };
-// Bounded prototype driver for Backup + UploadFiles + GetFreeDiskSpace. Other filesystem
+// Bounded prototype driver for Backup, UploadFiles, GetFreeDiskSpace and CreateDirectory. Other filesystem
 // commands fail explicitly. NOT connected to the MDM button or a complete
 // Apple-restorable backup workflow. Allocate off the small USB task stack.
 // Caller owns transport scheduling, independent buffers, link lifetime, and

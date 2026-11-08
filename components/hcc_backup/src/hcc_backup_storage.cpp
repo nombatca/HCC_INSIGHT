@@ -43,6 +43,51 @@ Error StagedUploadTarget::open_session(const char* parent){
     }
     return Error::too_large;
 }
+Error StagedUploadTarget::create_directory(std::string_view relative){
+    if(active_)return Error::busy;
+    if(!root_[0]||!valid_relative_backup_path(relative))return Error::invalid_argument;
+    // Validate the WHOLE path before any mutation; normalize both separators.
+    std::size_t start=0,depth=0;
+    for(std::size_t i=0;i<=relative.size();++i){
+        if(i<relative.size()&&relative[i]!='/'&&relative[i]!='\\'){
+            const auto c=static_cast<unsigned char>(relative[i]);
+            if(c==127||c=='*'||c=='?'||c=='"'||c=='<'||c=='>'||c=='|')return Error::invalid_argument;
+            continue;
+        }
+        const auto part=relative.substr(start,i-start);
+        if(part.size()>255||++depth>32)return Error::too_large;
+        if(part.back()=='.'||part.back()==' ')return Error::invalid_argument;
+        start=i+1;
+    }
+    char path[512];
+    if(!child(path,sizeof(path),root_,"directories"))return Error::too_large;
+    const auto base=std::strlen(path);
+    if(relative.size()+base+1>=sizeof(path))return Error::too_large;
+    if(!directory(root_))return Error::io_error;
+    auto ensure=[&](){
+        if(directory(path))return Error::ok;
+        // Reject regular files, symlinks, and all lookup errors except absence.
+        struct stat existing{};
+#ifdef ESP_PLATFORM
+        const auto found=stat(path,&existing);
+#else
+        const auto found=lstat(path,&existing);
+#endif
+        if(found==0||errno!=ENOENT)return Error::io_error;
+        if(directories_>=256)return Error::too_large;
+        if(mkdir(path,0700)!=0)return Error::io_error;
+        ++directories_;return Error::ok;
+    };
+    auto result=ensure();if(result!=Error::ok)return result;
+    auto length=base;path[length++]='/';
+    for(std::size_t i=0;i<relative.size();++i){
+        path[length++]=(relative[i]=='\\')?'/':relative[i];
+        if(i+1==relative.size()||relative[i+1]=='/'||relative[i+1]=='\\'){
+            path[length]=0;result=ensure();if(result!=Error::ok)return result;
+        }
+    }
+    return Error::ok;
+}
 Error StagedUploadTarget::begin_callback(void* p,std::string_view s,std::string_view d){return static_cast<StagedUploadTarget*>(p)->begin(s,d);}
 IoResult StagedUploadTarget::write_callback(void* p,const std::uint8_t* bytes,std::size_t n){
     auto& self=*static_cast<StagedUploadTarget*>(p);

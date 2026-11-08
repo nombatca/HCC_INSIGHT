@@ -181,6 +181,25 @@ void free_space_request_lifecycle() {
     CHECK(s.complete_request(true)==bb::SessionError::ok&&s.phase()==bb::Phase::running);
     CHECK(s.outcome()==bb::Outcome::none);
 }
+void directory_request_lifecycle() {
+    Memory m;bb::SessionObserver s;bb::SessionEvent e;
+    CHECK(m.parse(fixture("version.xml"))==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::ok);
+    CHECK(s.acknowledge_version(true)==bb::SessionError::ok);
+    CHECK(m.parse(fixture("ready.xml"))==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::ok);
+    CHECK(m.xml("<array><string>DLMessageCreateDirectory</string><string>backup/a</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.mark_operation_started()==bb::SessionError::ok);
+    for(const auto* body:{"<array><string>DLMessageCreateDirectory</string></array>","<array><string>DLMessageCreateDirectory</string><integer>1</integer></array>"}){
+        CHECK(m.xml(body)==pp::Error::ok&&s.consume(m.doc,e)==bb::SessionError::malformed_message);
+    }
+    CHECK(m.xml("<array><string>DLMessageCreateDirectory</string><string>../escape</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::invalid_path&&s.phase()==bb::Phase::running);
+    CHECK(m.xml("<array><string>DLMessageCreateDirectory</string><string>backup/a</string></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok&&e.kind==bb::EventKind::create_directory);
+    CHECK(m.doc.string(e.payload)=="backup/a"&&s.pending_request()==bb::EventKind::create_directory);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.complete_request(true)==bb::SessionError::ok&&s.phase()==bb::Phase::running&&s.outcome()==bb::Outcome::none);
+}
 void framed_session_one_byte_at_a_time() {
     std::vector<std::uint8_t> wire;
     for(const auto name:{"version.xml","ready.bplist","hello.xml","download.bplist","result_ok.xml","disconnect.bplist"}) {
@@ -233,9 +252,10 @@ int main() {
         {"negotiation failure and disconnect is not success",state_machine_failures_and_disconnect},
         {"request types, relative paths and unsupported operations",request_validation_and_unsupported},
         {"free-space request requires running and explicit acknowledgement",free_space_request_lifecycle},
+        {"directory request validation and lifecycle",directory_request_lifecycle},
         {"framed mixed XML/binary session fragmented by byte",framed_session_one_byte_at_a_time},
         {"4000 deterministic binary-plist mutations",deterministic_mutation_corpus},
     };
     for(const auto& t:tests) { t.run(); std::cout<<"PASS: "<<t.name<<"\n"; }
-    std::cout<<"10 protocol test groups passed; no device connection performed.\n";
+    std::cout<<sizeof(tests)/sizeof(tests[0])<<" protocol test groups passed; no device connection performed.\n";
 }

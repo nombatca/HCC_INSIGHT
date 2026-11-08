@@ -68,6 +68,14 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         pending_=EventKind::download_files;
         phase_=Phase::request_pending; return SessionError::ok;
     }
+    if(tag=="DLMessageCreateDirectory") {
+        if(phase_!=Phase::running)return SessionError::wrong_state;
+        const auto path=d.at(d.root,1);const auto* node=d.get(path);
+        if(!node||node->kind!=plist::Kind::string)return SessionError::malformed_message;
+        if(!valid_relative_backup_path(d.string(path)))return SessionError::invalid_path;
+        out.kind=EventKind::create_directory;out.payload=path;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessageGetFreeDiskSpace") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         out.kind=EventKind::free_disk_space;pending_=out.kind;
@@ -107,7 +115,7 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         return SessionError::ok;
     }
     out.kind=EventKind::unsupported;
-    if(tag=="DLContentsOfDirectory"||tag=="DLMessageCreateDirectory"||
+    if(tag=="DLContentsOfDirectory"||
        tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
        tag=="DLMessageRemoveItems") return SessionError::unsupported_operation;
     return SessionError::unsupported_message;

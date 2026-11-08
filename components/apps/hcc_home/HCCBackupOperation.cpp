@@ -66,6 +66,14 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:
         e==bb::LinkError::too_large?HCCBackupError::quota:HCCBackupError::transfer);
     if(!available)return HCCBackupError::would_block;
+    if(event.kind==bb::EventKind::create_directory){
+        reply_.emplace(output_,output_capacity_);
+        // Validate response storage before mutating the capture namespace.
+        if(reply_->begin(0,nullptr,false)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        const auto result=capture_.createDirectory(doc.string(event.payload));
+        if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::free_disk_space){
         std::uint64_t total=0,available_bytes=0;
         if(esp_vfs_fat_info(BSP_SD_MOUNT_POINT,&total,&available_bytes)!=ESP_OK||available_bytes>total)

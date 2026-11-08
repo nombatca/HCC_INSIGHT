@@ -297,7 +297,7 @@ process/progress message is not completion. Local cancel does not send a remote
 cancel packet: caller must close/abandon that stream. Calls on this object and
 its transport remain serialized; there are no internal threads or task handoffs.
 
-The prototype handles Backup/UploadFiles and GetFreeDiskSpace. DownloadFiles and the other
+The prototype handles Backup/UploadFiles, GetFreeDiskSpace and CreateDirectory. DownloadFiles and the other
 filesystem requests are still unsupported. Raw 0x0B follows the reference
 context rule described above. Therefore
 it is NOT a complete device backup workflow and is not enabled by the MDM UI.
@@ -359,3 +359,34 @@ every truncation before terminal completion; terminal size limits, cancellation
 and commit failure. A real local staged file and the UploadFiles/status/final
 result pipeline also exercise the after-data terminal. None is a physical iPad
 backup test. No restore or MDM-changing operation is introduced.
+
+## CreateDirectory capture namespace
+
+The running operation accepts `DLMessageCreateDirectory` with a string path,
+validates it, creates parents under `<session>/directories/`, then sends status
+zero with the DeviceLink empty-parameter sentinel. It acknowledges the pending
+request only after the complete status frame is accepted. Query/type/path/storage
+errors and failed sends remain terminal for this prototype; no false success
+reply is sent. Response buffer capacity is checked before creating directories.
+
+This is a capture directory namespace, not a materialized Apple backup tree:
+uploaded payload/identity pairs remain in indexed `.ready` records. A future
+listing handler must combine that mapping with this namespace; listing is still
+unsupported. No Backup or directory operation is started from the MDM UI.
+
+Bounds: full local path at most 512 bytes including NUL, at most 32 relative
+components, each at most 255 bytes, and 256 newly created directories per session
+including the namespace root/parents. Both slash styles normalize to `/`. Reject
+absolute/traversal/empty components, control/FAT-reserved characters and trailing
+dots/spaces. Validate the entire path before mutation. Host traversal rejects
+symlinks at each component; ESP FAT has no symlinks. Trusted ancestors and
+exclusive mount/session ownership remain required (no concurrent mutation).
+Existing directories succeed; files/symlinks are never replaced. An error or
+cancel may retain created parents; mkdir is not a rollback transaction or a
+power-loss durability guarantee.
+
+Host tests cover malformed/state/path requests, nested/repeated creation, busy
+upload state, prevalidation limits, collisions/symlinks and directory quota; the
+production coordinator runs create/status/upload/final-result with real local
+files, fragmented I/O, failed send, cancellation and storage/path/quota failure.
+Physical iPad/SD behavior for this command remains untested.

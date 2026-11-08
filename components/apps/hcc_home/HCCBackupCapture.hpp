@@ -8,6 +8,7 @@ public:
     HCCBackupCapture():lease_(HCCSdAccess::gate,hcc::backup::SdOwner::capture) {}
     hcc::backup::Error open(std::uint64_t minimum_free_bytes=0);
     std::uint32_t committedFiles() const {return storage_.committed_files();}
+    hcc::backup::Error createDirectory(std::string_view path){return storage_.create_directory(path);}
     hcc::backup::UploadTarget target(){return storage_.target();}
     const char* sessionPath() const {return storage_.session_path();}
 private:
