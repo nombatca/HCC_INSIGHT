@@ -12,7 +12,7 @@ struct HCCUSBTransport::MdmProbeContext {
 bool HCCUSBTransport::requestMdmProbe()
 {
     MdmState expected = _mdm_state.load();
-    while (expected == MdmState::Idle || expected == MdmState::Failed) {
+    while (expected == MdmState::Idle || expected == MdmState::Failed || expected == MdmState::Disconnected) {
         if (_mdm_state.compare_exchange_weak(expected, MdmState::Armed)) return true;
     }
     return false;
@@ -21,7 +21,7 @@ bool HCCUSBTransport::requestMdmProbe()
 bool HCCUSBTransport::mdmPollingPending() const
 {
     const auto state = _mdm_state.load();
-    return state == MdmState::Opening || state == MdmState::Negotiating;
+    return state == MdmState::Opening || state == MdmState::Negotiating || state == MdmState::Ready;
 }
 
 const char *HCCUSBTransport::mdmStatusText() const
@@ -32,6 +32,7 @@ const char *HCCUSBTransport::mdmStatusText() const
     case MdmState::Opening: return "MDM: đang kết nối dịch vụ";
     case MdmState::Negotiating: return "MDM: đang thương lượng phiên bản";
     case MdmState::Ready: return "MDM: dịch vụ sẵn sàng - chưa gỡ MDM";
+    case MdmState::Disconnected: return "MDM: phiên dịch vụ đã đóng";
     case MdmState::Failed: return "MDM: kiểm tra thất bại - xem log USB";
     }
     return "MDM: chưa xác định";
@@ -120,6 +121,31 @@ hcc::backup::IoResult HCCUSBTransport::mdmWrite(void *context, const uint8_t *bu
 
 bool HCCUSBTransport::pollMdmProbe()
 {
+    if (_mdm_state.load() == MdmState::Ready) {
+        if (_mdm_probe == nullptr) return false;
+        hcc::plist::Document doc;
+        hcc::backup::SessionEvent event;
+        bool available = false;
+        const auto result = _mdm_probe->link.receive_event({this, mdmRead, mdmWrite}, mdmNowMs(), doc, event, available, 8);
+        if (result == hcc::backup::LinkError::closed) {
+            _mdm_state.store(MdmState::Disconnected);
+            printf("[HCC MDM] service closed; no operation result inferred\n");
+            return true;
+        }
+        if (result == hcc::backup::LinkError::would_block || result == hcc::backup::LinkError::yield) return true;
+        if (result != hcc::backup::LinkError::ok) {
+            printf("[HCC MDM] control receive failed: %s\n", hcc::backup::link_error_name(result));
+            _mdm_state.store(MdmState::Failed);
+            return false;
+        }
+        if (available) {
+            // Only log the type, never file contents or unsolicited identifiers.
+            printf("[HCC MDM] control message=%.*s; no operation request sent\n",
+                   static_cast<int>(event.message.size()), event.message.data());
+            if (event.kind == hcc::backup::EventKind::disconnect) _mdm_state.store(MdmState::Disconnected);
+        }
+        return true;
+    }
     if (_mdm_state.load() != MdmState::Negotiating) return true;
     if (_mdm_probe == nullptr) return false;
     const auto result = _mdm_probe->link.poll({this, mdmRead, mdmWrite}, mdmNowMs(), 8);

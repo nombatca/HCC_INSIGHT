@@ -131,7 +131,7 @@ LinkError BackupLink::start(std::uint64_t now,LinkConfig config) {
         return LinkError::invalid_argument;
     config_=config;decoder_=FrameDecoder(buffers_.receive,buffers_.receive_capacity);observer_.reset();
     phase_=LinkPhase::await_version;error_=LinkError::ok;tx_size_=tx_sent_=0;
-    last_now_=last_progress_=now;received_=sent_=0;protocol_version_=0;remote_code_=0;
+    last_now_=last_progress_=now;received_=sent_=0;event_partial_=false;protocol_version_=0;remote_code_=0;
     return LinkError::ok;
 }
 LinkError BackupLink::handle_frame() {
@@ -204,6 +204,38 @@ LinkError BackupLink::poll(Duplex io,std::uint64_t now,std::size_t budget) {
         if(writing&&tx_sent_==tx_size_) {const auto e=finish_write();if(e!=LinkError::ok)return e;}
         if(!writing&&decoder_.ready()) {const auto e=handle_frame();if(e!=LinkError::ok)return e;}
         if(phase_==LinkPhase::ready) return LinkError::ok;
+        if(r.state==IoState::would_block) return LinkError::would_block;
+        if(!r.bytes) return fail(LinkError::no_progress);
+    }
+    return LinkError::yield;
+}
+LinkError BackupLink::receive_event(Duplex io,std::uint64_t now,plist::Document& doc,
+    SessionEvent& event,bool& available,std::size_t budget) {
+    available=false;doc={};event={};
+    if(phase_==LinkPhase::failed) return error_;
+    if(phase_!=LinkPhase::ready) return LinkError::wrong_state;
+    if(!io.read || !budget) return LinkError::invalid_argument;
+    if(now<last_now_) return fail(LinkError::clock_error);
+    last_now_=now;
+    if(event_partial_ && now-last_progress_>=config_.inactivity_timeout_ms) return fail(LinkError::timeout);
+    for(std::size_t call=0;call<budget;++call) {
+        const auto request=std::min<std::size_t>(sizeof(io_buffer_),decoder_.bytes_needed());
+        if(!request) return fail(LinkError::wrong_state);
+        const auto r=io.read(io.context,io_buffer_,request);
+        if(r.bytes>request) return fail(LinkError::io_error);
+        if(r.bytes) {
+            received_+=r.bytes;last_progress_=now;event_partial_=true;
+            std::size_t used=0;const auto e=decoder_.feed(io_buffer_,r.bytes,used);
+            if(e!=Error::ok || used!=r.bytes) return fail(e==Error::too_large?LinkError::too_large:LinkError::malformed);
+        }
+        if(r.state==IoState::error) return fail(LinkError::io_error);
+        if(r.state==IoState::closed) return fail(decoder_.end_input()==Error::truncated?LinkError::truncated:LinkError::closed);
+        if(decoder_.ready()) {
+            const auto e=plist::parse(decoder_.data(),decoder_.size(),buffers_.plist,doc);
+            if(e!=plist::Error::ok) return fail(e==plist::Error::too_large||e==plist::Error::no_space?LinkError::too_large:LinkError::malformed);
+            if(observer_.consume(doc,event)!=SessionError::ok) {doc={};event={};return fail(LinkError::malformed);}
+            decoder_.next_frame();event_partial_=false;available=true;return LinkError::ok;
+        }
         if(r.state==IoState::would_block) return LinkError::would_block;
         if(!r.bytes) return fail(LinkError::no_progress);
     }

@@ -166,6 +166,30 @@ int main() {
         t.releaseMdmProbe(); t._service_tls = nullptr;
     }
     std::puts("PASS: send failure and TLS close never report success");
+    {
+        HCCUSBTransport t;prepare(t);plain_output.clear();auto bytes=handshake();
+        assert(t.appendMdmPlaintext(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<100&&t.mdmState()!=State::Ready;++i){++now_ms;t._tx_in_flight=false;assert(t.pollMdmProbe());}
+        assert(t.mdmState()==State::Ready&&t.mdmPollingPending());
+        const auto sent=plain_output.size();now_ms+=60000;
+        assert(t.pollMdmProbe()&&t.mdmState()==State::Ready);
+        bytes.clear();add_frame(bytes,"disconnect.xml");
+        for(auto byte:bytes){assert(t.appendMdmPlaintext(&byte,1));++now_ms;assert(t.pollMdmProbe());}
+        assert(t.mdmState()==State::Disconnected&&!t.mdmPollingPending());
+        assert(plain_output.size()==sent);assert(t.requestMdmProbe());t.releaseMdmProbe();
+    }
+    std::puts("PASS: P4 post-Hello idle, fragmented disconnect, no writes and rearming");
+    {
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
+        t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
+        for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        assert(t.mdmState()==State::Ready);
+        add_frame(tls.ssl.input,"disconnect.xml");
+        for(unsigned i=0;i<2000&&t.mdmState()==State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        assert(t.mdmState()==State::Disconnected);check_output(tls.ssl.output);
+        t.releaseMdmProbe();t._service_tls=nullptr;
+    }
+    std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
     assert(allocations == 0);
-    std::puts("5 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
+    std::puts("7 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
 }

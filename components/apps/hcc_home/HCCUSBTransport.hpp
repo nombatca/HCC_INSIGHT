@@ -108,7 +108,7 @@ public:
 
     // One-shot diagnostic mode for the NEXT USB connection. The current service
     // owns TCP #2 until unplug; never replace it underneath an in-flight TLS call.
-    enum class MdmState { Idle, Armed, Opening, Negotiating, Ready, Failed };
+    enum class MdmState { Idle, Armed, Opening, Negotiating, Ready, Disconnected, Failed };
     bool requestMdmProbe();
     MdmState mdmState() const { return _mdm_state.load(); }
     const char *mdmStatusText() const;

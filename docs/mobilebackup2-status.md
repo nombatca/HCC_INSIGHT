@@ -58,3 +58,23 @@ file/list, partial writes and TLS-style stable retries. They verify budgets,
 path rejection, source failure, closed transport and invalid callback results.
 This component is compiled into P4 but is not called by its negotiation probe.
 No device transfer or restore is claimed by these tests.
+
+## Post-Hello control monitoring on P4
+
+After negotiation the P4 probe now calls `BackupLink::receive_event` to keep
+reading control messages. Quiet idle does not expire; an incomplete frame that
+stops making progress expires after the configured inactivity timeout (5 s).
+The 30 s opening deadline only applies to Opening/Negotiating, not Ready.
+Receive polling is bounded, preserves TLS retry buffers, parses at most one
+frame per call and never writes responses or starts an operation.
+
+DeviceLink Disconnect or clean transport close changes the UI to “phiên dịch vụ
+đã đóng”; it does not mean success. Truncation, malformed input, unexpected
+operation requests, reset or I/O failures produce Failed. The user may arm a
+new probe after Disconnected and reconnect. Parsed document/event views are
+borrowed and expire on the next receive call.
+
+Host tests exercise fragmented disconnects, long idle, incomplete-frame timeout,
+transport close/truncation, unsolicited download requests before an operation,
+no output after Hello, and actual P4 glue with TLS WANT retry checks. The physical
+iPad has verified negotiation only; this new monitoring needs a hardware test.

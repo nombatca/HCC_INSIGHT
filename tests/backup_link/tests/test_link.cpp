@@ -213,8 +213,49 @@ void tls_retry_arguments_remain_stable() {
     }
     CHECK(link.phase()==bb::LinkPhase::ready);check_outbound(transport.wire);
 }
+void post_hello_events() {
+    Memory m;Wire w;input(w);bb::BackupLink link(m.buffers());
+    CHECK(link.start(0)==bb::LinkError::ok);CHECK(drive(link,w)==bb::LinkError::ok);
+    const auto sent=w.outgoing.size();
+    pp::Document doc;bb::SessionEvent ev;bool available=true;
+    // An idle connection is allowed to remain quiet beyond the handshake timeout.
+    CHECK(link.receive_event(w.io(),100000,doc,ev,available)==bb::LinkError::would_block&&!available);
+    frame(w.incoming,load("disconnect.xml"));w.chunk=1;
+    std::uint64_t now=100001;
+    while(!available) {
+        const auto before=w.calls;
+        const auto e=link.receive_event(w.io(),now++,doc,ev,available,2);
+        CHECK(e==bb::LinkError::ok||e==bb::LinkError::yield||e==bb::LinkError::would_block);
+        CHECK(w.calls-before<=2);
+    }
+    CHECK(ev.kind==bb::EventKind::disconnect);
+    CHECK(link.session_observer()->outcome()==bb::Outcome::none);
+    CHECK(w.outgoing.size()==sent);
+}
+void post_hello_partial_timeout() {
+    Memory m;Wire w;input(w);bb::BackupLink link(m.buffers());
+    CHECK(link.start(0)==bb::LinkError::ok);CHECK(drive(link,w)==bb::LinkError::ok);
+    w.incoming.push_back(0);pp::Document doc;bb::SessionEvent ev;bool available=false;
+    CHECK(link.receive_event(w.io(),100000,doc,ev,available)==bb::LinkError::would_block);
+    CHECK(link.receive_event(w.io(),104999,doc,ev,available)==bb::LinkError::would_block);
+    CHECK(link.receive_event(w.io(),105000,doc,ev,available)==bb::LinkError::timeout&&!available);
+}
+void post_hello_errors() {
+    for(unsigned kind=0;kind<3;++kind) {
+        Memory m;Wire w;input(w);bb::BackupLink link(m.buffers());
+        CHECK(link.start(0)==bb::LinkError::ok);CHECK(drive(link,w)==bb::LinkError::ok);
+        pp::Document doc;bb::SessionEvent ev;bool available=false;
+        if(kind==0) {w.close_on_empty=true;CHECK(link.receive_event(w.io(),100000,doc,ev,available)==bb::LinkError::closed);}
+        if(kind==1) {w.incoming.push_back(0);w.close_on_empty=true;CHECK(link.receive_event(w.io(),100000,doc,ev,available)==bb::LinkError::truncated);}
+        if(kind==2) {frame(w.incoming,load("download.bplist"));CHECK(link.receive_event(w.io(),100000,doc,ev,available)==bb::LinkError::malformed);}
+        CHECK(!available && link.phase()==bb::LinkPhase::failed);
+    }
+}
 int main() {
     const struct {const char* name;void(*run)();} tests[]={
+        {"post-Hello idle, fragmented disconnect and no writes",post_hello_events},
+        {"post-Hello partial frame timeout",post_hello_partial_timeout},
+        {"post-Hello close, truncation and unsolicited operation",post_hello_errors},
         {"binary control encoders and bounded output",encoders_bounds_and_semantics},
         {"fragmented handshake, budgets and no overread",fragmented_handshake_and_no_overread},
         {"inactivity timeout, progress and monotonic clock",clock_and_inactivity_timeouts},
@@ -225,5 +266,5 @@ int main() {
         {"TLS retries preserve original pointers and lengths",tls_retry_arguments_remain_stable},
     };
     for(const auto& t:tests){t.run();std::cout<<"PASS: "<<t.name<<"\n";}
-    std::cout<<"8 link test groups passed; transport is simulated.\n";
+    std::cout<<"11 link test groups passed; transport is simulated.\n";
 }

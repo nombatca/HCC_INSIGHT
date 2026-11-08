@@ -55,12 +55,18 @@ private:
 
 // Negotiates DeviceLink + mobilebackup2 application versions on an ALREADY
 // connected, paired, service-specific byte stream. Does not create USBMUX/TLS,
-// send restore requests or consume messages beyond the Hello response.
+// send restore requests. poll() stops at Hello; receive_event() is explicit.
 class BackupLink {
 public:
     explicit BackupLink(LinkBuffers buffers);
     LinkError start(std::uint64_t now_ms,LinkConfig config={});
     LinkError poll(Duplex,std::uint64_t now_ms,std::size_t max_io_calls=16);
+    // After Hello, receive at most one control event without writing. Returned
+    // document/event views remain valid only until the next receive call.
+    // Quiet idle has no deadline; an incomplete frame has the configured timeout.
+    LinkError receive_event(Duplex,std::uint64_t now_ms,plist::Document&,
+                            SessionEvent&,bool& available,std::size_t max_io_calls=8);
+    bool control_frame_pending() const { return event_partial_; }
     LinkPhase phase() const { return phase_; }
     LinkError error() const { return error_; }
     double protocol_version() const { return protocol_version_; }
@@ -85,6 +91,7 @@ private:
     std::size_t tx_size_=0,tx_sent_=0;
     std::uint8_t io_buffer_[256]{}; // Stable address across TLS WANT_READ/WRITE retries.
     std::uint64_t last_now_=0,last_progress_=0,received_=0,sent_=0;
+    bool event_partial_=false;
     double protocol_version_=0;
     std::int64_t remote_code_=0;
 };

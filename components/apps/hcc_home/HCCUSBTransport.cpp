@@ -1253,7 +1253,7 @@ bool HCCUSBTransport::submitPendingTcp()
     if (_stopping || _state == State::Failed || _tx_in_flight) {
         return true;
     }
-    if (_mdm_selected && mdmPollingPending() && _mdm_open_started_ms != 0 &&
+    if (_mdm_selected && (_mdm_state.load() == MdmState::Opening || _mdm_state.load() == MdmState::Negotiating) && _mdm_open_started_ms != 0 &&
         mdmNowMs() - _mdm_open_started_ms >= 30000) {
         _mdm_state.store(MdmState::Failed);
         printf("[HCC MDM] opening/negotiation deadline expired; reconnect to retry\n");
@@ -3710,7 +3710,10 @@ bool HCCUSBTransport::handleInboundServiceTcp(uint32_t seq, uint32_t ack,
                                               size_t payload_length)
 {
     if (_mdm_service_active && (flags & 0x05)) {
-        _mdm_state.store(MdmState::Failed);
+        const auto state = _mdm_state.load();
+        const bool truncated = _mdm_probe != nullptr && _mdm_probe->link.control_frame_pending();
+        _mdm_state.store(!(flags & 0x04) && !truncated && (state == MdmState::Ready || state == MdmState::Disconnected)
+                         ? MdmState::Disconnected : MdmState::Failed);
         _service_tcp.state = TcpState::Failed;
         printf("[HCC MDM] peer closed service TCP\n");
         return true;
