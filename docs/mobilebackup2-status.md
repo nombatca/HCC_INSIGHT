@@ -474,3 +474,30 @@ The supplied log ends with no Backup/Restore request sent; it does not establish
 that this capture action has run on P4. Synchronous FAT work is still on the USB
 owner task; physical bulk-transfer timing and unsupported control requests need
 the next hardware test. Never erase flash/NVS as part of this test.
+
+## DownloadFiles missing-file response correction
+
+A physical P4 log reached `DLMessageDownloadFiles` and sent TLS data, but did not
+show the next control request or an operation result. This narrows the observed
+stop to the download-response boundary; it does not prove a transport failure.
+Review against `mb2_handle_send_file`, `mb2_handle_send_files`,
+`mb2_multi_status_add_file_error` and `errno_to_device_error` in the primary
+libimobiledevice source found a concrete wire mismatch: the previous sender
+returned -13 with an empty dictionary and continued after absent files.
+
+The corrected sender stops at the first absent file after its length-prefixed
+path and raw 0x06 error frame, sends the zero DWORD batch terminator, then sends
+`[DLMessageStatusResponse, -13, Multi status, {path: {DLFileErrorString:
+No such file or directory, DLFileErrorCode: -6}}]`. All-success batches still
+send status zero. `completed_files()` counts attempted entries including the
+missing one; later source callbacks are never read after the first missing file.
+The full multi-status capacity/encoding is validated before emitting raw bytes.
+UTF-8 paths are encoded as ASCII or UTF-16 as appropriate.
+
+Tests check the raw frame sequence, exact path-keyed dictionary and signed codes,
+stopping before a later source, mixed success/absent batches, bounded output,
+long/Unicode paths, malformed input, partial writes and stable retries. Python
+plistlib independently decodes ASCII/Unicode multi-status fixtures. New device
+logs mark `DownloadFiles reply complete ... waiting for next control` and failure
+phase/reason. This fixes the identified mismatch; another iPad/P4 capture test
+is required to establish whether the device proceeds past this boundary.

@@ -190,6 +190,32 @@ struct ListBuilder {
     }
 };
 } // namespace
+LinkError encode_missing_file_response(std::string_view path,std::uint8_t* b,std::size_t n,std::size_t& written) {
+    written=0;
+    if(!b||!valid_relative_backup_path(path))return LinkError::invalid_argument;
+    std::uint32_t offsets[11]{};
+    ListBuilder w{b,n,0,offsets,11,1,true};
+    for(char c:std::string_view("bplist00"))w.u8(static_cast<std::uint8_t>(c));
+    w.mark(0);w.container(0xa0,4);w.ref(1);w.ref(2);w.ref(3);w.ref(4);
+    w.mark(1);w.ascii("DLMessageStatusResponse",23);
+    w.mark(2);w.u8(0x13);w.be(static_cast<std::uint64_t>(std::int64_t(-13)),8);
+    w.mark(3);w.ascii("Multi status",12);
+    w.mark(4);w.container(0xd0,1);w.ref(5);w.ref(6);
+    w.mark(5);if(!w.text(path.data(),path.size()))return LinkError::invalid_argument;
+    w.mark(6);w.container(0xd0,2);w.ref(7);w.ref(8);w.ref(9);w.ref(10);
+    w.mark(7);w.ascii("DLFileErrorString",17);
+    w.mark(8);w.ascii("DLFileErrorCode",15);
+    w.mark(9);w.ascii("No such file or directory",25);
+    w.mark(10);w.u8(0x13);w.be(static_cast<std::uint64_t>(std::int64_t(-6)),8);
+    if(!w.ok)return LinkError::too_large;
+    const auto table=w.pos;
+    const unsigned width=table<=0xff?1:table<=0xffff?2:4;
+    for(auto offset:offsets)w.be(offset,width);
+    for(unsigned i=0;i<6;++i)w.u8(0);
+    w.u8(width);w.u8(1);w.be(11,8);w.be(0,8);w.be(table,8);
+    if(!w.ok)return LinkError::too_large;
+    written=w.pos;return LinkError::ok;
+}
 LinkError encode_contents_of_directory_response(const DirectoryListing& list,
     std::uint32_t* offset_scratch,std::size_t offset_capacity,
     std::uint8_t* b,std::size_t n,std::size_t& written) {
@@ -247,6 +273,17 @@ LinkError encode_contents_of_directory_response(const DirectoryListing& list,
     w.be(object_count,8); w.be(idx_root,8); w.be(table,8);
     if(!w.ok) return LinkError::too_large;
     written=w.pos; return LinkError::ok;
+}
+Error StatusReplyWriter::begin_missing_file(std::string_view path) {
+    if(active_)return Error::busy;
+    done_=false;size_=sent_=0;error_=Error::ok;
+    if(!storage_||capacity_<4)return error_=Error::invalid_argument;
+    std::size_t body=0;
+    const auto result=encode_missing_file_response(path,storage_+4,capacity_-4,body);
+    if(result!=LinkError::ok)return error_=result==LinkError::too_large?Error::too_large:Error::invalid_argument;
+    if(body>UINT32_MAX)return error_=Error::too_large;
+    write_be32(storage_,static_cast<std::uint32_t>(body));size_=body+4;active_=true;
+    return Error::ok;
 }
 Error StatusReplyWriter::begin_free_space(std::uint64_t bytes) {
     if(active_)return Error::busy;

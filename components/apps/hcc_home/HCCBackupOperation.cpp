@@ -5,6 +5,9 @@
 #include <cstring>
 namespace bb=hcc::backup;
 HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
+#ifdef ESP_PLATFORM
+    printf("[HCC BACKUP] stop phase=%d reason=%d\n",static_cast<int>(phase_),static_cast<int>(e));
+#endif
     download_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
@@ -64,6 +67,9 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         const auto e=download_->pump({tracked.context,tracked.write},budget);
         if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
         if(download_->done()){
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] DownloadFiles reply complete attempted=%u; waiting for next control\n",static_cast<unsigned>(download_->completed_files()));
+#endif
             if(observer_->complete_request(true)!=bb::SessionError::ok)return fail(HCCBackupError::transfer);
             download_.reset();phase_=HCCBackupPhase::waiting;
         }

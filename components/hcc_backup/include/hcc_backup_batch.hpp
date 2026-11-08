@@ -4,7 +4,8 @@
 namespace hcc::backup {
 // One requested file. A null source.read marks the file as absent on the host:
 // the sender emits a per-file "error" frame instead of data, and the final status
-// becomes a DeviceLink multi-status. This is what a fresh backup returns for the
+// becomes a path-keyed DeviceLink multi-status. Stop at the first missing file,
+// matching the reference sender. This is what a fresh backup returns for the
 // Status/Manifest files an iPad asks to download before sending its data.
 struct DownloadFile { std::string_view path; Source source; };
 // Streams an explicitly supplied, validated file list. No filesystem access,
@@ -30,6 +31,7 @@ private:
     std::uint8_t* scratch_;
     const DownloadFile* files_=nullptr;std::size_t count_=0,index_=0,size_=0,sent_=0;
     bool any_error_=false;
+    std::string_view error_path_;
     BlobSender blob_;
     StatusReplyWriter status_;
     State state_=State::idle;Error error_=Error::ok;

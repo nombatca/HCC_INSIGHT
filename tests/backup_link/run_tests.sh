@@ -36,6 +36,13 @@ PY
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror ${HCC_TEST_FLAGS:-} \
     -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_batch.cpp -o build/hcc_batch_tests
 ./build/hcc_batch_tests
+python3 - <<'PYCODE'
+import plistlib
+for name, path in [('download_missing.bplist', 'Status.plist'), ('download_unicode.bplist', 'backup/Thiết bị 😀')]:
+    with open('build/' + name, 'rb') as stream:
+        assert plistlib.load(stream) == ['DLMessageStatusResponse', -13, 'Multi status', {path: {'DLFileErrorString': 'No such file or directory', 'DLFileErrorCode': -6}}]
+print('Independent plistlib DownloadFiles multi-status decoding PASS')
+PYCODE
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror ${HCC_TEST_FLAGS:-} \
     -I../../components/hcc_backup/include ../../components/hcc_backup/src/*.cpp tests/test_receive.cpp -o build/hcc_receive_tests
 ./build/hcc_receive_tests

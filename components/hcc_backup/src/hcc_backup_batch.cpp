@@ -13,6 +13,7 @@ void DownloadBatchSender::prepare_name() {
     std::memcpy(names_+4,path.data(),path.size());size_=path.size()+4;sent_=0;state_=State::name;
 }
 void DownloadBatchSender::prepare_error() {
+    error_path_=files_[index_].path;
     const std::size_t msg=sizeof(kAbsentMessage)-1;
     write_be32(names_,static_cast<std::uint32_t>(1+msg)); // length covers the code byte
     names_[4]=kCodeErrorLocal;
@@ -30,7 +31,15 @@ Error DownloadBatchSender::start(const DownloadFile* files,std::size_t count) {
         if(!valid_relative_backup_path(files[i].path)) return Error::invalid_argument;
         if(files[i].path.size()>name_capacity_-4) return Error::too_large;
     }
-    files_=files;count_=count;index_=0;error_=Error::ok;any_error_=false;
+    // Check the full multi-status reply before emitting any raw frame. The
+    // dictionary can be larger than the filename buffer even if the path fits.
+    for(std::size_t i=0;i<count;++i)if(!files[i].source.read){
+        std::size_t written=0;
+        const auto result=encode_missing_file_response(files[i].path,names_+4,name_capacity_-4,written);
+        if(result!=LinkError::ok)return result==LinkError::too_large?Error::too_large:Error::invalid_argument;
+        break; // the reference sender stops on the first file error
+    }
+    files_=files;count_=count;index_=0;error_=Error::ok;any_error_=false;error_path_={};
     if(count) prepare_name();
     else {write_be32(names_,0);size_=4;sent_=0;state_=State::terminator;}
     return Error::ok;
@@ -78,12 +87,11 @@ Error DownloadBatchSender::pump(Sink sink,std::size_t budget) {
                         any_error_=true;prepare_error(); // absent file -> error frame
                     }
                 } else if(state_==State::error_frame) {
-                    ++index_;
-                    if(index_<count_) prepare_name();
-                    else {write_be32(names_,0);size_=4;sent_=0;state_=State::terminator;}
+                    ++index_; // attempted files, including this absent file
+                    write_be32(names_,0);size_=4;sent_=0;state_=State::terminator;
                 } else {
                     // All-success -> status 0; any absent file -> DeviceLink multi-status.
-                    const auto e=any_error_?status_.begin(-13,"Multi status"):status_.begin(0);
+                    const auto e=any_error_?status_.begin_missing_file(error_path_):status_.begin(0);
                     if(e!=Error::ok) return fail(e);
                     state_=State::status;
                 }

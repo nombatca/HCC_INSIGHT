@@ -56,6 +56,9 @@ LinkError encode_contents_of_directory_response(const DirectoryListing& list,
     std::uint32_t* offset_scratch,std::size_t offset_capacity,
     std::uint8_t*,std::size_t,std::size_t& written);
 
+// DownloadFiles ENOENT: -13 Multi status with one path-keyed file-error dict.
+LinkError encode_missing_file_response(std::string_view path,std::uint8_t*,std::size_t,std::size_t& written);
+
 // Caller owns storage exclusively until done/error. Do not move this object or
 // modify storage while pending: TLS retries require stable address and length.
 class StatusReplyWriter {
@@ -65,6 +68,7 @@ public:
     StatusReplyWriter& operator=(const StatusReplyWriter&)=delete;
     Error begin(std::int64_t code,const char* message=nullptr,bool empty_dictionary=true);
     Error begin_free_space(std::uint64_t bytes);
+    Error begin_missing_file(std::string_view path);
     // Frames a DLContentsOfDirectory reply for `list`. `offset_scratch` must hold
     // at least contents_object_count(list.count) uint32 slots and remain unused by
     // the caller until done/error. Encoding failures keep the writer inactive.
