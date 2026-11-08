@@ -9,7 +9,7 @@ enum class Phase { await_version, version_decision, await_ready, ready,
 enum class Outcome { none, success, remote_error, local_error };
 enum class SessionError { ok, malformed_message, wrong_state, unsupported_message,
                           unsupported_operation, invalid_path, incompatible_version };
-enum class EventKind { version_offer, device_ready, download_files, process_message,
+enum class EventKind { version_offer, device_ready, download_files, upload_files, process_message,
                        result, disconnect, unsupported };
 struct SessionEvent {
     EventKind kind=EventKind::unsupported;
@@ -32,9 +32,11 @@ public:
     void reset() { *this=SessionObserver{}; }
     Phase phase() const { return phase_; }
     Outcome outcome() const { return outcome_; }
+    EventKind pending_request() const {return phase_==Phase::request_pending?pending_:EventKind::unsupported;}
 private:
     Phase phase_=Phase::await_version;
     Outcome outcome_=Outcome::none;
+    EventKind pending_=EventKind::unsupported;
 };
 const char* phase_name(Phase);
 const char* session_error_name(SessionError);

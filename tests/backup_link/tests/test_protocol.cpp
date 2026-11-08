@@ -157,6 +157,13 @@ void request_validation_and_unsupported() {
     CHECK(s.consume(m.doc,e)==bb::SessionError::unsupported_operation && s.phase()==bb::Phase::running);
     CHECK(m.xml("<array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><string>0</string></dict></array>")==pp::Error::ok);
     CHECK(s.consume(m.doc,e)==bb::SessionError::malformed_message && s.outcome()==bb::Outcome::none);
+    CHECK(m.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::malformed_message && s.phase()==bb::Phase::running);
+    CHECK(m.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>123</integer></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok && e.kind==bb::EventKind::upload_files);
+    CHECK(s.pending_request()==bb::EventKind::upload_files);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.complete_request(true)==bb::SessionError::ok && s.pending_request()==bb::EventKind::unsupported);
 }
 void framed_session_one_byte_at_a_time() {
     std::vector<std::uint8_t> wire;

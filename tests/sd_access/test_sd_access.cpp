@@ -1,4 +1,10 @@
 #include "HCCBackupCapture.hpp"
+#include "HCCBackupUploadRequest.hpp"
+#include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <vector>
 #include "HCCUsbDisk.hpp"
 #include <cassert>
 #include <atomic>
@@ -27,6 +33,89 @@ static void vTaskDelete(void*){}
 static bool launch(bool start){requested_start=start;return launch_ok;}
 #include "HCCUsbDiskRequests.inc"
 static void run(){worker(requested_start?reinterpret_cast<void*>(1):nullptr);}
+}
+struct RequestWire {
+    std::vector<std::uint8_t> input,output;std::size_t offset=0,calls=0;
+    const void* retry_read=nullptr;const void* retry_write=nullptr;std::size_t read_n=0,write_n=0;
+    bool close_write=false;
+    void number(std::uint32_t n){std::uint8_t b[4];bb::write_be32(b,n);input.insert(input.end(),b,b+4);}
+    void bytes(std::string_view s){input.insert(input.end(),s.begin(),s.end());}
+    void name(std::string_view s){number(s.size());bytes(s);}
+    void xml(std::string_view body){std::string s="<plist version=\"1.0\">";s+=body;s+="</plist>";number(s.size());bytes(s);}
+    void fixture(const char* name){std::ifstream f(std::string("../backup_link/tests/fixtures/")+name,std::ios::binary);assert(f);std::vector<std::uint8_t> b{std::istreambuf_iterator<char>(f),{}};number(b.size());input.insert(input.end(),b.begin(),b.end());}
+    static bb::IoResult read(void* ctx,std::uint8_t* out,std::size_t n){
+        auto& w=*static_cast<RequestWire*>(ctx);++w.calls;
+        if(!w.retry_read){w.retry_read=out;w.read_n=n;return {0,bb::IoState::would_block};}
+        assert(w.retry_read==out&&w.read_n==n);
+        const auto take=std::min({n,std::size_t(5),w.input.size()-w.offset});
+        if(!take)return {0,bb::IoState::would_block};
+        std::memcpy(out,w.input.data()+w.offset,take);w.offset+=take;w.retry_read=nullptr;return {take,bb::IoState::ok};
+    }
+    static bb::IoResult write(void* ctx,const std::uint8_t* data,std::size_t n){
+        auto& w=*static_cast<RequestWire*>(ctx);++w.calls;if(w.close_write)return {0,bb::IoState::closed};
+        if(!w.retry_write){w.retry_write=data;w.write_n=n;return {0,bb::IoState::would_block};}
+        assert(w.retry_write==data&&w.write_n==n);w.retry_write=nullptr;
+        const auto take=std::min(n,std::size_t(7));w.output.insert(w.output.end(),data,data+take);return {take,bb::IoState::ok};
+    }
+    bb::Duplex io(){return {this,read,write};}
+};
+static void upload_request_flow(unsigned failure){
+    RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
+    wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
+    wire.name("/device/source");wire.name("backup/test");wire.number(6);wire.input.push_back(0x0c);wire.bytes("hello");
+    wire.number(1);wire.input.push_back(failure==1?0x0b:0);wire.number(0);
+    const auto raw_end=wire.input.size();wire.fixture("result_ok.xml");
+    std::uint8_t control[8192],output[1024],scratch[3];hcc::plist::Node nodes[128];char text[8192];
+    bb::BackupLink link({control,sizeof(control),output,sizeof(output),{nodes,128,text,sizeof(text)}});
+    assert(link.start(0)==bb::LinkError::ok);std::uint64_t clock=0;
+    for(;clock<5000&&link.phase()!=bb::LinkPhase::ready;++clock){const auto e=link.poll(wire.io(),clock,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}
+    assert(link.phase()==bb::LinkPhase::ready);auto& observer=*link.session_observer();
+    {
+        HCCBackupUploadRequest invalid(observer,scratch,sizeof(scratch),output,sizeof(output));
+        assert(invalid.start()==bb::Error::invalid_argument);
+        assert(HCCSdAccess::gate.owner()==bb::SdOwner::free&&observer.phase()==bb::Phase::ready);
+    }
+    // Synthetic test operation: production caller must first send its real request.
+    assert(observer.mark_operation_started()==bb::SessionError::ok);
+    bool available=false;hcc::plist::Document doc;bb::SessionEvent event;
+    for(;clock<10000&&!available;++clock){const auto e=link.receive_event(wire.io(),clock,doc,event,available,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}
+    assert(available&&event.kind==bb::EventKind::upload_files);
+    HCCUsbDisk::s_state=HCCUsbDisk::State::Off;
+    const auto reply_start=wire.output.size();
+    if(failure==3){
+        {HCCBackupUploadRequest tiny(observer,scratch,sizeof(scratch),output,8);assert(tiny.start()==bb::Error::too_large);assert(tiny.phase()==bb::UploadRequestPhase::failed);}
+        assert(observer.outcome()==bb::Outcome::local_error&&wire.output.size()==reply_start&&HCCSdAccess::gate.owner()==bb::SdOwner::free);return;
+    }
+    if(failure==4){
+        {
+            HCCBackupUploadRequest cancelled(observer,scratch,sizeof(scratch),output,sizeof(output));assert(cancelled.start()==bb::Error::ok);
+            for(unsigned i=0;i<10000&&cancelled.phase()!=bb::UploadRequestPhase::reply;++i)assert(cancelled.pump(wire.io(),2)==bb::Error::would_block);
+            assert(cancelled.phase()==bb::UploadRequestPhase::reply&&observer.phase()==bb::Phase::request_pending);
+        }
+        assert(observer.outcome()==bb::Outcome::local_error&&wire.output.size()==reply_start&&HCCSdAccess::gate.owner()==bb::SdOwner::free);return;
+    }
+    {
+        HCCBackupUploadRequest request(observer,scratch,sizeof(scratch),output,sizeof(output));
+        assert(request.start()==bb::Error::ok);assert(!HCCUsbDisk::requestStart());
+        for(unsigned i=0;i<10000;++i){
+            if(failure==2&&request.phase()==bb::UploadRequestPhase::reply)wire.close_write=true;
+            const auto before=wire.calls;const auto e=request.pump(wire.io(),2);assert(wire.calls-before<=2);
+            if(e!=bb::Error::would_block){assert(e==(failure==1?bb::Error::invalid_frame:failure==2?bb::Error::closed:bb::Error::ok));break;}
+        }
+        if(failure){assert(request.phase()==bb::UploadRequestPhase::failed&&observer.outcome()==bb::Outcome::local_error);assert(wire.output.size()==reply_start);}
+        else {
+            assert(request.phase()==bb::UploadRequestPhase::complete&&observer.phase()==bb::Phase::running&&observer.outcome()==bb::Outcome::none);
+            assert(wire.offset==raw_end);
+            std::ifstream f(fs::path(request.sessionPath())/"000001.ready/payload.bin",std::ios::binary);assert(f);std::string body{std::istreambuf_iterator<char>(f),{}};assert(body=="hello");
+            assert(bb::read_be32(wire.output.data()+reply_start)==wire.output.size()-reply_start-4);
+            hcc::plist::Node reply_nodes[32];char reply_text[512];hcc::plist::Document reply;
+            assert(hcc::plist::parse(wire.output.data()+reply_start+4,wire.output.size()-reply_start-4,{reply_nodes,32,reply_text,512},reply)==hcc::plist::Error::ok);
+            assert(reply.string(reply.at(reply.root,0))=="DLMessageStatusResponse"&&reply.get(reply.at(reply.root,1))->integer==0);
+        }
+        assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
+    }
+    assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
+    if(!failure){available=false;for(;clock<15000&&!available;++clock){const auto e=link.receive_event(wire.io(),clock,doc,event,available,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}assert(available&&event.kind==bb::EventKind::result&&observer.outcome()==bb::Outcome::success);}
 }
 int main(){
     {
@@ -73,6 +162,8 @@ int main(){
         HCCUsbDisk::s_state=State::Error;assert(!HCCUsbDisk::requestStop());
     }
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
+    for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
+    std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
     fs::remove_all(temp);
     std::puts("PASS: startup rollback and capture mount failure release only safe ownership");
 }

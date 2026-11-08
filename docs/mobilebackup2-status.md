@@ -185,3 +185,46 @@ the production USB DISK request/worker code with SDK operations stubbed, startup
 rollback, task launch failures, failed remount retaining ownership, recovery,
 and capture mount failure. Host SDK stubs do not verify physical MSC teardown,
 BSP mount behavior, PHY routing or FAT durability. Hardware tests remain needed.
+
+## Accepted UploadFiles request driver
+
+`SessionObserver` now recognizes UploadFiles only after an operation has been
+explicitly marked running. A known request has at least four array elements;
+its optional size hint is not trusted as a quota. `pending_request()` distinguishes
+upload from download and prevents attaching the upload receiver to the wrong
+raw stream. The passive P4 probe still rejects unsolicited UploadFiles at Ready.
+
+`UploadRequestHandler` handles one accepted upload: prepare a bounded status
+buffer, receive raw records, finish target commits, transmit status, and only
+then complete the observer request. It never reads the next control frame while
+raw records/status are pending, and operation outcome remains none until a real
+final result is received. Core handler failures/cancellation mark transport
+failure; they do not continue from an unknown raw offset. Already committed
+files remain available even if status transmission fails.
+
+`HCCBackupUploadRequest` connects that handler to the actual mounted capture
+adapter and SD lease. Its handler is destroyed before its capture target/lease.
+Caller supplies independent scratch/output buffers and retains the negotiated
+link/observer until destruction. Destroy the wrapper after completion or failure
+to release SD. The handler processes only one request; an operation driver must
+create another for subsequent requests and enforce an operation deadline/cancel
+policy. Synchronous SD callbacks belong on a worker task.
+
+End-to-end host test uses the actual BackupLink, observer, P4 capture wrapper,
+filesystem target, raw receiver and status writer with BSP/TLS-style I/O stubs.
+It verifies handshake, explicit simulated operation state, UploadFiles control,
+real payload/metadata file creation, partial status reply, no overread into final
+control result, and final operation success only after that result. Negative
+cases cover attempts before operation start, unsupported terminal codes and
+status transport closure, undersized output storage and cancellation before
+status transmission, with no false local success.
+
+This does not send Backup/Restore and is not wired to start captures from the
+MDM button. Full operation initiation, other filesystem control requests, 0x0B
+semantics and physical iPad/SD testing are still outstanding.
+
+P4 integration must allocate the handler's bounded state (including two 4096-byte
+name buffers) off the small USB task stack, and schedule synchronous file I/O
+without concurrent access to the USB/TLS transport. The current wrapper does not
+create tasks or make HCCUSBTransport thread-safe; transport/task scheduling is
+part of the still-missing operation driver.

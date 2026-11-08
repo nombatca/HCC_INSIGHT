@@ -26,6 +26,7 @@ SessionError SessionObserver::mark_operation_started() {
 SessionError SessionObserver::complete_request(bool success) {
     if(phase_!=Phase::request_pending) return SessionError::wrong_state;
     phase_=success?Phase::running:Phase::failed;
+    pending_=EventKind::unsupported;
     if(!success) outcome_=Outcome::local_error;
     return SessionError::ok;
 }
@@ -64,7 +65,18 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
             if(!valid_relative_backup_path(d.string(id))) return SessionError::invalid_path;
         }
         out.kind=EventKind::download_files; out.payload=files;
+        pending_=EventKind::download_files;
         phase_=Phase::request_pending; return SessionError::ok;
+    }
+    if(tag=="DLMessageUploadFiles") {
+        if(phase_!=Phase::running) return SessionError::wrong_state;
+        // Known UploadFiles shape has four or more elements. The fourth value
+        // is an optional size hint in the reference implementation; bound/type
+        // validation of the actual raw transfer remains with the receiver.
+        if(root->count<4) return SessionError::malformed_message;
+        out.kind=EventKind::upload_files;out.payload=d.root;
+        pending_=EventKind::upload_files;phase_=Phase::request_pending;
+        return SessionError::ok;
     }
     if(tag=="DLMessageProcessMessage") {
         if(phase_==Phase::request_pending) return SessionError::wrong_state;
@@ -90,7 +102,7 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         return SessionError::ok;
     }
     out.kind=EventKind::unsupported;
-    if(tag=="DLMessageUploadFiles"||tag=="DLContentsOfDirectory"||tag=="DLMessageCreateDirectory"||
+    if(tag=="DLContentsOfDirectory"||tag=="DLMessageCreateDirectory"||
        tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
        tag=="DLMessageRemoveItems"||tag=="DLMessageGetFreeDiskSpace") return SessionError::unsupported_operation;
     return SessionError::unsupported_message;
