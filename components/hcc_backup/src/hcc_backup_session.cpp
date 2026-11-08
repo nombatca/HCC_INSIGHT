@@ -68,6 +68,11 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         pending_=EventKind::download_files;
         phase_=Phase::request_pending; return SessionError::ok;
     }
+    if(tag=="DLMessageGetFreeDiskSpace") {
+        if(phase_!=Phase::running) return SessionError::wrong_state;
+        out.kind=EventKind::free_disk_space;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessageUploadFiles") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         // Known UploadFiles shape has four or more elements. The fourth value
@@ -104,7 +109,7 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
     out.kind=EventKind::unsupported;
     if(tag=="DLContentsOfDirectory"||tag=="DLMessageCreateDirectory"||
        tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
-       tag=="DLMessageRemoveItems"||tag=="DLMessageGetFreeDiskSpace") return SessionError::unsupported_operation;
+       tag=="DLMessageRemoveItems") return SessionError::unsupported_operation;
     return SessionError::unsupported_message;
 }
 const char* phase_name(Phase p) {

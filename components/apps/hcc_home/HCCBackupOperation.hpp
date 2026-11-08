@@ -3,7 +3,7 @@
 #include "hcc_backup_start.hpp"
 #include "hcc_backup_upload_request.hpp"
 #include <optional>
-enum class HCCBackupPhase {idle,starting,waiting,receiving,succeeded,failed,cancelled};
+enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,succeeded,failed,cancelled};
 enum class HCCBackupError {ok,would_block,invalid_argument,busy,storage,quota,transfer,
                            timeout,clock,unsupported,remote,disconnected,cancelled};
 struct HCCBackupConfig {
@@ -12,7 +12,7 @@ struct HCCBackupConfig {
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
 };
-// Bounded prototype driver for Backup + UploadFiles only. Other filesystem
+// Bounded prototype driver for Backup + UploadFiles + GetFreeDiskSpace. Other filesystem
 // commands fail explicitly. NOT connected to the MDM button or a complete
 // Apple-restorable backup workflow. Allocate off the small USB task stack.
 // Caller owns transport scheduling, independent buffers, link lifetime, and
@@ -42,6 +42,7 @@ private:
     std::uint8_t* scratch_;std::size_t capacity_;std::uint8_t* output_;std::size_t output_capacity_;
     hcc::backup::SessionObserver* observer_=nullptr;
     HCCBackupCapture capture_; // Destroy handlers before target and SD lease.
+    std::optional<hcc::backup::StatusReplyWriter> reply_;
     std::optional<hcc::backup::BackupStartWriter> start_;
     std::optional<hcc::backup::UploadRequestHandler> upload_;
     HCCBackupConfig config_{};

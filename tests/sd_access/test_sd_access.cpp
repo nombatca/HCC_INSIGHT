@@ -145,8 +145,9 @@ static void upload_request_flow(unsigned failure){
 static void operation_flow(unsigned mode){
     RequestWire wire;wire.fixture("version.bplist");wire.fixture("ready.xml");wire.fixture("hello.bplist");
     std::size_t pause=0;
-    if(mode==0||mode==3||mode==6||mode==8||mode==13){
+    if(mode==0||mode==3||mode==6||mode==8||mode==13||mode>=15){
         for(unsigned batch=0;batch<2;++batch){
+            if(mode>=15)wire.xml("<array><string>DLMessageGetFreeDiskSpace</string></array>");
             wire.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array>");
             wire.name("/device/source");wire.name("backup/test");wire.number(6);wire.input.push_back(0x0c);wire.bytes(batch?"world":"hello");
             if(batch==0)pause=wire.input.size();
@@ -180,19 +181,46 @@ static void operation_flow(unsigned mode){
             std::uint64_t clock=10000;
             for(unsigned i=0;i<30000;++i){
                 if(mode==3&&operation.phase()==HCCBackupPhase::receiving&&wire.offset>=pause){operation.cancel();result=operation.error();break;}
+                if(mode>=16&&operation.phase()==HCCBackupPhase::replying){
+                    assert(observer->phase()==bb::Phase::request_pending);
+                    if(mode==16)wire.close_write=true;
+                    if(mode==17){operation.cancel();result=operation.error();break;}
+                }
+                if((mode==18||mode==19||mode==20)&&operation.phase()==HCCBackupPhase::waiting){
+                    if(mode==18)space_result=2;
+                    if(mode==19)space_available=0;
+                    if(mode==20)space_available=1073741825;
+                }
                 if(mode==4&&operation.phase()==HCCBackupPhase::waiting)clock+=config.idle_timeout_ms;
                 if(mode==5)clock=9999;
                 const auto calls=wire.calls;result=operation.poll(wire.io(),clock++,2);assert(wire.calls-calls<=2);
                 if(result!=HCCBackupError::would_block)break;
             }
-            if(mode==0){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
+            if(mode==0||mode==15||mode==19){assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==2&&observer->outcome()==bb::Outcome::success);}
             else if(mode==3){assert(result==HCCBackupError::cancelled&&operation.phase()==HCCBackupPhase::cancelled&&operation.committedFiles()==0);assert(fs::is_empty(operation.sessionPath()));}
             else if(mode==4||mode==12)assert(result==HCCBackupError::timeout);
             else if(mode==5)assert(result==HCCBackupError::clock);
             else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
             else if(mode==7)assert(result==HCCBackupError::unsupported);
             else if(mode==8)assert(result==HCCBackupError::remote&&operation.remoteCode()==5&&observer->outcome()==bb::Outcome::remote_error);
-            else if(mode==9)assert(result==HCCBackupError::disconnected);
+            else if(mode==16)assert(result==HCCBackupError::transfer&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==17)assert(result==HCCBackupError::cancelled&&observer->outcome()==bb::Outcome::local_error);
+            else if(mode==18||mode==20)assert(result==HCCBackupError::storage&&observer->outcome()==bb::Outcome::local_error);
+            if(mode==15||mode==19){
+                std::size_t offset=before;unsigned replies=0;
+                while(offset<wire.output.size()){
+                    auto n=bb::read_be32(wire.output.data()+offset);offset+=4;assert(offset+n<=wire.output.size());
+                    hcc::plist::Document d;hcc::plist::Node ns[128];char arena[8192];
+                    assert(hcc::plist::parse(wire.output.data()+offset,n,{ns,128,arena,sizeof(arena)},d)==hcc::plist::Error::ok);
+                    const auto* value=d.get(d.at(d.root,3));
+                    if(value&&value->kind==hcc::plist::Kind::integer){
+                        assert(value->integer==static_cast<std::int64_t>(mode==19?0:config.limits.max_batch_bytes-(replies?5:0)));++replies;
+                    }
+                    offset+=n;
+                }
+                assert(replies==2);
+            }
+            if(mode==9)assert(result==HCCBackupError::disconnected);
             assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
         }
     }
@@ -247,7 +275,7 @@ int main(){
     assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
     for(unsigned failure=0;failure<5;++failure)upload_request_flow(failure);
     std::puts("PASS: UploadFiles control -> real capture -> status -> final result, with terminal/TX failure paths");
-    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14})operation_flow(mode);
+    for(unsigned mode:{0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20})operation_flow(mode);
     std::puts("PASS: operation preflight, multi-batch SD ownership, cumulative quotas, result, cancellation and deadlines");
     {
         using R=HCCBackupSdSelfTest::Result;

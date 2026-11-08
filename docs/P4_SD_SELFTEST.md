@@ -45,3 +45,15 @@ nút FASTBOOT của Android không chạy bài thử SD; bấm ngắn vẫn dùn
 Kết quả host/CI không xác nhận SD thật. Cần PASS trên P4 trước khi tích hợp
 backup capture vào UI. Các filesystem control chưa hỗ trợ và raw 0x0B vẫn cần
 hoàn thiện; PASS SD không có nghĩa đã backup hoặc gỡ MDM.
+
+## Kết quả thực tế đã nhận — 08/11/2026
+
+Người dùng đã chạy PASS ba lần trên P4, session `rx_000002`, `rx_000003`,
+`rx_000004`: mỗi lần `bytes=64 commit=1 abort=1`. Đây là xác nhận bài thử
+SD nhỏ trên phần cứng; chưa xác nhận truyền backup lớn hoặc raw 0x0B.
+
+Bộ điều phối prototype hiện xử lý thêm `DLMessageGetFreeDiskSpace`. Phản hồi
+là ngân sách nhận hiệu dụng: nhỏ hơn giữa dung lượng FAT còn trống và quota
+payload còn lại. Metadata cũng dùng SD nên con số này không bảo đảm toàn bộ
+quota sẽ ghi được; lỗi ghi vẫn phải dừng. Chỉ trả trạng thái request về running
+sau khi phản hồi được gửi đủ. Tính năng này chưa nối vào nút MDM.

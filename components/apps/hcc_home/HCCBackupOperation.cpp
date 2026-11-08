@@ -1,11 +1,14 @@
 #include "HCCBackupOperation.hpp"
+#include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
+#include "esp_vfs_fat.h"
+#include <algorithm>
 namespace bb=hcc::backup;
 HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
-    upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
+    reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -40,6 +43,15 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(start_->phase()==bb::BackupStartPhase::sent)phase_=HCCBackupPhase::waiting;
         return HCCBackupError::would_block;
     }
+    if(phase_==HCCBackupPhase::replying){
+        const auto result=reply_->pump({tracked.context,tracked.write});
+        if(result!=bb::Error::ok&&result!=bb::Error::would_block)return fail(HCCBackupError::transfer);
+        if(reply_->done()){
+            if(observer_->complete_request(true)!=bb::SessionError::ok)return fail(HCCBackupError::transfer);
+            reply_.reset();phase_=HCCBackupPhase::waiting;
+        }
+        return HCCBackupError::would_block;
+    }
     if(phase_==HCCBackupPhase::receiving){
         const auto e=upload_->pump(tracked,budget);
         if(e==bb::Error::would_block)return HCCBackupError::would_block;
@@ -54,6 +66,16 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:
         e==bb::LinkError::too_large?HCCBackupError::quota:HCCBackupError::transfer);
     if(!available)return HCCBackupError::would_block;
+    if(event.kind==bb::EventKind::free_disk_space){
+        std::uint64_t total=0,available_bytes=0;
+        if(esp_vfs_fat_info(BSP_SD_MOUNT_POINT,&total,&available_bytes)!=ESP_OK||available_bytes>total)
+            return fail(HCCBackupError::storage);
+        // Advertise the effective capture budget, capped by the remaining quota.
+        const auto remaining=config_.limits.max_batch_bytes-bytes_;
+        reply_.emplace(output_,output_capacity_);
+        if(reply_->begin_free_space(std::min(available_bytes,remaining))!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::upload_files){
         if(files_>=config_.limits.max_files||bytes_>=config_.limits.max_batch_bytes)return fail(HCCBackupError::quota);
         auto limits=config_.limits;limits.max_files-=files_;limits.max_batch_bytes-=bytes_;

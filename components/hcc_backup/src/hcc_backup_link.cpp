@@ -120,6 +120,27 @@ LinkError encode_status_response(std::int64_t code,const char* message,bool dict
     w.object();if(dict) w.put(0xd0);else w.string("___EmptyParameterString___");
     return w.finish(written);
 }
+LinkError encode_free_space_response(std::uint64_t bytes,std::uint8_t* b,std::size_t n,std::size_t& written) {
+    written=0;if(!b||bytes>INT64_MAX)return LinkError::invalid_argument;
+    BinaryWriter w(b,n);
+    w.object();w.put(0xa4);w.put(1);w.put(2);w.put(3);w.put(4);
+    w.object();w.string("DLMessageStatusResponse");
+    w.object();w.integer(0);
+    w.object();w.string("___EmptyParameterString___");
+    w.object();w.integer(bytes);
+    return w.finish(written);
+}
+Error StatusReplyWriter::begin_free_space(std::uint64_t bytes) {
+    if(active_)return Error::busy;
+    done_=false;size_=sent_=0;error_=Error::ok;
+    if(!storage_||capacity_<4)return error_=Error::invalid_argument;
+    std::size_t body=0;
+    const auto e=encode_free_space_response(bytes,storage_+4,capacity_-4,body);
+    if(e!=LinkError::ok)return error_=e==LinkError::too_large?Error::too_large:Error::invalid_argument;
+    if(body>UINT32_MAX)return error_=Error::too_large;
+    write_be32(storage_,static_cast<std::uint32_t>(body));size_=body+4;active_=true;
+    return Error::ok;
+}
 Error StatusReplyWriter::begin(std::int64_t code,const char* message,bool dict) {
     if(active_) return Error::busy;
     done_=false;size_=sent_=0;error_=Error::ok;

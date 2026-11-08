@@ -43,7 +43,21 @@ int main() {
             if(code==-1&&dict) {std::ofstream f("build/status.bplist",std::ios::binary);f.write(reinterpret_cast<const char*>(wire.bytes.data()+4),wire.bytes.size()-4);}
         }
     }
+    for(auto bytes:{std::uint64_t(0),std::uint64_t(255),std::uint64_t(65536),std::uint64_t(1)<<40,std::uint64_t(INT64_MAX)}) {
+        bb::StatusReplyWriter free_writer(output.data(),output.size());Wire wire;
+        assert(free_writer.begin_free_space(bytes)==bb::Error::ok);
+        assert(free_writer.begin_free_space(0)==bb::Error::busy);
+        for(unsigned i=0;!free_writer.done()&&i<1000;++i)free_writer.pump({&wire,Wire::write});
+        assert(free_writer.done());pp::Document doc;
+        assert(pp::parse(wire.bytes.data()+4,wire.bytes.size()-4,{nodes.data(),nodes.size(),text.data(),text.size()},doc)==pp::Error::ok);
+        assert(doc.get(doc.at(doc.root,1))->integer==0);
+        assert(doc.get(doc.at(doc.root,3))->kind==pp::Kind::integer);
+        assert(doc.get(doc.at(doc.root,3))->integer==static_cast<std::int64_t>(bytes));
+        if(bytes==(std::uint64_t(1)<<40)){std::ofstream f("build/free_space.bplist",std::ios::binary);f.write(reinterpret_cast<const char*>(wire.bytes.data()+4),wire.bytes.size()-4);}
+    }
     std::size_t n=99;
+    assert(bb::encode_free_space_response(UINT64_MAX,output.data(),output.size(),n)==bb::LinkError::invalid_argument&&n==0);
+    assert(bb::encode_free_space_response(1,output.data(),8,n)==bb::LinkError::too_large&&n==0);
     assert(bb::encode_status_response(0,"\xc3\xa0",true,output.data(),output.size(),n)==bb::LinkError::invalid_argument && n==0);
     assert(bb::encode_status_response(0,"failure",true,output.data(),8,n)==bb::LinkError::too_large && n==0);
     bb::StatusReplyWriter writer(output.data(),output.size());

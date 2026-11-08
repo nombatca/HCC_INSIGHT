@@ -293,7 +293,7 @@ process/progress message is not completion. Local cancel does not send a remote
 cancel packet: caller must close/abandon that stream. Calls on this object and
 its transport remain serialized; there are no internal threads or task handoffs.
 
-The prototype handles Backup/UploadFiles only. DownloadFiles and the other
+The prototype handles Backup/UploadFiles and GetFreeDiskSpace. DownloadFiles and the other
 filesystem requests are still unsupported, as is raw terminal 0x0B. Therefore
 it is NOT a complete device backup workflow and is not enabled by the MDM UI.
 Keep this context and its large handler outside the small USB task stack and
@@ -305,7 +305,7 @@ space/query error/USB owner/invalid ID with no writes; cumulative byte/file quot
 cancel during a staged file; idle/total deadlines; clock reversal; unsupported
 control, remote failure and disconnect. BSP, free-space information and device
 I/O are simulated, while actual production coordinator and file storage run.
-Physical iPad/SD behavior and a complete Apple-restorable output remain untested.
+Physical bulk iPad-to-SD behavior and a complete Apple-restorable output remain untested.
 
 ## Physical SD readiness test
 
@@ -324,11 +324,24 @@ USB DISK and is released before publishing the final result. Duplicate requests
 are rejected; startup, SD busy and low-space failures report explicit states.
 
 Host tests execute the production worker with a task-launch stub and real local
-files. GUI gesture, physical task stack, FAT sync/rename and hardware mount must
-be verified on P4. See P4_SD_SELFTEST.md for the actual hardware test procedure.
+files. The user subsequently reported three physical P4 passes on 2026-11-08
+(`rx_000002` through `rx_000004`, 64 bytes, commit=1, abort=1). This verifies
+the small SD test, not bulk device backup. See P4_SD_SELFTEST.md for the actual hardware test procedure.
 
 Capture refuses to mount an unmounted card when BSP auto-format-on-mount-failure
 is enabled. An already mounted card may still be used. A dedicated host build
 with that flag enabled asserts the mount function is never called and the SD
 lease is released on rejection. This guard applies to capture/self-test calls,
 not legacy code elsewhere that invokes the BSP mount API directly.
+
+## GetFreeDiskSpace control response
+
+The running operation accepts `DLMessageGetFreeDiskSpace`, queries FAT while
+holding its SD lease, and sends a binary plist status with an integer fourth
+item. The advertised capacity is the minimum of physical free space and the
+remaining cumulative payload quota. It is a snapshot and excludes future
+metadata overhead; storage write errors remain terminal. Zero is valid.
+The observer remains request-pending through partial/TLS retry writes and only
+returns to running after the whole status frame is accepted. Query failure,
+invalid FAT totals, failed writes, cancel and deadlines fail the operation.
+This handler is part of the prototype coordinator, not enabled in the MDM UI.

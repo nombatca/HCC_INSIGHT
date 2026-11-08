@@ -40,6 +40,9 @@ LinkError encode_backup_request(std::string_view udid,bool force_full,
 LinkError encode_status_response(std::int64_t code,const char* message,
     bool empty_dictionary,std::uint8_t*,std::size_t,std::size_t& written);
 
+// Success status with a nonnegative integer capacity (bounded to INT64_MAX).
+LinkError encode_free_space_response(std::uint64_t bytes,std::uint8_t*,std::size_t,std::size_t& written);
+
 // Caller owns storage exclusively until done/error. Do not move this object or
 // modify storage while pending: TLS retries require stable address and length.
 class StatusReplyWriter {
@@ -48,6 +51,7 @@ public:
     StatusReplyWriter(const StatusReplyWriter&)=delete;
     StatusReplyWriter& operator=(const StatusReplyWriter&)=delete;
     Error begin(std::int64_t code,const char* message=nullptr,bool empty_dictionary=true);
+    Error begin_free_space(std::uint64_t bytes);
     Error pump(Sink);
     bool done() const { return done_; }
 private:
