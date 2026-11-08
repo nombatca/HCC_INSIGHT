@@ -23,6 +23,7 @@ struct HCCBackupContentsBuffers {
     std::size_t entry_capacity=0;
     std::uint32_t* offsets=nullptr;
     std::size_t offset_capacity=0;
+    hcc::backup::ListingScratch* scratch=nullptr; // path working buffers, kept off-stack
 };
 // Bounded prototype driver for Backup, UploadFiles, GetFreeDiskSpace, CreateDirectory and
 // DLContentsOfDirectory. Other filesystem commands fail explicitly. NOT connected

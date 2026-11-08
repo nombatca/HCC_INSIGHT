@@ -36,6 +36,18 @@ struct DirectoryListing {
     std::size_t count;
 };
 
+// Caller-owned working buffers for list_directory, kept off the caller's stack
+// (the USB task has only a few KiB of headroom). One instance may be reused
+// across calls. Sized for the 4096-byte relative-path limit plus the session
+// root prefix and a 255-byte component.
+struct ListingScratch {
+    char prefix[4096];   // normalized requested path
+    char path[4096];     // a record's destination, normalized in place
+    char nsdir[4400];    // <root>/directories/<prefix>
+    char sub[4700];      // a namespace child's full path
+    char record[320];    // <root>/NNNNNN.ready
+};
+
 // Number of binary-plist objects the encoder emits for `entries` children:
 // the status array, its three leading items, the directory dict, three shared
 // key strings, two shared file-type strings, then four objects per entry

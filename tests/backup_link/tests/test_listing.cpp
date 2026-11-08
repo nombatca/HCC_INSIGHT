@@ -41,6 +41,7 @@ int main(){
     char tmpl[]="/tmp/hcc-listing-XXXXXX"; assert(mkdtemp(tmpl));
     const fs::path parent(tmpl);
     bb::DirectoryEntry storage[64]; bb::DirectoryListing list{storage,64,0};
+    static bb::ListingScratch scratch;
 
     // Reconstructed tree combining nested file destinations and a created directory.
     {
@@ -50,7 +51,7 @@ int main(){
         upload(t,"backup/Snapshot/data.bin","abc");           // implies Snapshot/ dir
         assert(t.create_directory("backup/emptydir")==bb::Error::ok);
 
-        assert(t.list_directory("backup",list)==bb::Error::ok&&list.count==4);
+        assert(t.list_directory("backup",list,scratch)==bb::Error::ok&&list.count==4);
         const auto* info=find(list,"Info.plist"); assert(info&&info->type==bb::EntryType::regular&&info->size==10);
         const auto* man=find(list,"Manifest.db"); assert(man&&man->type==bb::EntryType::regular&&man->size==0);
         const auto* snap=find(list,"Snapshot"); assert(snap&&snap->type==bb::EntryType::directory&&snap->size==0);
@@ -58,22 +59,22 @@ int main(){
         assert(!find(list,"payload.bin")&&!find(list,"identity.bin")); // internal names never leak
 
         // Nested directory lists only its own file.
-        assert(t.list_directory("backup/Snapshot",list)==bb::Error::ok&&list.count==1);
+        assert(t.list_directory("backup/Snapshot",list,scratch)==bb::Error::ok&&list.count==1);
         assert(find(list,"data.bin")&&find(list,"data.bin")->type==bb::EntryType::regular&&find(list,"data.bin")->size==3);
 
         // Root collapses every source into the single top directory.
-        assert(t.list_directory("",list)==bb::Error::ok&&list.count==1);
+        assert(t.list_directory("",list,scratch)==bb::Error::ok&&list.count==1);
         assert(find(list,"backup")&&find(list,"backup")->type==bb::EntryType::directory);
 
         // A directory with no children is a valid empty listing, not an error.
-        assert(t.list_directory("backup/does/not/exist",list)==bb::Error::ok&&list.count==0);
+        assert(t.list_directory("backup/does/not/exist",list,scratch)==bb::Error::ok&&list.count==0);
 
         // Traversal is rejected outright.
-        assert(t.list_directory("../escape",list)==bb::Error::invalid_argument);
+        assert(t.list_directory("../escape",list,scratch)==bb::Error::invalid_argument);
 
         // Overflow fails loudly rather than truncating.
         bb::DirectoryEntry tiny_store[2]; bb::DirectoryListing tiny{tiny_store,2,0};
-        assert(t.list_directory("backup",tiny)==bb::Error::too_large);
+        assert(t.list_directory("backup",tiny,scratch)==bb::Error::too_large);
     }
     std::cout<<"PASS: reconstructed listing, nested/root/empty, traversal and overflow\n";
 
@@ -82,7 +83,7 @@ int main(){
         bb::StagedUploadTarget t; assert(t.open_session(tmpl)==bb::Error::ok);
         upload(t,"set/alpha.txt","hello");
         assert(t.create_directory("set/beta")==bb::Error::ok);
-        assert(t.list_directory("set",list)==bb::Error::ok&&list.count==2);
+        assert(t.list_directory("set",list,scratch)==bb::Error::ok&&list.count==2);
 
         std::uint32_t offsets[bb::contents_object_count(64)];
         std::vector<std::uint8_t> out(4096); std::size_t written=0;
@@ -114,7 +115,7 @@ int main(){
         bb::StagedUploadTarget t; assert(t.open_session(tmpl)==bb::Error::ok);
         upload(t,"dir/x","leaf");         // x is a file
         upload(t,"dir/x/y","nested");     // ... and also a directory prefix
-        assert(t.list_directory("dir",list)==bb::Error::io_error);
+        assert(t.list_directory("dir",list,scratch)==bb::Error::io_error);
     }
     std::cout<<"PASS: file/directory name collision fails instead of guessing\n";
 
@@ -123,7 +124,7 @@ int main(){
         bb::StagedUploadTarget t; assert(t.open_session(tmpl)==bb::Error::ok);
         upload(t,"c/keep","data");
         std::ofstream(fs::path(t.session_path())/"000001.ready/identity.bin",std::ios::binary|std::ios::trunc).write("HCC",3);
-        assert(t.list_directory("c",list)==bb::Error::io_error);
+        assert(t.list_directory("c",list,scratch)==bb::Error::io_error);
     }
     std::cout<<"PASS: corrupt identity metadata is a loud error, never a dropped entry\n";
 
@@ -132,7 +133,7 @@ int main(){
         bb::StagedUploadTarget t; assert(t.open_session(tmpl)==bb::Error::ok);
         assert(t.create_directory("s/real")==bb::Error::ok);
         fs::create_directory_symlink(parent,fs::path(t.session_path())/"directories/s/link");
-        assert(t.list_directory("s",list)==bb::Error::io_error);
+        assert(t.list_directory("s",list,scratch)==bb::Error::io_error);
     }
     std::cout<<"PASS: namespace symlink entries are rejected\n";
 

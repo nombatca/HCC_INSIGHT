@@ -180,6 +180,7 @@ static void operation_flow(unsigned mode){
     else if(mode==9)wire.fixture("disconnect.xml");
     std::uint8_t control[8192],output[1024],scratch[3];hcc::plist::Node nodes[128];char text[8192];
     bb::DirectoryEntry list_entries[16];std::uint32_t list_offsets[bb::contents_object_count(16)];
+    static bb::ListingScratch list_scratch;
     bb::BackupLink link({control,sizeof(control),output,sizeof(output),{nodes,128,text,sizeof(text)}});
     assert(link.start(0)==bb::LinkError::ok);
     for(unsigned i=0;i<5000&&link.phase()!=bb::LinkPhase::ready;++i){auto e=link.poll(wire.io(),i,2);assert(e==bb::LinkError::ok||e==bb::LinkError::would_block||e==bb::LinkError::yield);}
@@ -194,7 +195,7 @@ static void operation_flow(unsigned mode){
     if(mode==2)assert(blocker.acquire());
     {
         HCCBackupOperation operation(link,scratch,sizeof(scratch),output,sizeof(output),
-                                     {list_entries,16,list_offsets,bb::contents_object_count(16)});
+                                     {list_entries,16,list_offsets,bb::contents_object_count(16),&list_scratch});
         auto started=operation.start(mode==14?"invalid":"00008101-001234567890ABCD",10000,config);
         if(mode==1||mode==2||mode==10||mode==14){
             assert(started==(mode==2?HCCBackupError::busy:mode==14?HCCBackupError::invalid_argument:mode==1?HCCBackupError::quota:HCCBackupError::storage));

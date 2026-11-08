@@ -9,7 +9,7 @@ public:
     hcc::backup::Error open(std::uint64_t minimum_free_bytes=0);
     std::uint32_t committedFiles() const {return storage_.committed_files();}
     hcc::backup::Error createDirectory(std::string_view path){return storage_.create_directory(path);}
-    hcc::backup::Error listDirectory(std::string_view path,hcc::backup::DirectoryListing& out){return storage_.list_directory(path,out);}
+    hcc::backup::Error listDirectory(std::string_view path,hcc::backup::DirectoryListing& out,hcc::backup::ListingScratch& scratch){return storage_.list_directory(path,out,scratch);}
     hcc::backup::UploadTarget target(){return storage_.target();}
     const char* sessionPath() const {return storage_.session_path();}
 private:

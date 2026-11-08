@@ -86,13 +86,13 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     }
     if(event.kind==bb::EventKind::contents_of_directory){
         // Caller must provision listing storage; otherwise directory listing is refused.
-        if(!contents_.entries||!contents_.entry_capacity||
+        if(!contents_.entries||!contents_.entry_capacity||!contents_.scratch||
            contents_.offset_capacity<bb::contents_object_count(contents_.entry_capacity))
             return fail(HCCBackupError::unsupported);
         bb::DirectoryListing listing{contents_.entries,contents_.entry_capacity,0};
         // Too many children or any storage/metadata error fails the operation; the
         // listing is never silently truncated or replaced with an empty reply.
-        const auto result=capture_.listDirectory(doc.string(event.payload),listing);
+        const auto result=capture_.listDirectory(doc.string(event.payload),listing,*contents_.scratch);
         if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
         reply_.emplace(output_,output_capacity_);
         if(reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity)!=bb::Error::ok)

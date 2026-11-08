@@ -192,15 +192,15 @@ bool read_record(const char* record_dir,char* dest,std::size_t dest_cap,std::siz
     return true;
 }
 }
-Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListing& out) const {
+Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListing& out,ListingScratch& scratch) const {
     if(!out.entries||!out.capacity)return Error::invalid_argument;
     out.count=0;
     if(!root_[0])return Error::invalid_argument;
     // Normalize the requested prefix: '/' separators, no trailing slash. "" = root.
-    char prefix[4096]; std::size_t plen=0;
+    char* prefix=scratch.prefix; std::size_t plen=0;
     if(!request.empty()){
         if(!valid_relative_backup_path(request))return Error::invalid_argument;
-        if(request.size()>=sizeof(prefix))return Error::too_large;
+        if(request.size()>=sizeof(scratch.prefix))return Error::too_large;
         for(char c:request)prefix[plen++]=(c=='\\')?'/':c;
         while(plen&&prefix[plen-1]=='/')--plen;
     }
@@ -242,12 +242,12 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     Error err=Error::ok;
     for(struct dirent* ent; err==Error::ok&&(ent=readdir(dir));){
         if(!ready_record(ent->d_name))continue; // skip .part, directories, anything internal
-        char record[300];
-        if(snprintf(record,sizeof(record),"%s/%s",root_,ent->d_name)<=0){err=Error::io_error;break;}
+        char* record=scratch.record;
+        if(snprintf(record,sizeof(scratch.record),"%s/%s",root_,ent->d_name)<=0){err=Error::io_error;break;}
         if(!plain_directory(record)){err=Error::io_error;break;}
-        char dest[4096]; std::size_t dlen=0; std::uint64_t size=0; std::int64_t mtime=0;
-        if(!read_record(record,dest,sizeof(dest),dlen,size,mtime)){err=Error::io_error;break;}
-        char norm[4096]; for(std::size_t i=0;i<dlen;++i)norm[i]=(dest[i]=='\\')?'/':dest[i];
+        char* norm=scratch.path; std::size_t dlen=0; std::uint64_t size=0; std::int64_t mtime=0;
+        if(!read_record(record,norm,sizeof(scratch.path),dlen,size,mtime)){err=Error::io_error;break;}
+        for(std::size_t i=0;i<dlen;++i)if(norm[i]=='\\')norm[i]='/'; // normalize in place
         std::size_t cs=0,cl=0; bool leaf=false;
         if(!classify(norm,dlen,cs,cl,leaf))continue;
         err=leaf?add(norm+cs,cl,EntryType::regular,size,mtime)
@@ -256,8 +256,8 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     closedir(dir);
     if(err!=Error::ok)return err;
     // 2) Created-directory namespace: immediate subdirectories of the prefix.
-    char nsdir[4120];
-    if(snprintf(nsdir,sizeof(nsdir),"%s/directories%s%s",root_,plen?"/":"",prefix)<=0)return Error::io_error;
+    char* nsdir=scratch.nsdir;
+    if(snprintf(nsdir,sizeof(scratch.nsdir),"%s/directories%s%s",root_,plen?"/":"",prefix)<=0)return Error::io_error;
     if(!plen){ // trim the trailing separator produced for the root case
         nsdir[std::strlen(root_)+std::strlen("/directories")]=0;
     }
@@ -275,8 +275,8 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     DIR* nd=opendir(nsdir); if(!nd)return Error::io_error;
     for(struct dirent* ent; (ent=readdir(nd));){
         if(std::strcmp(ent->d_name,".")==0||std::strcmp(ent->d_name,"..")==0)continue;
-        char sub[4400];
-        if(snprintf(sub,sizeof(sub),"%s/%s",nsdir,ent->d_name)<=0){err=Error::io_error;break;}
+        char* sub=scratch.sub;
+        if(snprintf(sub,sizeof(scratch.sub),"%s/%s",nsdir,ent->d_name)<=0){err=Error::io_error;break;}
         struct stat ss{};
 #ifdef ESP_PLATFORM
         if(stat(sub,&ss)!=0){err=Error::io_error;break;}

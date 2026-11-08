@@ -27,7 +27,7 @@ public:
     // a symlink, or corrupt metadata returns an error and never a partial or
     // silently truncated/empty-on-error listing. Internal capture names
     // (NNNNNN.ready/.part, payload.bin, identity.bin) are never exposed.
-    Error list_directory(std::string_view request, DirectoryListing& out) const;
+    Error list_directory(std::string_view request, DirectoryListing& out, ListingScratch& scratch) const;
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
     std::uint32_t committed_files() const {return committed_;}
