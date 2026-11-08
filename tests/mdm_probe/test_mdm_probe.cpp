@@ -199,7 +199,7 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<7;++mode){
+    for(unsigned mode=0;mode<8;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
@@ -212,7 +212,11 @@ int main() {
             const char* xml="<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array></plist>";
             name(xml);name("/device/source");name("backup/glue.bin");
             length(6);bytes.push_back(0x0c);for(char c:std::string_view("hello"))bytes.push_back(c);
-            if(mode==0){length(1);bytes.push_back(0x0b);length(0);add_frame(bytes,"result_ok.xml");}
+            if(mode==0){length(1);bytes.push_back(0x0b);length(0);name("<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>0</integer></dict></array></plist>");}
+        }
+        if(mode==7){
+            const std::string result="<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>42</integer><key>ErrorDescription</key><string>synthetic error</string></dict></array></plist>";
+            std::uint8_t length[4];bb::write_be32(length,result.size());tls.ssl.input.insert(tls.ssl.input.end(),length,length+4);tls.ssl.input.insert(tls.ssl.input.end(),result.begin(),result.end());
         }
         assert(t.requestMdmBackup()&&!t.requestMdmBackup());
         if(mode==4)tls.ssl.close=true;

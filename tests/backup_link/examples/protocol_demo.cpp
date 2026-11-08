@@ -29,8 +29,13 @@ int main() {
             // Demo acknowledgment only: no real reply is sent.
             session.acknowledge_version(true); break;
         case bb::EventKind::device_ready:
-            std::cout<<"Mẫu DeviceReady; bắt đầu thao tác MÔ PHỎNG\n";
-            session.mark_operation_started(); break;
+            std::cout<<"Mẫu DeviceReady; chờ Hello\n";break;
+        case bb::EventKind::process_message:
+            if(session.phase()==bb::Phase::ready){
+                std::cout<<"Mẫu Hello; bắt đầu thao tác MÔ PHỎNG\n";
+                session.mark_operation_started();
+            }
+            break;
         case bb::EventKind::download_files:
             std::cout<<"Danh sách yêu cầu: "<<doc.get(event.payload)->count<<" file\n";
             for(std::size_t i=0;i<doc.get(event.payload)->count;++i) std::cout<<"  "<<doc.string(doc.at(event.payload,i))<<"\n";

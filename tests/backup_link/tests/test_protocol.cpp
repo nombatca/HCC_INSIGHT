@@ -117,7 +117,8 @@ void state_machine_complete_operation() {
     CHECK(message(m,s,"hello.bplist",e)==bb::SessionError::ok && e.kind==bb::EventKind::process_message);
     CHECK(s.outcome()==bb::Outcome::none && s.phase()==bb::Phase::ready);
     CHECK(s.mark_operation_started()==bb::SessionError::ok);
-    CHECK(message(m,s,"hello.xml",e)==bb::SessionError::ok && s.phase()==bb::Phase::running);
+    CHECK(m.xml("<array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Progress</string></dict></array>")==pp::Error::ok);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok && s.phase()==bb::Phase::running);
     CHECK(message(m,s,"download.bplist",e)==bb::SessionError::ok);
     CHECK(e.kind==bb::EventKind::download_files && m.doc.get(e.payload)->count==2);
     CHECK(s.phase()==bb::Phase::request_pending);
@@ -144,6 +145,29 @@ void state_machine_failures_and_disconnect() {
     s.reset(); ready(m,s); CHECK(s.mark_operation_started()==bb::SessionError::ok);
     CHECK(message(m,s,"download.xml",e)==bb::SessionError::ok);
     CHECK(s.complete_request(false)==bb::SessionError::ok && s.outcome()==bb::Outcome::local_error);
+}
+void named_process_results_and_diagnostics() {
+    for(auto code:{std::int64_t(0),std::int64_t(42),std::int64_t(-1)}){
+        Memory m;bb::SessionObserver observer;bb::SessionEvent event;ready(m,observer);
+        CHECK(message(m,observer,"hello.xml",event)==bb::SessionError::ok&&observer.outcome()==bb::Outcome::none);
+        CHECK(observer.mark_operation_started()==bb::SessionError::ok);
+        const auto xml="<array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>"+std::to_string(code)+"</integer><key>ErrorDescription</key><string>test&#10;description</string><key>Content</key><string>private-content</string></dict></array>";
+        CHECK(m.xml(xml)==pp::Error::ok&&observer.consume(m.doc,event)==bb::SessionError::ok);
+        CHECK(event.kind==bb::EventKind::result&&event.result_code==code);
+        CHECK(observer.outcome()==(code==0?bb::Outcome::success:bb::Outcome::remote_error));
+        char text[448];CHECK(bb::format_process_message_diagnostic(m.doc,event.payload,text,sizeof(text))>0);
+        const std::string diagnostic=text;
+        CHECK(diagnostic.find("MessageName=Response")!=std::string::npos);
+        CHECK(diagnostic.find("ErrorCode="+std::to_string(code))!=std::string::npos);
+        CHECK(diagnostic.find("test description")!=std::string::npos);
+        CHECK(diagnostic.find("Content=string(15 bytes)")!=std::string::npos);
+        CHECK(diagnostic.find("private-content")==std::string::npos);
+        for(std::size_t cap=1;cap<64;++cap){char out[64];CHECK(bb::format_process_message_diagnostic(m.doc,event.payload,out,cap)<cap);CHECK(out[cap-1]==0);}
+        CHECK(bb::format_process_message_diagnostic(m.doc,event.payload,nullptr,0)==0);
+    }
+    Memory m;bb::SessionObserver observer;bb::SessionEvent event;ready(m,observer);CHECK(observer.mark_operation_started()==bb::SessionError::ok);
+    CHECK(m.xml("<array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><string>0</string></dict></array>")==pp::Error::ok);
+    CHECK(observer.consume(m.doc,event)==bb::SessionError::malformed_message&&observer.outcome()==bb::Outcome::none);
 }
 void request_validation_and_unsupported() {
     for(const auto p:{"../x","/absolute","C:\\x","a/../x","a//x","a/","a/./b","\\\\server\\x",""}) CHECK(!bb::valid_relative_backup_path(p));
@@ -243,7 +267,7 @@ void framed_session_one_byte_at_a_time() {
         CHECK(pp::parse(decoder.data(),decoder.size(),m.workspace(),m.doc)==pp::Error::ok);
         bb::SessionEvent e; CHECK(session.consume(m.doc,e)==bb::SessionError::ok); ++frames;
         if(e.kind==bb::EventKind::version_offer) CHECK(session.acknowledge_version(true)==bb::SessionError::ok);
-        if(e.kind==bb::EventKind::device_ready) CHECK(session.mark_operation_started()==bb::SessionError::ok);
+        if(e.kind==bb::EventKind::process_message&&session.phase()==bb::Phase::ready) CHECK(session.mark_operation_started()==bb::SessionError::ok);
         if(e.kind==bb::EventKind::download_files) CHECK(session.complete_request(true)==bb::SessionError::ok);
         decoder.next_frame();
     }
@@ -278,6 +302,7 @@ int main() {
         {"input, depth, arena and text budgets",limits_and_duplicate_keys},
         {"session request/result lifecycle",state_machine_complete_operation},
         {"negotiation failure and disconnect is not success",state_machine_failures_and_disconnect},
+        {"named result codes, Hello distinction and bounded diagnostics",named_process_results_and_diagnostics},
         {"request types, relative paths and unsupported operations",request_validation_and_unsupported},
         {"free-space request requires running and explicit acknowledgement",free_space_request_lifecycle},
         {"directory request validation and lifecycle",directory_request_lifecycle},

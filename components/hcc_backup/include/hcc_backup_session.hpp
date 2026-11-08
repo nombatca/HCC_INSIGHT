@@ -38,6 +38,9 @@ private:
     Outcome outcome_=Outcome::none;
     EventKind pending_=EventKind::unsupported;
 };
+// Bounded diagnostic of selected response fields; control characters are
+// sanitized. Content is described by type/size only, never dumped. No ownership.
+std::size_t format_process_message_diagnostic(const plist::Document&,std::uint32_t payload,char*,std::size_t capacity);
 const char* phase_name(Phase);
 const char* session_error_name(SessionError);
 } // namespace hcc::backup

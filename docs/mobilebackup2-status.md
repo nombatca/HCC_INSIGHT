@@ -292,8 +292,9 @@ Polling bounds transport calls and tracks successful byte progress. Configurable
 idle and total deadlines default to 60 s and 10 min, with monotonic-clock checks;
 the link's own partial-control-frame timeout may be stricter. Unsupported control
 operations, remote error, disconnect, quota, I/O failure and cancellation remain
-distinct failures. Only a final result with zero code sets succeeded. A named
-process/progress message is not completion. Local cancel does not send a remote
+distinct failures. During a running operation, an integer ErrorCode marks a
+terminal result (zero succeeds), even when MessageName is present. A named
+process/progress message without ErrorCode is not completion. Local cancel does not send a remote
 cancel packet: caller must close/abandon that stream. Calls on this object and
 its transport remain serialized; there are no internal threads or task handoffs.
 
@@ -501,3 +502,33 @@ plistlib independently decodes ASCII/Unicode multi-status fixtures. New device
 logs mark `DownloadFiles reply complete ... waiting for next control` and failure
 phase/reason. This fixes the identified mismatch; another iPad/P4 capture test
 is required to establish whether the device proceeds past this boundary.
+
+## ProcessMessage result classification and diagnostics
+
+The latest physical log contains `event kind=7 msg=DLMessageProcessMessage`.
+That outer tag alone does not reveal whether the device reports progress, a
+terminal error, or completion. The previous observer ignored every dictionary
+with MessageName before checking ErrorCode. Primary idevicebackup2 handles the
+integer ErrorCode in the operation loop irrespective of MessageName; ignoring
+that field can leave a named terminal result waiting until timeout.
+
+The observer now keeps Hello/negotiation nonterminal while phase is ready, but
+while running an integer ErrorCode becomes a result even with MessageName. Zero
+means success and nonzero preserves the device error code. Named messages with
+no ErrorCode remain nonterminal; malformed code types are not coerced. Request-
+pending states still reject an out-of-order result. The protocol demo/test
+handshake order was corrected to begin the simulated operation after Hello.
+
+P4 logs now include selected ProcessMessage fields before handling the result:
+MessageName (up to 64 bytes), ErrorCode, ErrorDescription (up to 240 bytes).
+Control characters are replaced and output is bounded/NUL-terminated. Content
+is reported only by type/size; its raw value is never dumped. Formatting is
+portable and tested independently of ESP_PLATFORM.
+
+Regression tests cover named zero/nonzero results, progress without a code,
+Hello before the operation, malformed codes, output capacities, sanitized text
+and Content omission. Coordinator and P4 glue tests exercise named results
+through the actual cleanup path, preserving committed files and releasing SD.
+A physical rerun with these diagnostics is needed to identify the latest iPad
+response; its ErrorCode/description cannot be recovered from the encrypted
+USB bytes in the supplied log.

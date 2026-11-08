@@ -87,6 +87,11 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     // unhandled requests (e.g. DownloadFiles) are visible instead of a silent stall.
     printf("[HCC BACKUP] event kind=%d msg=%.*s\n",static_cast<int>(event.kind),
            static_cast<int>(event.message.size()),event.message.data());
+    if(event.kind==bb::EventKind::process_message||event.kind==bb::EventKind::result){
+        char details[448];
+        bb::format_process_message_diagnostic(doc,event.payload,details,sizeof(details));
+        printf("[HCC BACKUP] process %s\n",details);
+    }
 #endif
     if(event.kind==bb::EventKind::create_directory){
         reply_.emplace(output_,output_capacity_);

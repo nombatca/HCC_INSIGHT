@@ -1,4 +1,5 @@
 #include "hcc_backup_session.hpp"
+#include <cstdio>
 
 namespace hcc::backup {
 bool valid_relative_backup_path(std::string_view path) {
@@ -110,8 +111,9 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         if(message_name!=plist::none) {
             const auto* n=d.get(message_name);
             if(!n||n->kind!=plist::Kind::string) return SessionError::malformed_message;
-            return SessionError::ok; // Named negotiation/control replies are not final results.
         }
+        // Hello is handled before an operation starts. During a running
+        // operation, ErrorCode is a terminal result even with MessageName.
         if(phase_==Phase::ready) return SessionError::ok;
         const auto code_id=d.find(payload,"ErrorCode");
         if(code_id!=plist::none) {
@@ -128,6 +130,48 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
     if(tag=="DLMessageMoveFiles"||tag=="DLMessageMoveItems"||tag=="DLMessageRemoveFiles"||
        tag=="DLMessageRemoveItems") return SessionError::unsupported_operation;
     return SessionError::unsupported_message;
+}
+std::size_t format_process_message_diagnostic(const plist::Document& doc,std::uint32_t payload,char* out,std::size_t capacity) {
+    if(!out||!capacity)return 0;
+    out[0]=0;const auto* root=doc.get(payload);
+    if(!root||root->kind!=plist::Kind::dict)return 0;
+    std::size_t used=0;
+    auto put=[&](char c){if(used+1<capacity)out[used++]=c;};
+    auto append=[&](std::string_view s){for(char c:s)put(c);};
+    auto text=[&](std::string_view key,std::size_t limit){
+        const auto id=doc.find(payload,key);const auto* node=doc.get(id);
+        if(!node){append("<missing>");return;}
+        if(node->kind!=plist::Kind::string){append("<invalid>");return;}
+        const auto value=doc.string(id);
+        const auto count=value.size()<limit?value.size():limit;
+        for(std::size_t i=0;i<count;++i){const auto c=static_cast<unsigned char>(value[i]);put(c<32||c==127?' ':static_cast<char>(c));}
+        if(count<value.size())append("...");
+    };
+    append("MessageName=");text("MessageName",64);
+    append(" ErrorCode=");const auto* code=doc.get(doc.find(payload,"ErrorCode"));
+    if(!code)append("<missing>");
+    else if(code->kind!=plist::Kind::integer)append("<invalid>");
+    else {char number[32];std::snprintf(number,sizeof(number),"%lld",static_cast<long long>(code->integer));append(number);}
+    append(" ErrorDescription=");text("ErrorDescription",240);
+    const auto* content=doc.get(doc.find(payload,"Content"));
+    if(content){
+        // Content may contain device/user data. Report only its type/size.
+        append(" Content=");
+        switch(content->kind){
+        case plist::Kind::string:append("string");break;
+        case plist::Kind::data:append("data");break;
+        case plist::Kind::dict:append("dict");break;
+        case plist::Kind::array:append("array");break;
+        case plist::Kind::integer:append("integer");break;
+        case plist::Kind::real:append("real");break;
+        case plist::Kind::boolean:append("boolean");break;
+        case plist::Kind::null_value:append("null");break;
+        }
+        if(content->kind==plist::Kind::string||content->kind==plist::Kind::data){
+            char number[32];std::snprintf(number,sizeof(number),"(%u bytes)",static_cast<unsigned>(content->length));append(number);
+        }
+    }
+    out[used]=0;return used;
 }
 const char* phase_name(Phase p) {
     switch(p) {
