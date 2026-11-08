@@ -49,7 +49,10 @@ struct MockTls {
     size_t read_size = 0, write_size = 0;
     bool close = false;
 };
-struct HCCUSBTransport::ServiceTlsContext { MockTls ssl; bool established = true; };
+struct HCCUSBTransport::ServiceTlsContext {
+    MockTls ssl; bool established = true;
+    std::size_t rx_length=0,tx_length=0,tx_offset=0;
+};
 static int mbedtls_ssl_read(MockTls *s, unsigned char *b, size_t n) {
     if (s->close) return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
     if (!s->retry_read) {
@@ -199,13 +202,13 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<8;++mode){
+    for(unsigned mode=0;mode<13;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
         for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
         std::strcpy(t._session_udid.data(),mode==1?"invalid":"00008101-001234567890ABCD");
-        if(mode==0||mode==5){
+        if(mode==0||mode==5||mode==12){
             auto& bytes=tls.ssl.input;
             auto length=[&](std::uint32_t n){std::uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
             auto name=[&](const char* s){length(std::strlen(s));bytes.insert(bytes.end(),s,s+std::strlen(s));};
@@ -222,14 +225,28 @@ int main() {
         if(mode==4)tls.ssl.close=true;
         for(unsigned i=0;i<5000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){
             ++now_ms;const auto ok=t.pollMdmProbe();
+            if((mode==8||mode==9||mode==10||mode==11)&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){
+                const auto sent=tls.ssl.output.size();const auto read=tls.ssl.offset;
+                t._tx_in_flight=true; // submitPendingTcp would skip all protocol I/O
+                if(mode==9){now_ms+=5001;t.pollMdmBackupWatchdog();assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running);}
+                if(mode==10)--now_ms;
+                else if(mode==11)t._state=HCCUSBTransport::State::Failed;
+                else now_ms+=60000;
+                t.pollMdmBackupWatchdog();
+                assert(tls.ssl.output.size()==sent&&tls.ssl.offset==read);break;
+            }
             if(mode==2&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting)now_ms+=60000;
             if(mode==6&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){
                 t._notification_rx_stream_length=t._notification_rx_stream.size();
                 const std::uint8_t byte=0;assert(!t.appendMdmPlaintext(&byte,1));break;
             }
-            if(mode==5&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::receiving){
+            if((mode==5||mode==12)&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::receiving){
                 bool staged=false;for(const auto& e:fs::recursive_directory_iterator(sd_root))if(e.path().extension()==".part")staged=true;
-                if(staged){t.releaseMdmProbe();break;}
+                if(staged){
+                    if(mode==5)t.releaseMdmProbe();
+                    else {t._tx_in_flight=true;now_ms+=60000;t.pollMdmBackupWatchdog();}
+                    break;
+                }
             }
             if(mode==3&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){t.releaseMdmProbe();break;}
             if(!ok)break;
@@ -252,7 +269,7 @@ int main() {
         }
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
-    std::puts("PASS: backup completion, preflight/transport/timeout failure and teardown release SD; no terminal stream restart");
+    std::puts("PASS: backup results, teardown and independent deadlines release SD, including stalled TX; no stream restart");
     fs::remove_all(sd_root);
     assert(allocations == 0);
     std::puts("8 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");

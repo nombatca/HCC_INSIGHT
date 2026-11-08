@@ -33,13 +33,21 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
 }
 bb::IoResult HCCBackupOperation::Progress::read(void* p,std::uint8_t* b,std::size_t n){auto& s=*static_cast<Progress*>(p);auto r=s.io.read(s.io.context,b,n);if(r.bytes)s.operation->progress_=s.now;return r;}
 bb::IoResult HCCBackupOperation::Progress::write(void* p,const std::uint8_t* b,std::size_t n){auto& s=*static_cast<Progress*>(p);auto r=s.io.write(s.io.context,b,n);if(r.bytes)s.operation->progress_=s.now;return r;}
+HCCBackupError HCCBackupOperation::checkDeadline(std::uint64_t now){
+    if(phase_==HCCBackupPhase::succeeded)return HCCBackupError::ok;
+    if(phase_==HCCBackupPhase::failed||phase_==HCCBackupPhase::cancelled)return error_;
+    if(phase_==HCCBackupPhase::idle)return HCCBackupError::invalid_argument;
+    if(now<last_now_)return fail(HCCBackupError::clock);
+    last_now_=now;
+    if(now-began_>=config_.total_timeout_ms||now-progress_>=config_.idle_timeout_ms)return fail(HCCBackupError::timeout);
+    return HCCBackupError::would_block;
+}
 HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::size_t budget){
     if(phase_==HCCBackupPhase::succeeded)return HCCBackupError::ok;
     if(phase_==HCCBackupPhase::failed||phase_==HCCBackupPhase::cancelled)return error_;
     if(phase_==HCCBackupPhase::idle||!io.read||!io.write||!budget)return HCCBackupError::invalid_argument;
-    if(now<last_now_)return fail(HCCBackupError::clock);
-    last_now_=now;
-    if(now-began_>=config_.total_timeout_ms||now-progress_>=config_.idle_timeout_ms)return fail(HCCBackupError::timeout);
+    const auto deadline=checkDeadline(now);
+    if(deadline!=HCCBackupError::would_block)return deadline;
     Progress context{this,io,now};const bb::Duplex tracked{&context,Progress::read,Progress::write};
     if(phase_==HCCBackupPhase::starting){
         const auto e=start_->pump({tracked.context,tracked.write});

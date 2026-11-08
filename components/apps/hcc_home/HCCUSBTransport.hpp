@@ -263,6 +263,7 @@ private:
     bool beginMdmProbe();
     bool pollMdmProbe();
     void finishMdmBackup(bool success);
+    void pollMdmBackupWatchdog();
     void releaseMdmProbe();
     bool appendMdmPlaintext(const uint8_t *data, size_t length);
     static hcc::backup::IoResult mdmRead(void *, uint8_t *, size_t);

@@ -14,6 +14,7 @@ struct HCCUSBTransport::MdmProbeContext {
     uint32_t list_offsets[hcc::backup::contents_object_count(kListEntries)]{};
     hcc::backup::ListingScratch list_scratch{};
     std::optional<HCCBackupOperation> operation;
+    std::uint64_t last_diagnostic_ms=0;
     MdmProbeContext()
         : link({control, sizeof(control), output, sizeof(output), {nodes, 128, text, sizeof(text)}}) {}
 };
@@ -43,6 +44,32 @@ void HCCUSBTransport::finishMdmBackup(bool success)
     _mdm_backup_state.store(success ? MdmBackupState::done : MdmBackupState::failed);
     _mdm_backup_requested.store(false);
     if (!success) _mdm_state.store(MdmState::Failed); // never reuse failed TLS/DeviceLink I/O
+}
+
+void HCCUSBTransport::pollMdmBackupWatchdog()
+{
+    if (!_mdm_backup_requested.load() || !_mdm_probe || !_mdm_probe->operation) return;
+    auto &op=*_mdm_probe->operation;
+    const auto now=mdmNowMs();
+    const auto result=op.checkDeadline(now);
+    const bool transport_failed=_state==State::Failed || _mdm_state.load()!=MdmState::Ready ||
+                                _service_tcp.state!=TcpState::Connected;
+    const bool stopped=result!=HCCBackupError::would_block;
+    if (stopped || transport_failed || now-_mdm_probe->last_diagnostic_ms>=5000) {
+        _mdm_probe->last_diagnostic_ms=now;
+        const auto *tls=_service_tls;
+        printf("[HCC BACKUP] wait phase=%d elapsed_ms=%llu idle_ms=%llu usb_tx=%u tcp=%d tls_rx=%u tls_tx=%u plain_rx=%u partial_control=%u\n",
+               static_cast<int>(op.phase()),static_cast<unsigned long long>(op.elapsedMilliseconds(now)),
+               static_cast<unsigned long long>(op.idleMilliseconds(now)),static_cast<unsigned>(_tx_in_flight),
+               static_cast<int>(_service_tcp.state),static_cast<unsigned>(tls?tls->rx_length:0),
+               static_cast<unsigned>(tls&&tls->tx_length>=tls->tx_offset?tls->tx_length-tls->tx_offset:0),
+               static_cast<unsigned>(_notification_rx_stream_length),static_cast<unsigned>(_mdm_probe->link.control_frame_pending()));
+    }
+    if (stopped || transport_failed) {
+        printf("[HCC MDM] BACKUP watchdog stopped err=%d transport_failed=%u files=%u\n",
+               static_cast<int>(transport_failed?HCCBackupError::transfer:result),static_cast<unsigned>(transport_failed),static_cast<unsigned>(op.committedFiles()));
+        finishMdmBackup(!transport_failed && result==HCCBackupError::ok && op.phase()==HCCBackupPhase::succeeded);
+    }
 }
 
 const char *HCCUSBTransport::mdmBackupStatusText()
@@ -198,6 +225,7 @@ bool HCCUSBTransport::pollMdmProbe()
                     finishMdmBackup(false);
                     return false;
                 }
+                _mdm_probe->last_diagnostic_ms=mdmNowMs();
                 _mdm_backup_state.store(MdmBackupState::running);
                 printf("[HCC MDM] BACKUP started (prototype partial pull to SD)\n");
             }

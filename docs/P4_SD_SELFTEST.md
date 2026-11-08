@@ -69,3 +69,10 @@ Mỗi phiên chỉ chạy một lượt. Rút/cắm và thương lượng lại 
 Rút thiết bị khi đang nhận phải hủy file tạm và nhả quyền SD. Khi gửi log kết quả,
 ưu tiên các dòng `[HCC MDM]`, `[HCC BACKUP]`, SD/FAT và lỗi; không cần gửi lại
 IMEI, serial, ICCID hay số điện thoại. Không dùng erase-flash.
+
+Nếu sau DownloadFiles chưa có bước tiếp, bản có watchdog sẽ in `[HCC BACKUP] wait`
+khoảng mỗi 5 giây. Giữ nguyên lượt đang chạy ít nhất 70 giây sau phản hồi cuối,
+không bấm MDM/rút cáp/thoát monitor trong khoảng đó. Gửi các dòng `wait`, `process`,
+`stop` và `watchdog stopped`/`BACKUP stopped`. Không cần gửi log gesture/Wi-Fi.
+Nếu cả dòng `wait` cũng không xuất hiện thì chưa thể xác nhận owner task còn
+polling; cần đối chiếu đúng commit đã build và log từ đầu lượt.

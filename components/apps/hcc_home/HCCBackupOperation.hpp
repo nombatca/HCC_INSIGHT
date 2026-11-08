@@ -42,6 +42,10 @@ public:
     ~HCCBackupOperation(){cancel();}
     HCCBackupError start(std::string_view udid,std::uint64_t now,HCCBackupConfig={});
     HCCBackupError poll(hcc::backup::Duplex,std::uint64_t now,std::size_t budget=8);
+    // Owner-task check independent of transport readiness. No I/O is performed.
+    HCCBackupError checkDeadline(std::uint64_t now);
+    std::uint64_t idleMilliseconds(std::uint64_t now) const {return now>=progress_?now-progress_:0;}
+    std::uint64_t elapsedMilliseconds(std::uint64_t now) const {return now>=began_?now-began_:0;}
     void cancel();
     HCCBackupPhase phase() const {return phase_;}
     HCCBackupError error() const {return error_;}

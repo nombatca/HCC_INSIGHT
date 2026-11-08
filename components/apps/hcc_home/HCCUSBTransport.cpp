@@ -1250,6 +1250,9 @@ bool HCCUSBTransport::submitPendingSetup()
 
 bool HCCUSBTransport::submitPendingTcp()
 {
+    // Check active capture deadlines before an in-flight TX or failed transport
+    // can skip protocol polling. This is owner-task-only and performs no TLS I/O.
+    pollMdmBackupWatchdog();
     if (_mdm_selected && mdmPollingPending() && _state == State::Failed) _mdm_state.store(MdmState::Failed);
     if (_stopping || _state == State::Failed || _tx_in_flight) {
         return true;

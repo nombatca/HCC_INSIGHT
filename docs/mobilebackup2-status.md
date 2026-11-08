@@ -532,3 +532,33 @@ through the actual cleanup path, preserving committed files and releasing SD.
 A physical rerun with these diagnostics is needed to identify the latest iPad
 response; its ErrorCode/description cannot be recovered from the encrypted
 USB bytes in the supplied log.
+
+## Independent capture deadline and wait diagnostics
+
+The latest physical log confirms SD self-test PASS (`rx_000022`), Backup request
+start, and completion of one attempted DownloadFiles response. No next control
+message or terminal result appears in that excerpt. Minute-only UI clock lines
+do not establish the actual idle interval, and USB TX completion alone does not
+prove the iPad accepted the application response. The cause is still unresolved.
+
+Review found that `submitPendingTcp` returns early while a USB TX is in flight,
+while operation deadlines were checked only inside protocol `poll`. A prolonged
+TX can therefore skip the capture deadline check. `checkDeadline` now provides
+a no-I/O, owner-task deadline check, and the transport invokes it before its
+TX/failed-state early returns. Monotonic, idle (60 s default), and total (10 min
+default) limits are unchanged. Failure cancels any staged file and releases SD
+through the existing terminal path. This is not an ISR/hardware watchdog and
+cannot run while the owner task itself is blocked in synchronous FAT work.
+
+While a capture is active, the same hook logs a snapshot at most every five
+seconds (plus a terminal snapshot): phase, elapsed/idle milliseconds, USB TX
+in-flight flag, service TCP state, buffered TLS RX/TX bytes, plaintext RX bytes,
+and whether a partial DeviceLink control frame is pending. No payload contents
+are logged. Heartbeats do not reset progress/deadlines or perform transport I/O.
+A wait snapshot is diagnostic, not proof of successful backup.
+
+Host adapter tests cover timeout with a permanently in-flight TX, a nonterminal
+heartbeat that does not consume/send bytes, clock reversal, failed outer
+transport and timeout during an open staged upload. They assert .part cleanup,
+preserved committed count, released SD lease and no same-stream restart. SDK
+callbacks/physical USB/SD timing still require a rerun on P4.
