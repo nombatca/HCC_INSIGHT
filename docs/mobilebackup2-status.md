@@ -326,3 +326,9 @@ are rejected; startup, SD busy and low-space failures report explicit states.
 Host tests execute the production worker with a task-launch stub and real local
 files. GUI gesture, physical task stack, FAT sync/rename and hardware mount must
 be verified on P4. See P4_SD_SELFTEST.md for the actual hardware test procedure.
+
+Capture refuses to mount an unmounted card when BSP auto-format-on-mount-failure
+is enabled. An already mounted card may still be used. A dedicated host build
+with that flag enabled asserts the mount function is never called and the SD
+lease is released on rejection. This guard applies to capture/self-test calls,
+not legacy code elsewhere that invokes the BSP mount API directly.

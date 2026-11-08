@@ -1,4 +1,7 @@
 #include "HCCBackupCapture.hpp"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "esp_vfs_fat.h"
 #include <cerrno>
@@ -9,10 +12,16 @@ hcc::backup::Error HCCBackupCapture::open(std::uint64_t minimum_free_bytes)
     using hcc::backup::Error;
     if (!lease_.acquire()) return Error::busy;
     if (bsp_sdcard == nullptr) {
+#ifdef CONFIG_BSP_SD_FORMAT_ON_MOUNT_FAIL
+        // A capture/test may mount existing media, never authorize formatting.
+        printf("[HCC SD] mount blocked: BSP auto-format is enabled\n");
+        lease_.release();return Error::invalid_argument;
+#else
         const auto e = bsp_sdcard_mount();
         if ((e != ESP_OK && e != ESP_ERR_INVALID_STATE) || bsp_sdcard == nullptr) {
             lease_.release(); return Error::io_error;
         }
+#endif
     }
     if (minimum_free_bytes) {
         std::uint64_t total=0,available=0;
