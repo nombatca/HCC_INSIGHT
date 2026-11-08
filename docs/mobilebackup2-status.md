@@ -157,3 +157,31 @@ Host tests run the real upload receiver against real temporary files: payload
 and identity layout, empty files, abort cleanup, commit collision preservation,
 destruction cleanup, missing parent and symlink rejection. Hardware FAT/SD
 behavior and interruption during physical writes remain untested.
+
+## Capture / USB DISK ownership
+
+`HCCBackupCapture` obtains a nonblocking `SdLease` before mounting/creating the
+capture parent. The target is destroyed before the lease, so pending-file abort
+cleanup finishes before USB DISK may take ownership. A capture object is one
+session; it must outlive its receiver. It uses `/sdcard/hcc_backup` via the BSP
+mount point. Mount/open failures return an error and release acquired ownership.
+
+USB DISK now uses the same gate before unmounting. Its start/stop requests use
+atomic state transitions; final error state is published after worker ownership
+cleanup. A task launch failure releases only newly acquired ownership. A running
+USB disk or failed remount retains ownership until a later successful stop and
+BSP remount with a non-null card. Attach/detach callbacks use compare/exchange
+so they do not overwrite a concurrent Stopping state.
+
+This protects the new capture path against USB DISK; older panic/music/EEPROM
+users have not been migrated and this is NOT a project-wide SD lock. No capture
+operation is started from the UI/probe yet. Call capture and file callbacks on a
+worker task. Keep each lease token's method calls serialized; separate tokens
+may contend across tasks. Never unmount through an uncoordinated API while a
+capture exists.
+
+Tests include real capture staging, 40,000 competing gate-acquisition attempts,
+the production USB DISK request/worker code with SDK operations stubbed, startup
+rollback, task launch failures, failed remount retaining ownership, recovery,
+and capture mount failure. Host SDK stubs do not verify physical MSC teardown,
+BSP mount behavior, PHY routing or FAT durability. Hardware tests remain needed.

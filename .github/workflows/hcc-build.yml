@@ -23,12 +23,15 @@ jobs:
         run: |
           sh tests/backup_link/run_tests.sh
           sh tests/mdm_probe/run_tests.sh
+          sh tests/sd_access/run_tests.sh
           python3 -m unittest discover -s tests/firmware_package -v
       - name: Transport glue memory checks
         env:
           ASAN_OPTIONS: detect_leaks=0
           HCC_TEST_FLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer
-        run: sh tests/mdm_probe/run_tests.sh
+        run: |
+          sh tests/mdm_probe/run_tests.sh
+          sh tests/sd_access/run_tests.sh
 
   firmware:
     needs: host-tests
