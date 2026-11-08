@@ -120,3 +120,40 @@ every truncation position, invalid paths/name sizes, 0x0B rejection, write/commi
 failure, file/batch/frame/count quotas and cancellation. This API is compiled
 into P4 but not wired into its negotiation probe; an operation driver, complete
 UploadFiles control handling and SD-backed staging still need integration.
+
+## Filesystem target for mounted SD/VFS
+
+`StagedUploadTarget` supplies receiver callbacks for a trusted, existing parent
+on an already mounted filesystem. `open_session(parent)` exclusively creates an
+unused `rx_NNNNNN` directory; every file uses a private `NNNNNN.part` directory
+containing `payload.bin` and `identity.bin`. Incoming names never become local
+filesystem paths. Identity format: 8 ASCII bytes `HCCU0001`, BE32 source length,
+source bytes, BE32 destination length, destination bytes (no trailing NULs).
+
+After clean file-end, the target checks flush, file sync and close results,
+then renames the staged directory to `NNNNNN.ready`. Metadata and payload are
+published together by that rename. A failure/cancel removes this file's staged
+pair; committed files and unrelated directories are preserved. An existing
+ready destination causes failure instead of overwrite. A leftover `.part`
+after crash is incomplete and must not be used as a committed file.
+
+This is an HCC capture layout, not an Apple-restorable backup directory. It
+preserves exact original names in metadata for later inspection/export. Rename
+publication is not a guarantee against SD power loss: directory sync and
+power-failure recovery are not implemented. Target callbacks are synchronous
+and must run in an appropriate worker task, not an LVGL callback.
+
+Caller must hold exclusive ownership of the mount and this session directory,
+and retain target context until the receiver is destroyed. Parent and ancestors
+must be trusted; host final-parent symlinks are rejected, while ESP-IDF FAT VFS
+uses the mount ownership contract. Concurrency against renames/unmounts or
+external filesystem mutation is unsupported. The class does not mount SD or
+manage USB DISK handoff. Existing project USB DISK mode unmounts `/sdcard`, so
+that arbitration must be implemented before enabling real captures in the UI.
+An app may later use a dedicated parent such as `/sdcard/hcc_backup` after that
+mount/ownership check. The negotiation probe still does not instantiate a target.
+
+Host tests run the real upload receiver against real temporary files: payload
+and identity layout, empty files, abort cleanup, commit collision preservation,
+destruction cleanup, missing parent and symlink rejection. Hardware FAT/SD
+behavior and interruption during physical writes remain untested.
