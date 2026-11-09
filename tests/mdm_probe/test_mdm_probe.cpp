@@ -48,13 +48,24 @@ struct MockTls {
     const void *retry_read = nullptr, *retry_write = nullptr;
     size_t read_size = 0, write_size = 0;
     bool close = false;
+    uint8_t* ring=nullptr; size_t *ring_head=nullptr,*ring_length=nullptr;
 };
 struct HCCUSBTransport::ServiceTlsContext {
     MockTls ssl; bool established = true;
-    std::size_t rx_length=0,tx_length=0,tx_offset=0;
+    static constexpr size_t kRxCapacity=64*1024;
+    uint8_t rx_fifo[kRxCapacity]{};
+    std::size_t rx_head=0,rx_length=0,tx_length=0,tx_offset=0;
+    bool closed=false,handshake_step_requested=false;
 };
 static int mbedtls_ssl_read(MockTls *s, unsigned char *b, size_t n) {
     if (s->close) return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
+    if(s->ring){
+        const auto take=std::min({n,size_t(4096),*s->ring_length});
+        if(!take)return MBEDTLS_ERR_SSL_WANT_READ;
+        for(size_t i=0;i<take;++i)b[i]=s->ring[(*s->ring_head+i)%(64*1024)];
+        *s->ring_head=(*s->ring_head+take)%(64*1024);*s->ring_length-=take;
+        return static_cast<int>(take);
+    }
     if (!s->retry_read) {
         s->retry_read = b; s->read_size = n;
         return MBEDTLS_ERR_SSL_WANT_READ;
@@ -90,6 +101,10 @@ bool HCCUSBTransport::sendServiceTcpPacket(TxKind kind, uint8_t flags,
 // Compile and exercise the actual firmware glue, without compiling the rest of
 // the USB controller or pretending that these SDK stubs are real TLS/USB.
 #include "HCCMdmProbe.inc"
+// Non-MDM draining is outside this host adapter; burst tests use the actual ring
+// and operation parser with a transparent TLS read stub, not real decryption.
+bool HCCUSBTransport::drainServiceTls(){return true;}
+#include "HCCServiceTlsRx.inc"
 
 static void add_frame(std::vector<uint8_t> &out, const char *name) {
     std::ifstream file(std::string("../backup_link/tests/fixtures/") + name, std::ios::binary);
@@ -270,7 +285,59 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: backup results, teardown and independent deadlines release SD, including stalled TX; no stream restart");
+    {
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
+        t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
+        for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        std::strcpy(t._session_udid.data(),"00008101-001234567890ABCD");
+        assert(t.requestMdmBackup());
+        for(unsigned i=0;i<2000;++i){assert(t.pollMdmProbe());if(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting)break;}
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        tls.ssl.ring=tls.rx_fifo;tls.ssl.ring_head=&tls.rx_head;tls.ssl.ring_length=&tls.rx_length;
+        std::vector<uint8_t> bytes;
+        auto length=[&](uint32_t n){uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
+        auto name=[&](const char* text){length(std::strlen(text));bytes.insert(bytes.end(),text,text+std::strlen(text));};
+        name("<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>0</integer></array></plist>");
+        name("/device/source");name("backup/burst.bin");
+        const size_t payload_size=256*1024;
+        length(payload_size+1);bytes.push_back(0x0c);
+        for(size_t i=0;i<payload_size;++i)bytes.push_back(static_cast<uint8_t>(i));
+        length(1);bytes.push_back(0x00);length(0);
+        // Same owner task remains inside RX delivery with shared USB TX busy.
+        // No outer poll between back-to-back 32728-byte payloads (>64KiB total).
+        t._tx_in_flight=true;
+        for(size_t pos=0;pos<bytes.size();){
+            const auto n=std::min(size_t(32728),bytes.size()-pos);
+            assert(t.appendServiceTlsRx(bytes.data()+pos,n));pos+=n;
+            assert(tls.rx_length<32728);
+        }
+        assert(t.mdmBackupFiles()==1&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running);
+        t._tx_in_flight=false;
+        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        bytes.clear();name("<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>0</integer></dict></array></plist>");
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::done);
+        bool found=false;
+        for(const auto& e:fs::recursive_directory_iterator(sd_root))if(e.path().filename()=="payload.bin"&&fs::file_size(e.path())==payload_size){
+            std::ifstream f(e.path(),std::ios::binary);for(size_t i=0;i<payload_size;++i)assert(f.get()==static_cast<uint8_t>(i));found=true;
+        }
+        assert(found&&HCCSdAccess::gate.owner()==bb::SdOwner::free);
+        t.releaseMdmProbe();t._service_tls=nullptr;
+    }
+    std::puts("PASS: production RX ring drains 256KiB burst through operation while USB TX busy; exact file, status and final result");
+    {
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;
+        t._service_tls=&tls;tls.established=false;
+        std::vector<uint8_t> full(tls.kRxCapacity,0x5a);
+        assert(t.appendServiceTlsRx(full.data(),full.size()));
+        const uint8_t extra=0;
+        assert(!t.appendServiceTlsRx(&extra,1)&&tls.rx_length==tls.kRxCapacity);
+        assert(tls.rx_fifo[0]==0x5a&&tls.rx_fifo[tls.kRxCapacity-1]==0x5a);
+        t._service_tls=nullptr;
+    }
+    std::puts("PASS: unconsumed RX remains bounded and overflow never overwrites ring data");
     fs::remove_all(sd_root);
     assert(allocations == 0);
-    std::puts("8 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
+    std::puts("10 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
 }

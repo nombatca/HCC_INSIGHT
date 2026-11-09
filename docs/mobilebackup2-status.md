@@ -573,3 +573,24 @@ depth, payload quotas and deadlines remain enforced. Host storage regression
 creates all 00..ff children plus parents, fills the remaining allowance, rejects
 the next new directory and accepts existing directories at the cap. This does
 not establish that file transfer or a complete backup succeeds on hardware.
+
+
+Physical P4 TLS burst correction (2026-11-09):
+After directory preparation, the device sent consecutive 32764-byte USBMUX
+packets (32728-byte TCP payloads). The 64KiB service ciphertext ring overflowed
+with 33185 buffered bytes before another 32728-byte append. MDM intentionally
+owned ssl_read, but only polled after the USB event handler returned.
+
+The RX append path now pumps that same MDM reader before/after buffering when
+TLS is established. Each pump has a 32-poll cap and stops on no read/phase
+progress, preserving WANT buffer ownership. TLS output is staged only; USB
+submission remains deferred, and pending USB TX does not block upload reads.
+The ciphertext ring remains 64KiB and still fails closed if no consumer can
+make room. This is owner-task callback work, not a concurrent TLS reader.
+
+Host regression uses the production ring append and real coordinator/storage
+with a transparent TLS stub: back-to-back 32728-byte chunks containing a 256KiB
+upload, with USB TX busy and no outer protocol polls between appends. It checks
+the exact committed file, deferred status and terminal result. It also checks
+nonconsuming ring overflow does not overwrite data. Real TLS/USB/SD timing still
+requires the P4 test; synchronous SD callback latency remains a limitation.

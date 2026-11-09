@@ -14,7 +14,7 @@ struct HCCUSBTransport::MdmProbeContext {
     uint32_t list_offsets[hcc::backup::contents_object_count(kListEntries)]{};
     hcc::backup::ListingScratch list_scratch{};
     std::optional<HCCBackupOperation> operation;
-    std::uint64_t last_diagnostic_ms=0;
+    std::uint64_t last_diagnostic_ms=0, read_progress=0;
     MdmProbeContext()
         : link({control, sizeof(control), output, sizeof(output), {nodes, 128, text, sizeof(text)}}) {}
 };
@@ -173,7 +173,9 @@ hcc::backup::IoResult HCCUSBTransport::mdmRead(void *context, uint8_t *buffer, s
     if (transport->_service_tcp.state != TcpState::Connected) return {0, IoState::closed};
     if (transport->_notification_service_ssl) {
         if (transport->_service_tls == nullptr || !transport->_service_tls->established) return {0, IoState::error};
-        return mdmTlsResult(mbedtls_ssl_read(&transport->_service_tls->ssl, buffer, length), length);
+        const auto result=mdmTlsResult(mbedtls_ssl_read(&transport->_service_tls->ssl, buffer, length), length);
+        if (transport->_mdm_probe) transport->_mdm_probe->read_progress+=result.bytes;
+        return result;
     }
     const size_t used = transport->_notification_rx_stream_length;
     const size_t take = length < used ? length : used;
@@ -286,4 +288,22 @@ bool HCCUSBTransport::pollMdmProbe()
     printf("[HCC MDM] negotiation failed: %s\n", hcc::backup::link_error_name(result));
     _mdm_state.store(MdmState::Failed);
     return false;
+}
+
+// Called on the same USB owner task, including from RX callbacks. No USB submit:
+// mdmWrite stages TLS output only, and preserves WANT retry ownership. Bound the
+// work so a peer cannot keep the event callback running indefinitely.
+bool HCCUSBTransport::pumpMdmServiceRx()
+{
+    for (unsigned step=0;step<32 && _mdm_probe;++step) {
+        const auto before=_mdm_probe->read_progress;
+        const auto phase=_mdm_probe->operation ? _mdm_probe->operation->phase() : HCCBackupPhase::idle;
+        const auto state=_mdm_state.load();
+        if (state!=MdmState::Ready && state!=MdmState::Negotiating) return state!=MdmState::Failed;
+        if (!pollMdmProbe()) return false;
+        if (!_mdm_probe) return true;
+        const auto after_phase=_mdm_probe->operation ? _mdm_probe->operation->phase() : HCCBackupPhase::idle;
+        if (before==_mdm_probe->read_progress && phase==after_phase && state==_mdm_state.load()) break;
+    }
+    return true;
 }

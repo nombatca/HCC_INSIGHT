@@ -262,6 +262,7 @@ private:
     void releaseServiceTls();
     bool beginMdmProbe();
     bool pollMdmProbe();
+    bool pumpMdmServiceRx();
     void finishMdmBackup(bool success);
     void pollMdmBackupWatchdog();
     void releaseMdmProbe();
