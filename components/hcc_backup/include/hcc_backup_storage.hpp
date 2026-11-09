@@ -31,6 +31,7 @@ public:
     Error list_directory(std::string_view request, DirectoryListing& out, ListingScratch& scratch) const;
     // File-only logical rename of a unique committed record. Refuses existing
     // targets, directory moves and ambiguous identities. Uses caller PSRAM scratch.
+    // Returns would_block while indexing <=8 records per call; call again.
     // Metadata swap rolls back ordinary rename errors; not power-loss atomic.
     Error move_file(std::string_view from,std::string_view to,ListingScratch& scratch);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
@@ -43,6 +44,9 @@ private:
     Error begin(std::string_view,std::string_view);
     Error finish(bool);
     Error cleanup();
+    Error prepare_move_index(ListingScratch&);
+    void* move_scan_=nullptr;
+    std::uint32_t revision_=0;
     char root_[256]{},stage_[288]{},ready_[288]{};
     FILE* payload_=nullptr;
     bool active_=false;

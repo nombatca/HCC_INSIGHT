@@ -40,7 +40,14 @@ struct DirectoryListing {
 // (the USB task has only a few KiB of headroom). One instance may be reused
 // across calls. Sized for the 4096-byte relative-path limit plus the session
 // root prefix and a 255-byte component.
+struct MoveIndexEntry { std::uint32_t offset=0,length=0,record=0; };
 struct ListingScratch {
+    // Caller-owned PSRAM arena. No filesystem scan is repeated for each move.
+    MoveIndexEntry move_entries[1024]{};
+    char move_paths[262144]{};
+    char move_owner[256]{};
+    std::uint32_t move_count=0,move_used=0,move_revision=0,move_builds=0;
+    bool move_ready=false;
     char prefix[4096];   // normalized requested path
     char path[4096];     // a record's destination, normalized in place
     char nsdir[4400];    // <root>/directories/<prefix>

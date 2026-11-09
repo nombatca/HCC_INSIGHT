@@ -4,7 +4,7 @@
 #include "hcc_backup_upload_request.hpp"
 #include "hcc_backup_batch.hpp"
 #include <optional>
-enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled};
+enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving};
 enum class HCCBackupError {ok,would_block,invalid_argument,busy,storage,quota,transfer,
                            timeout,clock,unsupported,remote,disconnected,cancelled};
 struct HCCBackupConfig {
@@ -74,6 +74,8 @@ private:
     static constexpr std::size_t kMaxDownloadFiles = 24;
     hcc::backup::DownloadFile download_entries_[kMaxDownloadFiles];
     char download_arena_[2048];
+    hcc::plist::Document move_doc_{};
+    std::uint32_t move_key_=hcc::plist::none,moves_done_=0;
     HCCBackupConfig config_{};
     HCCBackupPhase phase_=HCCBackupPhase::idle;HCCBackupError error_=HCCBackupError::ok;
     std::uint64_t began_=0,last_now_=0,progress_=0,bytes_=0;

@@ -8,11 +8,12 @@ HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
 #ifdef ESP_PLATFORM
     printf("[HCC BACKUP] stop phase=%d reason=%d\n",static_cast<int>(phase_),static_cast<int>(e));
 #endif
+    move_doc_={};move_key_=hcc::plist::none;
     download_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -70,6 +71,24 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     const auto deadline=checkDeadline(now);
     if(deadline!=HCCBackupError::would_block)return deadline;
     Progress context{this,io,now};const bb::Duplex tracked{&context,Progress::read,Progress::write};
+    if(phase_==HCCBackupPhase::moving){
+        bb::Error moved=bb::Error::ok;
+        if(move_key_!=hcc::plist::none){
+            const auto value=move_doc_.get(move_key_)->next;
+            moved=capture_.moveFile(move_doc_.string(move_key_),move_doc_.string(value),*contents_.scratch);
+            if(moved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
+            if(moved==bb::Error::ok){++moves_done_;move_key_=move_doc_.get(value)->next;progress_=now;}
+        }
+#ifdef ESP_PLATFORM
+        if(moved!=bb::Error::ok||move_key_==hcc::plist::none||moves_done_%8==0)
+            printf("[HCC BACKUP] MoveItems progress=%u result=%s\n",moves_done_,bb::error_name(moved));
+#endif
+        if(moved!=bb::Error::ok||move_key_==hcc::plist::none){
+            if(moved==bb::Error::ok){reply_.emplace(output_,output_capacity_);if(reply_->begin(0,nullptr,true)!=bb::Error::ok)return fail(HCCBackupError::transfer);}
+            move_doc_={};phase_=HCCBackupPhase::replying;
+        }
+        return HCCBackupError::would_block;
+    }
     if(phase_==HCCBackupPhase::starting){
         const auto e=start_->pump({tracked.context,tracked.write});
         if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
@@ -143,21 +162,8 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         reply_.emplace(output_,output_capacity_);
         // Preflight the larger error envelope before changing any metadata.
         if(reply_->begin(-1,"Move unavailable in capture",true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
-        auto key=doc.get(event.payload)->first;bb::Error moved=bb::Error::ok;unsigned count=0;
-        while(key!=hcc::plist::none){
-            const auto value=doc.get(key)->next;
-            moved=capture_.moveFile(doc.string(key),doc.string(value),*contents_.scratch);
-            if(moved!=bb::Error::ok)break;
-            ++count;key=doc.get(value)->next;
-        }
-#ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] MoveItems files_moved=%u result=%s\n",count,bb::error_name(moved));
-#endif
-        if(moved==bb::Error::ok){
-            reply_.emplace(output_,output_capacity_);
-            if(reply_->begin(0,nullptr,true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
-        }
-        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+        move_doc_=doc;move_key_=doc.get(event.payload)->first;moves_done_=0;
+        phase_=HCCBackupPhase::moving;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::purge_disk_space){
         // Match idevicebackup2: refuse host purging with an explicit status,

@@ -686,3 +686,24 @@ Log pairs/max/root-count/type on shape rejection and an explicit entry-type
 reason, without paths. Protocol regressions accept 65, 670 and 1024 pairs,
 reject 1025 pairs, wrong types and traversal; request acknowledgement remains
 explicit. File-only storage restrictions still apply after parsing succeeds.
+
+
+MoveItems scheduling/index correction: physical request has 128 pairs and the
+user reports no return after waiting. Previously the coordinator performed all
+renames synchronously, each rescanning every .ready record: O(pairs * files)
+filesystem work on the USB owner task. Replace with a persistent moving phase:
+index <=8 directory entries per poll, then update at most one file per poll.
+Keep protocol document borrowed until all pairs complete; send status only
+afterwards. Cancellation/deadlines cover moving; completed local work advances
+progress, total deadline still applies. Logs report index start/ready and every
+eight moves. One file rename/fsync itself remains synchronous.
+
+Caller PSRAM scratch gains a bounded 1024-record index and 256KiB path arena.
+Index reuse avoids repeated disk scans; paths are compared in full (no hash
+collision assumption), source record revalidated before mutation. New uploads
+invalidate it, successful moves update it. Index scans close on completion,
+error or target destruction. Arena overflow fails explicitly before rename.
+Tests verify 128 file moves share one incremental scan, new upload invalidation,
+128 chained MoveItems yield between pairs with no early response, cancellation
+in moving, exact file/final result and existing storage rejection behavior.
+File-only/no-existing-target restrictions and power-loss limitations remain.

@@ -219,19 +219,20 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<16;++mode){
+    for(unsigned mode=0;mode<17;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
         for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
         std::strcpy(t._session_udid.data(),mode==1?"invalid":"00008101-001234567890ABCD");
-        if(mode==0||mode==5||mode==12){
+        if(mode==0||mode==5||mode==12||mode==16){
             auto& bytes=tls.ssl.input;
             auto length=[&](std::uint32_t n){std::uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
             auto name=[&](const char* s){length(std::strlen(s));bytes.insert(bytes.end(),s,s+std::strlen(s));};
             const char* xml="<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>5</integer></array></plist>";
             name(xml);name("/device/source");name("backup/glue.bin");
             length(6);bytes.push_back(0x0c);for(char c:std::string_view("hello"))bytes.push_back(c);
+            if(mode==16){length(1);bytes.push_back(0);length(0);name("<plist><array><string>DLMessageMoveItems</string><dict><key>backup/glue.bin</key><string>backup/new.bin</string></dict></array></plist>");}
             if(mode==0){length(1);bytes.push_back(0x0b);length(0);name("<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>0</integer></dict></array></plist>");}
         }
         if(mode==7){
@@ -273,6 +274,9 @@ int main() {
                 }
             }
             if(mode==3&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){t.releaseMdmProbe();break;}
+            if(mode==16&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::moving){
+                t._mdm_probe->operation->cancel();assert(!t.pollMdmProbe());break;
+            }
             if(!ok)break;
         }
         assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
@@ -360,10 +364,20 @@ int main() {
         t._tx_in_flight=false;
         for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
-        bytes.clear();name("<plist><array><string>DLMessageMoveItems</string><dict><key>backup/burst.bin</key><string>backup/final.bin</string></dict></array></plist>");
+        std::string moves="<plist><array><string>DLMessageMoveItems</string><dict>";
+        for(unsigned i=0;i<128;++i){
+            const auto from=i==0?std::string("backup/burst.bin"):"backup/moved"+std::to_string(i-1);
+            const auto to=i==127?std::string("backup/final.bin"):"backup/moved"+std::to_string(i);
+            moves+="<key>"+from+"</key><string>"+to+"</string>";
+        }
+        moves+="</dict></array></plist>";bytes.clear();name(moves.c_str());
         const auto move_reply_start=tls.ssl.output.size();
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
-        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::moving&&tls.ssl.output.size()==move_reply_start);
+        unsigned move_polls=0;
+        for(;move_polls<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++move_polls)assert(t.pollMdmProbe());
+        assert(move_polls>=127); // each pair gives control back to the USB owner
+        assert(t._mdm_probe->list_scratch.move_builds==1);
         const auto* move_reply=tls.ssl.output.data()+move_reply_start;
         hcc::plist::Node move_nodes[32];char move_text[512];hcc::plist::Document move_doc;
         assert(hcc::plist::parse(move_reply+4,bb::read_be32(move_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);

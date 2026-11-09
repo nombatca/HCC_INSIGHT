@@ -31,7 +31,7 @@ bool child(char* out,std::size_t capacity,const char* parent,const char* name){
     const int n=snprintf(out,capacity,"%s/%s",parent,name);return n>0&&static_cast<std::size_t>(n)<capacity;
 }
 }
-StagedUploadTarget::~StagedUploadTarget(){if(active_)finish(false);}
+StagedUploadTarget::~StagedUploadTarget(){if(move_scan_)closedir(static_cast<DIR*>(move_scan_));if(active_)finish(false);}
 Error StagedUploadTarget::open_session(const char* parent){
     if(root_[0]||active_)return Error::busy;
     if(!parent||!parent[0]||std::strlen(parent)>230)return Error::invalid_argument;
@@ -142,7 +142,7 @@ Error StagedUploadTarget::finish(bool commit){
     // Never overwrite a previous published directory, including an empty one.
     if(stat(ready_,&existing)==0||errno!=ENOENT){cleanup();return Error::io_error;}
     if(rename(stage_,ready_)!=0){cleanup();return Error::io_error;}
-    active_=false;++committed_;return Error::ok;
+    active_=false;++committed_;++revision_;return Error::ok;
 }
 namespace {
 // `NNNNNN.ready` committed-file record (exactly six digits + ".ready").
@@ -314,6 +314,41 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
 } // namespace hcc::backup
 
 namespace hcc::backup {
+Error StagedUploadTarget::prepare_move_index(ListingScratch& scratch){
+    if(scratch.move_ready&&scratch.move_revision==revision_&&std::strcmp(scratch.move_owner,root_)==0)return Error::ok;
+    if(!move_scan_){
+        scratch.move_ready=false;scratch.move_count=0;scratch.move_used=0;
+        if(!plain_directory(root_))return Error::io_error;
+        move_scan_=opendir(root_);if(!move_scan_)return Error::io_error;
+        std::strcpy(scratch.move_owner,root_);++scratch.move_builds;
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] MoveItems index starting\n");
+#endif
+    }
+    auto stop=[&](Error error){closedir(static_cast<DIR*>(move_scan_));move_scan_=nullptr;return error;};
+    for(unsigned step=0;step<8;++step){
+        errno=0;auto* ent=readdir(static_cast<DIR*>(move_scan_));
+        if(!ent){
+            if(errno)return stop(Error::io_error);
+            if(closedir(static_cast<DIR*>(move_scan_))!=0){move_scan_=nullptr;return Error::io_error;}
+            move_scan_=nullptr;scratch.move_ready=true;scratch.move_revision=revision_;
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] MoveItems index ready records=%u path_bytes=%u\n",scratch.move_count,scratch.move_used);
+#endif
+            return Error::ok;
+        }
+        if(!ready_record(ent->d_name))continue;
+        if(scratch.move_count>=1024)return stop(Error::too_large);
+        if(!child(scratch.record,sizeof(scratch.record),root_,ent->d_name)||!plain_directory(scratch.record))return stop(Error::io_error);
+        std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
+        if(!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time))return stop(Error::io_error);
+        if(length>sizeof(scratch.move_paths)-scratch.move_used)return stop(Error::too_large);
+        unsigned record=0;for(unsigned i=0;i<6;++i)record=record*10+static_cast<unsigned>(ent->d_name[i]-'0');
+        auto& item=scratch.move_entries[scratch.move_count++];item={scratch.move_used,static_cast<std::uint32_t>(length),record};
+        std::memcpy(scratch.move_paths+scratch.move_used,scratch.path,length);scratch.move_used+=length;
+    }
+    return Error::would_block;
+}
 Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,ListingScratch& scratch){
     if(active_)return Error::busy;
     if(!root_[0]||!valid_relative_backup_path(from)||!valid_relative_backup_path(to))return Error::invalid_argument;
@@ -324,23 +359,24 @@ Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,Li
         for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
         return true;
     };
-    if(!plain_directory(root_))return Error::io_error;
-    DIR* dir=opendir(root_);if(!dir)return Error::io_error;
-    char* source=scratch.record;source[0]=0;bool collision=false;Error error=Error::ok;
-    for(struct dirent* ent;(ent=readdir(dir));){
-        if(!ready_record(ent->d_name))continue;
-        char record[320];if(!child(record,sizeof(record),root_,ent->d_name)||!plain_directory(record)){error=Error::io_error;break;}
-        std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
-        if(!read_record(record,scratch.path,sizeof(scratch.path),length,size,time)){error=Error::io_error;break;}
-        const std::string_view dest(scratch.path,length);
-        if(equal(dest,from)){if(source[0]){error=Error::io_error;break;}std::strcpy(source,record);}
+    const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
+    char* source=scratch.record;source[0]=0;std::uint32_t source_index=0;bool collision=false;
+    for(std::uint32_t i=0;i<scratch.move_count;++i){
+        const auto& entry=scratch.move_entries[i];const std::string_view dest(scratch.move_paths+entry.offset,entry.length);
+        if(equal(dest,from)){
+            if(source[0])return Error::io_error;
+            const int n=std::snprintf(source,sizeof(scratch.record),"%s/%06u.ready",root_,entry.record);
+            if(n<=0||static_cast<std::size_t>(n)>=sizeof(scratch.record))return Error::too_large;
+            source_index=i;
+        }
         if(equal(dest,to)&&!equal(from,to))collision=true;
-        // An existing descendant means the destination names a logical directory.
         if(dest.size()>to.size()&&equal(dest.substr(0,to.size()),to)&&(dest[to.size()]=='/'||dest[to.size()]=='\\'))collision=true;
     }
-    if(closedir(dir)!=0)error=Error::io_error;
-    if(error!=Error::ok||!source[0]||collision)return Error::io_error;
+    if(!source[0]||collision)return Error::io_error;
+    std::size_t verified=0;std::uint64_t payload_size=0;std::int64_t modified=0;
+    if(!plain_directory(source)||!read_record(source,scratch.path,sizeof(scratch.path),verified,payload_size,modified)||!equal({scratch.path,verified},from))return Error::io_error;
     if(equal(from,to))return Error::ok;
+    if(to.size()>sizeof(scratch.move_paths)-scratch.move_used)return Error::too_large;
     // Reject collisions with explicit namespace directories, following no links.
     if(to.size()+std::strlen(root_)+14>=sizeof(scratch.nsdir))return Error::too_large;
     std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
@@ -384,7 +420,10 @@ Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,Li
     if(rename(pending,original)!=0){rename(previous,original);unlink(pending);return Error::io_error;}
     // Keep old identity as a recovery record; future moves are deliberately refused
     // until it is removed after the successful swap.
-    if(unlink(previous)!=0)return Error::io_error;
+    if(unlink(previous)!=0){scratch.move_ready=false;return Error::io_error;}
+    auto& entry=scratch.move_entries[source_index];entry.offset=scratch.move_used;entry.length=static_cast<std::uint32_t>(to.size());
+    std::memcpy(scratch.move_paths+scratch.move_used,to.data(),to.size());scratch.move_used+=to.size();
+    ++revision_;scratch.move_revision=revision_;
     return Error::ok;
 }
 } // namespace hcc::backup

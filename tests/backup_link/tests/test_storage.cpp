@@ -19,6 +19,10 @@ struct Wire{
     void file(const std::string& dest,const std::string& body,std::uint8_t end=0){name("/device/opaque");name(dest);if(!body.empty()){number(body.size()+1);bytes.push_back(0x0c);bytes.insert(bytes.end(),body.begin(),body.end());}number(1);bytes.push_back(end);}
     static bb::IoResult receive(void* ctx,std::uint8_t* b,std::size_t n){auto& w=*static_cast<Wire*>(ctx);if(w.pos==w.bytes.size())return {0,bb::IoState::closed};const auto take=std::min({n,std::size_t(3),w.bytes.size()-w.pos});std::memcpy(b,w.bytes.data()+w.pos,take);w.pos+=take;return {take,bb::IoState::ok};}
 };
+static bb::Error move(bb::StagedUploadTarget& target,std::string_view from,std::string_view to,bb::ListingScratch& scratch){
+    for(unsigned i=0;i<1000;++i){const auto e=target.move_file(from,to,scratch);if(e!=bb::Error::would_block)return e;}
+    assert(false);return bb::Error::io_error;
+}
 static bb::Error drive(bb::UploadBatchReceiver& r,Wire& w){for(unsigned i=0;i<10000;++i){const auto e=r.pump({&w,Wire::receive,nullptr},2);if(e!=bb::Error::would_block)return e;}assert(false);return bb::Error::io_error;}
 int main(){
     char temp[]="/tmp/hcc-storage-XXXXXX";assert(mkdtemp(temp));const fs::path parent(temp);
@@ -106,17 +110,17 @@ int main(){
         }
         static bb::ListingScratch scratch;
         const auto original=read(root/"000001.ready/identity.bin");
-        assert(target.move_file("../escape","backup/new",scratch)==bb::Error::invalid_argument);
-        assert(target.move_file("backup/tmp","backup/existing",scratch)==bb::Error::io_error);
-        assert(target.move_file("backup/missing","backup/new",scratch)==bb::Error::io_error);
+        assert(move(target,"../escape","backup/new",scratch)==bb::Error::invalid_argument);
+        assert(move(target,"backup/tmp","backup/existing",scratch)==bb::Error::io_error);
+        assert(move(target,"backup/missing","backup/new",scratch)==bb::Error::io_error);
         assert(target.create_directory("backup/dir")==bb::Error::ok);
-        assert(target.move_file("backup/tmp","backup/dir",scratch)==bb::Error::io_error);
+        assert(move(target,"backup/tmp","backup/dir",scratch)==bb::Error::io_error);
         std::ofstream(root/"000001.ready/identity.move")<<"preserve";
-        assert(target.move_file("backup/tmp","backup/new",scratch)==bb::Error::io_error);
+        assert(move(target,"backup/tmp","backup/new",scratch)==bb::Error::io_error);
         assert(read(root/"000001.ready/identity.bin")==original);
         fs::remove(root/"000001.ready/identity.move");
-        assert(target.move_file("backup/tmp","backup/final",scratch)==bb::Error::ok);
-        assert(target.move_file("backup/final","backup/final",scratch)==bb::Error::ok);
+        assert(move(target,"backup/tmp","backup/final",scratch)==bb::Error::ok);
+        assert(move(target,"backup/final","backup/final",scratch)==bb::Error::ok);
         assert(read(root/"000001.ready/payload.bin")==std::vector<uint8_t>({1,2,3}));
         assert(!fs::exists(root/"000001.ready/identity.previous"));
         bb::DirectoryEntry entries[8];bb::DirectoryListing listing{entries,8,0};
@@ -127,6 +131,21 @@ int main(){
         assert(std::search(updated.begin(),updated.end(),std::begin("opaque-source"),std::end("opaque-source")-1)!=updated.end());
     }
     std::cout<<"PASS: file-only logical moves preserve payload/source, update listing, refuse traversal/collisions/missing source and pending metadata\n";
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);
+        auto cb=target.target();
+        for(unsigned i=0;i<128;++i){assert(cb.begin(cb.context,"source","before/"+std::to_string(i))==bb::Error::ok);assert(cb.finish(cb.context,true)==bb::Error::ok);}
+        static bb::ListingScratch scratch;const auto builds=scratch.move_builds;
+        unsigned yields=0;
+        for(unsigned i=0;i<128;++i){
+            for(;;){const auto e=target.move_file("before/"+std::to_string(i),"after/"+std::to_string(i),scratch);if(e==bb::Error::would_block){++yields;continue;}assert(e==bb::Error::ok);break;}
+        }
+        assert(yields>=16&&scratch.move_builds==builds+1&&scratch.move_count==128);
+        // Newly committed data invalidates the index and is discoverable.
+        assert(cb.begin(cb.context,"source","new-file")==bb::Error::ok&&cb.finish(cb.context,true)==bb::Error::ok);
+        assert(move(target,"new-file","new-name",scratch)==bb::Error::ok&&scratch.move_builds==builds+2);
+    }
+    std::cout<<"PASS: 128 moves share one incremental eight-record scan; new upload invalidates index\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }
