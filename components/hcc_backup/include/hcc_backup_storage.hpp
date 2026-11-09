@@ -12,10 +12,11 @@ public:
     StagedUploadTarget(const StagedUploadTarget&)=delete;
     StagedUploadTarget& operator=(const StagedUploadTarget&)=delete;
     ~StagedUploadTarget();
+    static constexpr std::uint32_t max_created_directories=1024;
     Error open_session(const char* existing_parent);
     // Capture-only directory namespace: root/directories/<relative path>.
     // Payloads remain indexed .ready records, not materialized under this tree.
-    // 512-byte full path, <=32 components, <=256 newly created directories/session.
+    // 512-byte full path, <=32 components, <=1024 newly created directories/session.
     // Exclusive ownership/trusted ancestors required; no symlinks on host.
     // Existing directories succeed. Failure may leave newly made parents.
     Error create_directory(std::string_view relative_path);

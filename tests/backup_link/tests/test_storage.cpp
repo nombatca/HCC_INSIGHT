@@ -77,8 +77,17 @@ int main(){
         const auto preserved=read(root/"directories/regular");assert(std::string(preserved.begin(),preserved.end())=="preserve");
         fs::create_directory_symlink(parent,root/"directories/link");
         assert(target.create_directory("link/outside")==bb::Error::io_error&&!fs::exists(parent/"outside"));
-        // Quota includes namespace root and each newly created parent.
-        for(unsigned i=0;i<252;++i)assert(target.create_directory("dir"+std::to_string(i))==bb::Error::ok);
+        // A complete 00..ff shard tree must fit alongside namespace/device parents.
+        for(unsigned i=0;i<256;++i){
+            char shard[32];snprintf(shard,sizeof(shard),"device/%02x",i);
+            assert(target.create_directory(shard)==bb::Error::ok);
+            assert(fs::is_directory(root/"directories"/shard));
+        }
+        // Four original directories + device parent + 256 shards = 261.
+        // Existing paths do not consume quota, even once the cap is reached.
+        assert(target.create_directory("device/ff")==bb::Error::ok);
+        for(unsigned i=261;i<bb::StagedUploadTarget::max_created_directories;++i)
+            assert(target.create_directory("dir"+std::to_string(i))==bb::Error::ok);
         assert(target.create_directory("overflow")==bb::Error::too_large&&!fs::exists(root/"directories/overflow"));
         assert(target.create_directory("backup/a/b")==bb::Error::ok);
     }

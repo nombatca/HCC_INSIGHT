@@ -376,7 +376,7 @@ listing handler must combine that mapping with this namespace; listing is still
 unsupported. No Backup or directory operation is started from the MDM UI.
 
 Bounds: full local path at most 512 bytes including NUL, at most 32 relative
-components, each at most 255 bytes, and 256 newly created directories per session
+components, each at most 255 bytes, and 1024 newly created directories per session
 including the namespace root/parents. Both slash styles normalize to `/`. Reject
 absolute/traversal/empty components, control/FAT-reserved characters and trailing
 dots/spaces. Validate the entire path before mutation. Host traversal rejects
@@ -562,3 +562,14 @@ heartbeat that does not consume/send bytes, clock reversal, failed outer
 transport and timeout during an open staged upload. They assert .part cleanup,
 preserved committed count, released SD lease and no same-stream restart. SDK
 callbacks/physical USB/SD timing still require a rerun on P4.
+
+
+Physical P4 directory quota correction (2026-11-09):
+The device continued beyond DownloadFiles into GetFreeDiskSpace and repeated
+CreateDirectory requests, then stopped with local quota error 5 and zero files.
+The previous 256-directory cap counted namespace and parent directories too,
+preventing a 256-shard tree from fitting. Raise the bounded cap to 1024; path,
+depth, payload quotas and deadlines remain enforced. Host storage regression
+creates all 00..ff children plus parents, fills the remaining allowance, rejects
+the next new directory and accepts existing directories at the cap. This does
+not establish that file transfer or a complete backup succeeds on hardware.

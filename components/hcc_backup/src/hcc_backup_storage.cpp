@@ -75,7 +75,7 @@ Error StagedUploadTarget::create_directory(std::string_view relative){
         const auto found=lstat(path,&existing);
 #endif
         if(found==0||errno!=ENOENT)return Error::io_error;
-        if(directories_>=256)return Error::too_large;
+        if(directories_>=max_created_directories)return Error::too_large;
         if(mkdir(path,0700)!=0)return Error::io_error;
         ++directories_;return Error::ok;
     };
