@@ -9,6 +9,7 @@ enum class Phase { await_version, version_decision, await_ready, ready,
 enum class Outcome { none, success, remote_error, local_error };
 enum class SessionError { ok, malformed_message, wrong_state, unsupported_message,
                           unsupported_operation, invalid_path, incompatible_version };
+constexpr std::size_t kMaxMovePairs=1024;
 enum class EventKind { version_offer, device_ready, download_files, upload_files, free_disk_space, create_directory,
                        contents_of_directory, process_message, result, disconnect, unsupported, purge_disk_space, move_files };
 struct SessionEvent {

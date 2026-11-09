@@ -1,7 +1,7 @@
 // Included once after ServiceTlsContext. USB-task-owned protocol glue.
 struct HCCUSBTransport::MdmProbeContext {
     static constexpr std::size_t kListEntries = 64;
-    static constexpr std::size_t kControlNodes=2048;
+    static constexpr std::size_t kControlNodes=4096;
     uint8_t control[65536]{};
     uint8_t output[1024]{};
     hcc::plist::Node nodes[kControlNodes]{};

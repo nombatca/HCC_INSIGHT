@@ -674,3 +674,15 @@ files may require manual inspection after interrupted writes. Existing captures
 in other sessions are untouched. Hardware rerun must establish whether the
 device's actual move dictionary fits this supported file-only subset.
 Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c
+
+
+MoveItems validation correction: same physical boundary now reports malformed
+for MoveItems at 670 files. Previous handler rejected any dictionary over 64
+pairs as malformed before storage; this is a plausible cause, not established
+from encrypted payload alone. Increase bounded move allowance to 1024 pairs
+and P4 node arena to 4096 so 1024 key/value pairs fit alongside the envelope.
+Retain 64KiB control/text arenas and strict types/relative-path validation.
+Log pairs/max/root-count/type on shape rejection and an explicit entry-type
+reason, without paths. Protocol regressions accept 65, 670 and 1024 pairs,
+reject 1025 pairs, wrong types and traversal; request acknowledgement remains
+explicit. File-only storage restrictions still apply after parsing succeeds.

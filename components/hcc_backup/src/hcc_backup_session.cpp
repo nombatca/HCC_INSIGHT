@@ -80,11 +80,26 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
     if(tag=="DLMessageMoveItems"||tag=="DLMessageMoveFiles") {
         if(phase_!=Phase::running)return SessionError::wrong_state;
         const auto id=d.at(d.root,1);const auto* moves=d.get(id);
-        if(!moves||moves->kind!=plist::Kind::dict||moves->count>64)return SessionError::malformed_message;
+        if(!moves||moves->kind!=plist::Kind::dict||moves->count>kMaxMovePairs){
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] MoveItems reject reason=shape_or_count kind=%d pairs=%u max=%u root_items=%u\n",
+                   moves?static_cast<int>(moves->kind):-1,moves?moves->count:0,
+                   static_cast<unsigned>(kMaxMovePairs),root->count);
+#endif
+            return SessionError::malformed_message;
+        }
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] MoveItems request pairs=%u\n",moves->count);
+#endif
         auto key=moves->first;
         while(key!=plist::none){
             const auto* k=d.get(key);const auto value=k?k->next:plist::none;const auto* v=d.get(value);
-            if(!k||!v||k->kind!=plist::Kind::string||v->kind!=plist::Kind::string)return SessionError::malformed_message;
+            if(!k||!v||k->kind!=plist::Kind::string||v->kind!=plist::Kind::string){
+#ifdef ESP_PLATFORM
+                printf("[HCC BACKUP] MoveItems reject reason=entry_type\n");
+#endif
+                return SessionError::malformed_message;
+            }
             if(!valid_relative_backup_path(d.string(key))||!valid_relative_backup_path(d.string(value)))return SessionError::invalid_path;
             key=v->next;
         }

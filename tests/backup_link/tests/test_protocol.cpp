@@ -189,6 +189,28 @@ void request_validation_and_unsupported() {
     CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
     CHECK(s.complete_request(true)==bb::SessionError::ok && s.pending_request()==bb::EventKind::unsupported);
 }
+void move_large_dictionary() {
+    Memory handshake;bb::SessionObserver observer;bb::SessionEvent event;ready(handshake,observer);
+    CHECK(observer.mark_operation_started()==bb::SessionError::ok);
+    static pp::Node nodes[4096];static char text[65536];pp::Document doc;
+    for(const unsigned count:{65u,670u,1024u,1025u}){
+        std::string xml="<plist><array><string>DLMessageMoveItems</string><dict>";
+        for(unsigned i=0;i<count;++i)xml+="<key>a/"+std::to_string(i)+"</key><string>b/"+std::to_string(i)+"</string>";
+        xml+="</dict></array></plist>";
+        CHECK(xml.size()<65536);
+        CHECK(pp::parse(reinterpret_cast<const uint8_t*>(xml.data()),xml.size(),{nodes,4096,text,sizeof(text)},doc)==pp::Error::ok);
+        const auto result=observer.consume(doc,event);
+        CHECK(result==(count<=bb::kMaxMovePairs?bb::SessionError::ok:bb::SessionError::malformed_message));
+        if(result==bb::SessionError::ok){
+            CHECK(event.kind==bb::EventKind::move_files&&observer.phase()==bb::Phase::request_pending);
+            CHECK(observer.complete_request(true)==bb::SessionError::ok);
+        }else CHECK(observer.phase()==bb::Phase::running);
+    }
+    CHECK(handshake.xml("<array><string>DLMessageMoveItems</string><dict><key>a</key><integer>1</integer></dict></array>")==pp::Error::ok);
+    CHECK(observer.consume(handshake.doc,event)==bb::SessionError::malformed_message);
+    CHECK(handshake.xml("<array><string>DLMessageMoveItems</string><dict><key>../escape</key><string>b</string></dict></array>")==pp::Error::ok);
+    CHECK(observer.consume(handshake.doc,event)==bb::SessionError::invalid_path);
+}
 void free_space_request_lifecycle() {
     Memory m;bb::SessionObserver s;bb::SessionEvent e;
     CHECK(m.parse(fixture("version.xml"))==pp::Error::ok);
@@ -304,6 +326,7 @@ int main() {
         {"negotiation failure and disconnect is not success",state_machine_failures_and_disconnect},
         {"named result codes, Hello distinction and bounded diagnostics",named_process_results_and_diagnostics},
         {"request types, relative paths and unsupported operations",request_validation_and_unsupported},
+        {"MoveItems 65/670/1024 pairs, cap and malformed path/types",move_large_dictionary},
         {"free-space request requires running and explicit acknowledgement",free_space_request_lifecycle},
         {"directory request validation and lifecycle",directory_request_lifecycle},
         {"contents-of-directory request validation and lifecycle",contents_request_lifecycle},
