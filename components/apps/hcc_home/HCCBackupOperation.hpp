@@ -12,6 +12,8 @@ struct HCCBackupConfig {
     std::uint64_t minimum_free_bytes=1048576;
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
+    bool use_sd_capacity=false;
+    std::uint64_t reserve_bytes=64ULL*1024*1024;
 };
 // Caller-owned storage for DLContentsOfDirectory listings, kept out of this
 // object so it stays small enough for the USB worker. `entries`/`entry_capacity`

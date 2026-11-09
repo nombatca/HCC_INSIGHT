@@ -644,3 +644,15 @@ sentinel and continues through a large control/upload/final result. A device
 may still terminate for insufficient advertised space; the 256MiB capture
 quota is unchanged and is not a full-backup capacity promise.
 Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c
+
+
+Physical insufficient-space response 105: after purge refusal, peer reports
+Insufficient free disk space with zero files. P4 now opts into an SD-derived
+payload budget instead of the fixed 256MiB default. Under the capture SD lease,
+preflight requires more than 64MiB reserve and snapshots free-minus-reserve as
+the session payload quota. Each free-space response is min(remaining payload
+quota, current SD free minus reserve); log actual, reserved and advertised bytes.
+Portable defaults remain fixed; files/depth/per-file/frame/time limits remain.
+SD capacity still must fit the device's requested backup; no deleted old data,
+space fabrication or full-backup guarantee. Host test: 1GiB SD advertises 960MiB;
+32MiB fails preflight, before Backup is sent. Existing upload/result tests pass.

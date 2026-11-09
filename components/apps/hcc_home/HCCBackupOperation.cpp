@@ -20,13 +20,26 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
     if(phase_!=HCCBackupPhase::idle)return HCCBackupError::busy;
     observer_=link_.session_observer();
     if(!observer_||observer_->phase()!=bb::Phase::ready||link_.control_frame_pending()||!scratch_||!capacity_||capacity_>bb::kObservedChunkSize||!output_||output_capacity_<4||
-       !config.minimum_free_bytes||!config.idle_timeout_ms||!config.total_timeout_ms||!config.limits.max_files||config.limits.max_files>1024||
+       (config.use_sd_capacity&&config.reserve_bytes==UINT64_MAX)||!config.minimum_free_bytes||!config.idle_timeout_ms||!config.total_timeout_ms||!config.limits.max_files||config.limits.max_files>1024||
        !config.limits.max_frame_payload||!config.limits.max_file_bytes||!config.limits.max_batch_bytes)return HCCBackupError::invalid_argument;
     std::size_t encoded=0;
     if(bb::encode_backup_request(udid,config.force_full,output_+4,output_capacity_-4,encoded)!=bb::LinkError::ok)return HCCBackupError::invalid_argument;
     // No request bytes or running state until mount/space preflight succeeds.
-    const auto storage=capture_.open(config.minimum_free_bytes);
+    const auto storage=capture_.open(config.use_sd_capacity?std::max(config.minimum_free_bytes,config.reserve_bytes+1):config.minimum_free_bytes);
     if(storage!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=storage==bb::Error::busy?HCCBackupError::busy:storage==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage;}
+    if(config.use_sd_capacity){
+        std::uint64_t total=0,available=0;
+        if(esp_vfs_fat_info(BSP_SD_MOUNT_POINT,&total,&available)!=ESP_OK||available>total){
+            phase_=HCCBackupPhase::failed;return error_=HCCBackupError::storage;
+        }
+        if(available<=config.reserve_bytes){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::quota;}
+        config.limits.max_batch_bytes=available-config.reserve_bytes;
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] space free=%llu reserve=%llu payload_budget=%llu\n",
+               static_cast<unsigned long long>(available),static_cast<unsigned long long>(config.reserve_bytes),
+               static_cast<unsigned long long>(config.limits.max_batch_bytes));
+#endif
+    }
     start_.emplace(*observer_,output_,output_capacity_);
     if(start_->begin(udid,config.force_full)!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::transfer;}
     config_=config;began_=last_now_=progress_=now;phase_=HCCBackupPhase::starting;return HCCBackupError::ok;
@@ -141,7 +154,13 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         // Advertise the effective capture budget, capped by the remaining quota.
         const auto remaining=config_.limits.max_batch_bytes-bytes_;
         reply_.emplace(output_,output_capacity_);
-        if(reply_->begin_free_space(std::min(available_bytes,remaining))!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        const auto usable=config_.use_sd_capacity?(available_bytes>config_.reserve_bytes?available_bytes-config_.reserve_bytes:0):available_bytes;
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] free-space actual=%llu advertised=%llu remaining_budget=%llu\n",
+               static_cast<unsigned long long>(available_bytes),static_cast<unsigned long long>(std::min(usable,remaining)),
+               static_cast<unsigned long long>(remaining));
+#endif
+        if(reply_->begin_free_space(std::min(usable,remaining))!=bb::Error::ok)return fail(HCCBackupError::transfer);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::contents_of_directory){

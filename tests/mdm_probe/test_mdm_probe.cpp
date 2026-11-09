@@ -25,7 +25,8 @@ static std::string sd_root;
 void* bsp_sdcard=reinterpret_cast<void*>(1);
 int bsp_sdcard_mount(){return 0;}
 const char* hcc_test_mount_point(){return sd_root.c_str();}
-int esp_vfs_fat_info(const char*,std::uint64_t* total,std::uint64_t* available){*total=*available=1073741824;return 0;}
+static uint64_t sd_available=1073741824;
+int esp_vfs_fat_info(const char*,std::uint64_t* total,std::uint64_t* available){*total=1073741824;*available=sd_available;return 0;}
 static uint64_t now_ms = 0;
 static uint64_t mdmNowMs() { return now_ms; }
 static bool allocation_fails = false;
@@ -217,7 +218,7 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<15;++mode){
+    for(unsigned mode=0;mode<16;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
@@ -242,6 +243,7 @@ int main() {
             uint8_t h[4];bb::write_be32(h,msg.size());tls.ssl.input.insert(tls.ssl.input.end(),h,h+4);
             tls.ssl.input.insert(tls.ssl.input.end(),msg.begin(),msg.end());
         }
+        if(mode==15)sd_available=32*1024*1024;
         assert(t.requestMdmBackup()&&!t.requestMdmBackup());
         if(mode==4)tls.ssl.close=true;
         for(unsigned i=0;i<5000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){
@@ -290,7 +292,7 @@ int main() {
             assert(found);
             const auto before=tls.ssl.offset;assert(t.pollMdmProbe());assert(tls.ssl.offset==before);
         }
-        t.releaseMdmProbe();t._service_tls=nullptr;
+        t.releaseMdmProbe();t._service_tls=nullptr;sd_available=1073741824;
     }
     std::puts("PASS: backup results, teardown and independent deadlines release SD, including stalled TX; no stream restart");
     {
@@ -305,6 +307,15 @@ int main() {
         std::vector<uint8_t> bytes;
         auto length=[&](uint32_t n){uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
         auto name=[&](const char* text){length(std::strlen(text));bytes.insert(bytes.end(),text,text+std::strlen(text));};
+        const auto free_reply_start=tls.ssl.output.size();
+        name("<plist><array><string>DLMessageGetFreeDiskSpace</string></array></plist>");
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        const auto* free_response=tls.ssl.output.data()+free_reply_start;
+        hcc::plist::Node free_nodes[32];char free_text[512];hcc::plist::Document free_doc;
+        assert(hcc::plist::parse(free_response+4,bb::read_be32(free_response),{free_nodes,32,free_text,sizeof(free_text)},free_doc)==hcc::plist::Error::ok);
+        assert(free_doc.get(free_doc.at(free_doc.root,3))->integer==1073741824-64*1024*1024);
+        bytes.clear();
         const auto purge_reply_start=tls.ssl.output.size();
         const auto preserved=fs::path(sd_root)/"older-session-sentinel";
         {std::ofstream f(preserved);f<<"keep";}
