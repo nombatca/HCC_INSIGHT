@@ -94,9 +94,15 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     hcc::plist::Document doc;bb::SessionEvent event;bool available=false;
     const auto e=link_.receive_event(tracked,now,doc,event,available,budget);
     if(e==bb::LinkError::would_block||e==bb::LinkError::yield)return HCCBackupError::would_block;
-    if(e!=bb::LinkError::ok)return fail(e==bb::LinkError::timeout?HCCBackupError::timeout:
-        e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:
-        e==bb::LinkError::too_large?HCCBackupError::quota:HCCBackupError::transfer);
+    if(e!=bb::LinkError::ok){
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] control receive failed error=%s files=%u bytes=%llu\n",
+               bb::link_error_name(e),static_cast<unsigned>(files_),static_cast<unsigned long long>(bytes_));
+#endif
+        return fail(e==bb::LinkError::timeout?HCCBackupError::timeout:
+            e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:
+            e==bb::LinkError::too_large?HCCBackupError::quota:HCCBackupError::transfer);
+    }
     if(!available)return HCCBackupError::would_block;
 #ifdef ESP_PLATFORM
     // Diagnostic: show every control message the device sends during a backup so

@@ -297,6 +297,11 @@ int main() {
         std::vector<uint8_t> bytes;
         auto length=[&](uint32_t n){uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
         auto name=[&](const char* text){length(std::strlen(text));bytes.insert(bytes.end(),text,text+std::strlen(text));};
+        // Large nonterminal control: exceeds both old 8KiB and 128-node arenas.
+        std::string progress="<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Progress</string><key>Content</key><array>";
+        for(unsigned i=0;i<300;++i)progress+="<string>synthetic-control-entry-012345678901234567890123456789</string>";
+        progress+="</array></dict></array></plist>";
+        assert(progress.size()>8192);name(progress.c_str());
         name("<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>0</integer></array></plist>");
         name("/device/source");name("backup/burst.bin");
         const size_t payload_size=512*1024;

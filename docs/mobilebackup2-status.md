@@ -608,3 +608,16 @@ Host adapter regression transfers 512KiB in 32728-byte input chunks with simulat
 bytes and accepts the final result. Existing idle/cleanup regressions remain.
 The 631-file physical capture remains partial; reconnect starts a new session,
 not an incremental resume of the previous files.
+
+
+P4 control message capacity review (2026-11-09):
+Physical run stopped with quota 5 in waiting phase after 662 files, without a
+new event log. This phase can map control frame/parse too_large or no_space to
+quota before logging an event. The encrypted excerpt does not reveal which
+parser bound was reached. Increase the PSRAM control body/text arenas from
+8KiB to 64KiB and nodes from 128 to 2048. Keep upload/file/byte limits unchanged.
+Add bounded frame-vs-plist failure metadata (sizes/capacities, no payload dump)
+and coordinator control error/file/byte totals for a decisive hardware log.
+Host regression adds a >8KiB, >300-node nonterminal ProcessMessage before upload
+to the production adapter/ring test; final upload payload/result remain checked.
+This remains a bounded capture prototype, not proof of a full backup.

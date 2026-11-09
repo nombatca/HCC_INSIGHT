@@ -1,6 +1,9 @@
 #include "hcc_backup_link.hpp"
 #include <algorithm>
 #include <cmath>
+#ifdef ESP_PLATFORM
+#include <cstdio>
+#endif
 #include <cstring>
 #include <limits>
 #include <string_view>
@@ -439,13 +442,26 @@ LinkError BackupLink::receive_event(Duplex io,std::uint64_t now,plist::Document&
         if(r.bytes) {
             received_+=r.bytes;last_progress_=now;event_partial_=true;
             std::size_t used=0;const auto e=decoder_.feed(io_buffer_,r.bytes,used);
-            if(e!=Error::ok || used!=r.bytes) return fail(e==Error::too_large?LinkError::too_large:LinkError::malformed);
+            if(e!=Error::ok || used!=r.bytes) {
+#ifdef ESP_PLATFORM
+                printf("[HCC BACKUP] control reject stage=frame error=%s declared=%u capacity=%u\n",
+                       error_name(e),static_cast<unsigned>(decoder_.size()),static_cast<unsigned>(buffers_.receive_capacity));
+#endif
+                return fail(e==Error::too_large?LinkError::too_large:LinkError::malformed);
+            }
         }
         if(r.state==IoState::error) return fail(LinkError::io_error);
         if(r.state==IoState::closed) return fail(decoder_.end_input()==Error::truncated?LinkError::truncated:LinkError::closed);
         if(decoder_.ready()) {
             const auto e=plist::parse(decoder_.data(),decoder_.size(),buffers_.plist,doc);
-            if(e!=plist::Error::ok) return fail(e==plist::Error::too_large||e==plist::Error::no_space?LinkError::too_large:LinkError::malformed);
+            if(e!=plist::Error::ok) {
+#ifdef ESP_PLATFORM
+                printf("[HCC BACKUP] control reject stage=plist error=%d body=%u nodes_capacity=%u text_capacity=%u\n",
+                       static_cast<int>(e),static_cast<unsigned>(decoder_.size()),
+                       static_cast<unsigned>(buffers_.plist.node_capacity),static_cast<unsigned>(buffers_.plist.text_capacity));
+#endif
+                return fail(e==plist::Error::too_large||e==plist::Error::no_space?LinkError::too_large:LinkError::malformed);
+            }
             const auto session_error=observer_.consume(doc,event);
             if(session_error!=SessionError::ok) {
                 doc={};event={};

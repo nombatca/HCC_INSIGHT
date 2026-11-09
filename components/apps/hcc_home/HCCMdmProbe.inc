@@ -1,10 +1,11 @@
 // Included once after ServiceTlsContext. USB-task-owned protocol glue.
 struct HCCUSBTransport::MdmProbeContext {
     static constexpr std::size_t kListEntries = 64;
-    uint8_t control[8192]{};
+    static constexpr std::size_t kControlNodes=2048;
+    uint8_t control[65536]{};
     uint8_t output[1024]{};
-    hcc::plist::Node nodes[128]{};
-    char text[8192]{};
+    hcc::plist::Node nodes[kControlNodes]{};
+    char text[65536]{};
     hcc::backup::BackupLink link;
     // Backup operation driver and its bounded, PSRAM-resident working storage.
     // Idle (no SD lease, no transport use) until a backup is actually requested.
@@ -16,7 +17,7 @@ struct HCCUSBTransport::MdmProbeContext {
     std::optional<HCCBackupOperation> operation;
     std::uint64_t last_diagnostic_ms=0, read_progress=0;
     MdmProbeContext()
-        : link({control, sizeof(control), output, sizeof(output), {nodes, 128, text, sizeof(text)}}) {}
+        : link({control, sizeof(control), output, sizeof(output), {nodes, kControlNodes, text, sizeof(text)}}) {}
 };
 
 bool HCCUSBTransport::requestMdmBackup()
