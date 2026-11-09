@@ -39,7 +39,15 @@ HCCBackupError HCCBackupOperation::checkDeadline(std::uint64_t now){
     if(phase_==HCCBackupPhase::idle)return HCCBackupError::invalid_argument;
     if(now<last_now_)return fail(HCCBackupError::clock);
     last_now_=now;
-    if(now-began_>=config_.total_timeout_ms||now-progress_>=config_.idle_timeout_ms)return fail(HCCBackupError::timeout);
+    if(now-began_>=config_.total_timeout_ms||now-progress_>=config_.idle_timeout_ms){
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] timeout kind=%s elapsed_ms=%llu idle_ms=%llu total_limit_ms=%llu idle_limit_ms=%llu\n",
+               now-began_>=config_.total_timeout_ms?"total":"idle",
+               static_cast<unsigned long long>(now-began_),static_cast<unsigned long long>(now-progress_),
+               static_cast<unsigned long long>(config_.total_timeout_ms),static_cast<unsigned long long>(config_.idle_timeout_ms));
+#endif
+        return fail(HCCBackupError::timeout);
+    }
     return HCCBackupError::would_block;
 }
 HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::size_t budget){

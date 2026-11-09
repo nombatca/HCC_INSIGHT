@@ -220,7 +220,9 @@ bool HCCUSBTransport::pollMdmProbe()
             if (op.phase() == HCCBackupPhase::idle) {
                 const char *udid = _session_udid.data();
                 const size_t ulen = strnlen(udid, _session_udid.size());
-                HCCBackupConfig config; // defaults: 1 MiB min free, <=1024 files, 10 min
+                HCCBackupConfig config; // 1 MiB min free, <=1024 files; bounded P4 capture
+                // Real P4 transfer was still progressing at the old 10-minute cap.
+                config.total_timeout_ms=60ULL*60*1000; // 1 hour; idle remains 60 seconds
                 const auto started = op.start(std::string_view(udid, ulen), mdmNowMs(), config);
                 if (started != HCCBackupError::ok) {
                     printf("[HCC MDM] BACKUP start failed: %d\n", static_cast<int>(started));

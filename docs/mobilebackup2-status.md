@@ -594,3 +594,17 @@ upload, with USB TX busy and no outer protocol polls between appends. It checks
 the exact committed file, deferred status and terminal result. It also checks
 nonconsuming ring overflow does not overwrite data. Real TLS/USB/SD timing still
 requires the P4 test; synchronous SD callback latency remains a limitation.
+
+
+Physical P4 total deadline adjustment (2026-11-09):
+A run committed 631 files, then stopped in receiving phase with timeout 7. The
+last heartbeat was elapsed_ms=598225, idle_ms=71, with empty TLS RX/TX buffers:
+active transfer was approaching the configured ten-minute total deadline.
+Use a one-hour total deadline for the P4 UI capture profile; retain the 60-second
+no-progress deadline, file/byte quotas, and the portable coordinator defaults.
+Timeout logs now identify total versus idle and print elapsed/idle/limits.
+Host adapter regression transfers 512KiB in 32728-byte input chunks with simulated
+40-second progress intervals, crosses ten minutes, verifies exact committed
+bytes and accepts the final result. Existing idle/cleanup regressions remain.
+The 631-file physical capture remains partial; reconnect starts a new session,
+not an incremental resume of the previous files.

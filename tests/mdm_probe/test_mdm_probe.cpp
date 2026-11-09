@@ -299,7 +299,8 @@ int main() {
         auto name=[&](const char* text){length(std::strlen(text));bytes.insert(bytes.end(),text,text+std::strlen(text));};
         name("<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>0</integer></array></plist>");
         name("/device/source");name("backup/burst.bin");
-        const size_t payload_size=256*1024;
+        const size_t payload_size=512*1024;
+        const auto transfer_began=now_ms;
         length(payload_size+1);bytes.push_back(0x0c);
         for(size_t i=0;i<payload_size;++i)bytes.push_back(static_cast<uint8_t>(i));
         length(1);bytes.push_back(0x00);length(0);
@@ -308,9 +309,11 @@ int main() {
         t._tx_in_flight=true;
         for(size_t pos=0;pos<bytes.size();){
             const auto n=std::min(size_t(32728),bytes.size()-pos);
+            now_ms+=40000; // Active reads every 40 seconds, lasting beyond ten minutes.
             assert(t.appendServiceTlsRx(bytes.data()+pos,n));pos+=n;
             assert(tls.rx_length<32728);
         }
+        assert(now_ms-transfer_began>600000);
         assert(t.mdmBackupFiles()==1&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running);
         t._tx_in_flight=false;
         for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
@@ -325,7 +328,7 @@ int main() {
         assert(found&&HCCSdAccess::gate.owner()==bb::SdOwner::free);
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
-    std::puts("PASS: production RX ring drains 256KiB burst through operation while USB TX busy; exact file, status and final result");
+    std::puts("PASS: production RX ring drains 512KiB past ten minutes with progress while USB TX busy; exact file, status and final result");
     {
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;
         t._service_tls=&tls;tls.established=false;
