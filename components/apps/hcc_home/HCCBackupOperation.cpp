@@ -96,8 +96,10 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     if(e==bb::LinkError::would_block||e==bb::LinkError::yield)return HCCBackupError::would_block;
     if(e!=bb::LinkError::ok){
 #ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] control receive failed error=%s files=%u bytes=%llu\n",
-               bb::link_error_name(e),static_cast<unsigned>(files_),static_cast<unsigned long long>(bytes_));
+        const auto rejected=link_.rejected_message();
+        printf("[HCC BACKUP] control receive failed error=%s command=%.*s files=%u bytes=%llu\n",
+               bb::link_error_name(e),static_cast<int>(rejected.size()),rejected.data(),
+               static_cast<unsigned>(files_),static_cast<unsigned long long>(bytes_));
 #endif
         return fail(e==bb::LinkError::timeout?HCCBackupError::timeout:
             e==bb::LinkError::unsupported_operation?HCCBackupError::unsupported:

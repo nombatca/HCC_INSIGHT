@@ -621,3 +621,13 @@ and coordinator control error/file/byte totals for a decisive hardware log.
 Host regression adds a >8KiB, >300-node nonterminal ProcessMessage before upload
 to the production adapter/ring test; final upload payload/result remain checked.
 This remains a bounded capture prototype, not proof of a full backup.
+
+
+Physical run after control expansion: 669 files / 60018119 bytes committed,
+then control receive failed with unsupported_operation (error 9). The larger
+parser progressed but this excerpt does not identify the command. Preserve a
+64-character sanitized command tag before clearing rejected event/document;
+include it in the terminal control diagnostic. No payload/path dump, guessed
+filesystem mutation or success reply for unsupported commands. Adapter tests
+cover MoveItems rejection, tag truncation/control sanitization and SD cleanup.
+Next hardware log must identify command= before implementing its exact semantics.

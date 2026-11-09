@@ -98,6 +98,8 @@ public:
     bool control_frame_pending() const { return event_partial_; }
     LinkPhase phase() const { return phase_; }
     LinkError error() const { return error_; }
+    // Bounded, sanitized command tag only; no rejected payload or paths retained.
+    std::string_view rejected_message() const { return rejected_message_; }
     double protocol_version() const { return protocol_version_; }
     std::int64_t remote_code() const { return remote_code_; }
     std::uint64_t received_bytes() const { return received_; }
@@ -118,6 +120,7 @@ private:
     LinkPhase phase_=LinkPhase::idle;
     LinkError error_=LinkError::ok;
     std::size_t tx_size_=0,tx_sent_=0;
+    char rejected_message_[65]{};
     std::uint8_t io_buffer_[256]{}; // Stable address across TLS WANT_READ/WRITE retries.
     std::uint64_t last_now_=0,last_progress_=0,received_=0,sent_=0;
     bool event_partial_=false;

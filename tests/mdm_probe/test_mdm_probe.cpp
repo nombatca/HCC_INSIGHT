@@ -217,7 +217,7 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<13;++mode){
+    for(unsigned mode=0;mode<15;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
@@ -235,6 +235,12 @@ int main() {
         if(mode==7){
             const std::string result="<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>42</integer><key>ErrorDescription</key><string>synthetic error</string></dict></array></plist>";
             std::uint8_t length[4];bb::write_be32(length,result.size());tls.ssl.input.insert(tls.ssl.input.end(),length,length+4);tls.ssl.input.insert(tls.ssl.input.end(),result.begin(),result.end());
+        }
+        if(mode==13||mode==14){
+            const std::string tag=mode==13?"DLMessageMoveItems":std::string("unexpected\n")+std::string(100,'x');
+            const std::string msg="<plist><array><string>"+tag+"</string><dict/></array></plist>";
+            uint8_t h[4];bb::write_be32(h,msg.size());tls.ssl.input.insert(tls.ssl.input.end(),h,h+4);
+            tls.ssl.input.insert(tls.ssl.input.end(),msg.begin(),msg.end());
         }
         assert(t.requestMdmBackup()&&!t.requestMdmBackup());
         if(mode==4)tls.ssl.close=true;
@@ -267,6 +273,8 @@ int main() {
             if(!ok)break;
         }
         assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
+        if(mode==13)assert(t._mdm_probe->link.rejected_message()=="DLMessageMoveItems");
+        if(mode==14){const auto tag=t._mdm_probe->link.rejected_message();assert(tag.size()==64&&tag.substr(0,11)=="unexpected?");}
         assert(HCCSdAccess::gate.owner()==bb::SdOwner::free&&!t._mdm_backup_requested.load());
         assert(!t.requestMdmBackup());
         for(const auto& e:fs::recursive_directory_iterator(sd_root))assert(e.path().extension()!=".part");

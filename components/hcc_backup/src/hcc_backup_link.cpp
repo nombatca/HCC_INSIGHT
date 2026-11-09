@@ -345,6 +345,7 @@ LinkError BackupLink::start(std::uint64_t now,LinkConfig config) {
        !buffers_.plist.nodes||!buffers_.plist.node_capacity||!buffers_.plist.text||!buffers_.plist.text_capacity||
        !config.inactivity_timeout_ms||(!config.offer_20&&!config.offer_21)||config.major>INT64_MAX||config.minor>INT64_MAX)
         return LinkError::invalid_argument;
+    rejected_message_[0]=0;
     config_=config;decoder_=FrameDecoder(buffers_.receive,buffers_.receive_capacity);observer_.reset();
     phase_=LinkPhase::await_version;error_=LinkError::ok;tx_size_=tx_sent_=0;
     last_now_=last_progress_=now;received_=sent_=0;event_partial_=false;protocol_version_=0;remote_code_=0;
@@ -464,6 +465,12 @@ LinkError BackupLink::receive_event(Duplex io,std::uint64_t now,plist::Document&
             }
             const auto session_error=observer_.consume(doc,event);
             if(session_error!=SessionError::ok) {
+                const auto count=std::min(event.message.size(),sizeof(rejected_message_)-1);
+                for(std::size_t i=0;i<count;++i){
+                    const auto c=static_cast<unsigned char>(event.message[i]);
+                    rejected_message_[i]=c<32||c>=127?'?':static_cast<char>(c);
+                }
+                rejected_message_[count]=0;
                 doc={};event={};
                 return fail(session_error==SessionError::unsupported_operation||session_error==SessionError::unsupported_message
                             ?LinkError::unsupported_operation:LinkError::malformed);
