@@ -305,11 +305,28 @@ int main() {
         std::vector<uint8_t> bytes;
         auto length=[&](uint32_t n){uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
         auto name=[&](const char* text){length(std::strlen(text));bytes.insert(bytes.end(),text,text+std::strlen(text));};
+        const auto purge_reply_start=tls.ssl.output.size();
+        const auto preserved=fs::path(sd_root)/"older-session-sentinel";
+        {std::ofstream f(preserved);f<<"keep";}
+        name("<plist><array><string>DLMessagePurgeDiskSpace</string><integer>1048576</integer></array></plist>");
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        assert(tls.ssl.output.size()>purge_reply_start+4);
+        const auto* response=tls.ssl.output.data()+purge_reply_start;
+        hcc::plist::Node purge_nodes[32];char purge_text[512];hcc::plist::Document purge;
+        assert(hcc::plist::parse(response+4,bb::read_be32(response),{purge_nodes,32,purge_text,sizeof(purge_text)},purge)==hcc::plist::Error::ok);
+        assert(purge.string(purge.at(purge.root,0))=="DLMessageStatusResponse");
+        assert(purge.get(purge.at(purge.root,1))->integer==-1);
+        assert(purge.string(purge.at(purge.root,2))=="Operation not supported");
+        const auto* empty=purge.get(purge.at(purge.root,3));assert(empty&&empty->kind==hcc::plist::Kind::dict&&empty->count==0);
+        assert(fs::exists(preserved));bytes.clear();
         // Large nonterminal control: exceeds both old 8KiB and 128-node arenas.
         std::string progress="<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Progress</string><key>Content</key><array>";
         for(unsigned i=0;i<300;++i)progress+="<string>synthetic-control-entry-012345678901234567890123456789</string>";
         progress+="</array></dict></array></plist>";
         assert(progress.size()>8192);name(progress.c_str());
+
         name("<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>0</integer></array></plist>");
         name("/device/source");name("backup/burst.bin");
         const size_t payload_size=512*1024;

@@ -77,6 +77,11 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         out.kind=EventKind::create_directory;out.payload=path;pending_=out.kind;
         phase_=Phase::request_pending;return SessionError::ok;
     }
+    if(tag=="DLMessagePurgeDiskSpace") {
+        if(phase_!=Phase::running) return SessionError::wrong_state;
+        out.kind=EventKind::purge_disk_space;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessageGetFreeDiskSpace") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         out.kind=EventKind::free_disk_space;pending_=out.kind;

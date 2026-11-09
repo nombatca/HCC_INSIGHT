@@ -125,6 +125,15 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
+    if(event.kind==bb::EventKind::purge_disk_space){
+        // Match idevicebackup2: refuse host purging with an explicit status,
+        // then allow the peer to decide whether to continue or return an error.
+        // No capture records or earlier sessions are removed.
+        reply_.emplace(output_,output_capacity_);
+        if(reply_->begin(-1,"Operation not supported",true)!=bb::Error::ok)
+            return fail(HCCBackupError::transfer);
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::free_disk_space){
         std::uint64_t total=0,available_bytes=0;
         if(esp_vfs_fat_info(BSP_SD_MOUNT_POINT,&total,&available_bytes)!=ESP_OK||available_bytes>total)

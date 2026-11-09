@@ -631,3 +631,16 @@ include it in the terminal control diagnostic. No payload/path dump, guessed
 filesystem mutation or success reply for unsupported commands. Adapter tests
 cover MoveItems rejection, tag truncation/control sanitization and SD cleanup.
 Next hardware log must identify command= before implementing its exact semantics.
+
+
+PurgeDiskSpace handling (2026-11-09): physical device now requests
+DLMessagePurgeDiskSpace immediately after GetFreeDiskSpace with zero files.
+Match primary libimobiledevice tools/idevicebackup2.c: send status -1,
+"Operation not supported", empty dictionary, and await the peer's next control
+or terminal result. No host files are purged and no space is claimed reclaimed.
+Observer remains request_pending until the response has actually been sent.
+Adapter regression decodes the exact error envelope, preserves a preexisting
+sentinel and continues through a large control/upload/final result. A device
+may still terminate for insufficient advertised space; the 256MiB capture
+quota is unchanged and is not a full-backup capacity promise.
+Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c
