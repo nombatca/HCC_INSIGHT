@@ -656,3 +656,21 @@ Portable defaults remain fixed; files/depth/per-file/frame/time limits remain.
 SD capacity still must fit the device's requested backup; no deleted old data,
 space fabrication or full-backup guarantee. Host test: 1GiB SD advertises 960MiB;
 32MiB fails preflight, before Backup is sent. Existing upload/result tests pass.
+
+
+MoveItems file support: physical log identifies DLMessageMoveItems after 670
+files / 60038695 bytes. Recognize MoveItems/MoveFiles dictionaries (<=64 pairs),
+validate all key/value types and relative paths before mutation. For a unique
+committed file, rewrite its destination identity using exclusive temporary
+metadata, sync and rename with rollback on ordinary swap failure; payload and
+source identity remain unchanged. Listings therefore expose the new file name.
+Send status 0 only after all moves succeed; otherwise status -1 and await peer.
+Earlier successful pairs may remain after a later failure (not batch atomic).
+No Restore/device filesystem mutation. Current implementation deliberately
+refuses directory moves, existing destinations, missing/ambiguous records,
+symlinks and temporary metadata collisions. No replacement or directory-tree
+rename support is claimed. Metadata swap is not power-loss atomic; recovery
+files may require manual inspection after interrupted writes. Existing captures
+in other sessions are untouched. Hardware rerun must establish whether the
+device's actual move dictionary fits this supported file-only subset.
+Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c

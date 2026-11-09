@@ -29,6 +29,10 @@ public:
     // silently truncated/empty-on-error listing. Internal capture names
     // (NNNNNN.ready/.part, payload.bin, identity.bin) are never exposed.
     Error list_directory(std::string_view request, DirectoryListing& out, ListingScratch& scratch) const;
+    // File-only logical rename of a unique committed record. Refuses existing
+    // targets, directory moves and ambiguous identities. Uses caller PSRAM scratch.
+    // Metadata swap rolls back ordinary rename errors; not power-loss atomic.
+    Error move_file(std::string_view from,std::string_view to,ListingScratch& scratch);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
     std::uint32_t committed_files() const {return committed_;}

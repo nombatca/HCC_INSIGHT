@@ -97,6 +97,36 @@ int main(){
         assert(target.create_directory("outside")==bb::Error::io_error&&!fs::exists(parent/"outside"));
     }
     std::cout<<"PASS: confined directory namespace, validation before mutation, duplicates, busy, collisions, symlinks and quota\n";
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);const fs::path root(target.session_path());
+        auto cb=target.target();const uint8_t body[]={1,2,3};
+        for(const char* name:{"backup/tmp","backup/existing"}){
+            assert(cb.begin(cb.context,"opaque-source",name)==bb::Error::ok);
+            assert(cb.write(cb.context,body,sizeof(body)).bytes==sizeof(body));assert(cb.finish(cb.context,true)==bb::Error::ok);
+        }
+        static bb::ListingScratch scratch;
+        const auto original=read(root/"000001.ready/identity.bin");
+        assert(target.move_file("../escape","backup/new",scratch)==bb::Error::invalid_argument);
+        assert(target.move_file("backup/tmp","backup/existing",scratch)==bb::Error::io_error);
+        assert(target.move_file("backup/missing","backup/new",scratch)==bb::Error::io_error);
+        assert(target.create_directory("backup/dir")==bb::Error::ok);
+        assert(target.move_file("backup/tmp","backup/dir",scratch)==bb::Error::io_error);
+        std::ofstream(root/"000001.ready/identity.move")<<"preserve";
+        assert(target.move_file("backup/tmp","backup/new",scratch)==bb::Error::io_error);
+        assert(read(root/"000001.ready/identity.bin")==original);
+        fs::remove(root/"000001.ready/identity.move");
+        assert(target.move_file("backup/tmp","backup/final",scratch)==bb::Error::ok);
+        assert(target.move_file("backup/final","backup/final",scratch)==bb::Error::ok);
+        assert(read(root/"000001.ready/payload.bin")==std::vector<uint8_t>({1,2,3}));
+        assert(!fs::exists(root/"000001.ready/identity.previous"));
+        bb::DirectoryEntry entries[8];bb::DirectoryListing listing{entries,8,0};
+        assert(target.list_directory("backup",listing,scratch)==bb::Error::ok);
+        bool final=false,tmp=false;for(size_t i=0;i<listing.count;++i){final|=std::string(entries[i].name)=="final";tmp|=std::string(entries[i].name)=="tmp";}
+        assert(final&&!tmp&&target.committed_files()==2);
+        const auto updated=read(root/"000001.ready/identity.bin");
+        assert(std::search(updated.begin(),updated.end(),std::begin("opaque-source"),std::end("opaque-source")-1)!=updated.end());
+    }
+    std::cout<<"PASS: file-only logical moves preserve payload/source, update listing, refuse traversal/collisions/missing source and pending metadata\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

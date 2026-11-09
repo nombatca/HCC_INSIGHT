@@ -312,3 +312,79 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
     return err;
 }
 } // namespace hcc::backup
+
+namespace hcc::backup {
+Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,ListingScratch& scratch){
+    if(active_)return Error::busy;
+    if(!root_[0]||!valid_relative_backup_path(from)||!valid_relative_backup_path(to))return Error::invalid_argument;
+    if(from.size()>=sizeof(scratch.path)||to.size()>=sizeof(scratch.prefix))return Error::too_large;
+    // Compare both separator styles; no untrusted logical path is opened on disk.
+    auto equal=[](std::string_view a,std::string_view b){
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
+        return true;
+    };
+    if(!plain_directory(root_))return Error::io_error;
+    DIR* dir=opendir(root_);if(!dir)return Error::io_error;
+    char* source=scratch.record;source[0]=0;bool collision=false;Error error=Error::ok;
+    for(struct dirent* ent;(ent=readdir(dir));){
+        if(!ready_record(ent->d_name))continue;
+        char record[320];if(!child(record,sizeof(record),root_,ent->d_name)||!plain_directory(record)){error=Error::io_error;break;}
+        std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
+        if(!read_record(record,scratch.path,sizeof(scratch.path),length,size,time)){error=Error::io_error;break;}
+        const std::string_view dest(scratch.path,length);
+        if(equal(dest,from)){if(source[0]){error=Error::io_error;break;}std::strcpy(source,record);}
+        if(equal(dest,to)&&!equal(from,to))collision=true;
+        // An existing descendant means the destination names a logical directory.
+        if(dest.size()>to.size()&&equal(dest.substr(0,to.size()),to)&&(dest[to.size()]=='/'||dest[to.size()]=='\\'))collision=true;
+    }
+    if(closedir(dir)!=0)error=Error::io_error;
+    if(error!=Error::ok||!source[0]||collision)return Error::io_error;
+    if(equal(from,to))return Error::ok;
+    // Reject collisions with explicit namespace directories, following no links.
+    if(to.size()+std::strlen(root_)+14>=sizeof(scratch.nsdir))return Error::too_large;
+    std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
+    auto used=std::strlen(scratch.nsdir);
+    for(char c:to)scratch.nsdir[used++]=c=='\\'?'/':c;
+    scratch.nsdir[used]=0;
+    for(std::size_t i=std::strlen(root_)+1;i<=used;++i){
+        if(scratch.nsdir[i]!='/'&&i!=used)continue;
+        const auto save=scratch.nsdir[i];scratch.nsdir[i]=0;struct stat st{};
+#ifdef ESP_PLATFORM
+        const int found=stat(scratch.nsdir,&st);
+#else
+        const int found=lstat(scratch.nsdir,&st);
+#endif
+        const int why=errno;scratch.nsdir[i]=save;
+        if(found==0&&(!S_ISDIR(st.st_mode)||i==used))return Error::io_error;
+        if(found!=0){if(why!=ENOENT)return Error::io_error;break;}
+    }
+    char* original=scratch.nsdir;char* pending=scratch.sub;char* previous=scratch.prefix;
+    if(!child(original,sizeof(scratch.nsdir),source,"identity.bin")||!child(pending,sizeof(scratch.sub),source,"identity.move")||!child(previous,sizeof(scratch.prefix),source,"identity.previous"))return Error::too_large;
+    struct stat st{};
+#ifdef ESP_PLATFORM
+    const int prior=stat(previous,&st);
+#else
+    const int prior=lstat(previous,&st);
+#endif
+    if(prior==0||errno!=ENOENT)return Error::io_error;
+    FILE* in=std::fopen(original,"rb");if(!in)return Error::io_error;
+    // read_record already validated the complete original under exclusive ownership.
+    std::uint8_t head[12];bool ok=std::fread(head,1,12,in)==12;
+    const auto n=ok?read_be32(head+8):0;
+    ok=ok&&n>0&&n<=sizeof(scratch.path)&&std::fread(scratch.path,1,n,in)==n;
+    if(std::fclose(in)!=0)ok=false;
+    if(!ok)return Error::io_error;
+    FILE* out=exclusive_file(pending);if(!out)return Error::io_error;
+    std::uint8_t size[4];write_be32(size,static_cast<std::uint32_t>(to.size()));
+    ok=std::fwrite(head,1,12,out)==12&&std::fwrite(scratch.path,1,n,out)==n&&std::fwrite(size,1,4,out)==4&&std::fwrite(to.data(),1,to.size(),out)==to.size();
+    const bool synced=sync_close(out);
+    if(!ok||!synced){unlink(pending);return Error::io_error;}
+    if(rename(original,previous)!=0){unlink(pending);return Error::io_error;}
+    if(rename(pending,original)!=0){rename(previous,original);unlink(pending);return Error::io_error;}
+    // Keep old identity as a recovery record; future moves are deliberately refused
+    // until it is removed after the successful swap.
+    if(unlink(previous)!=0)return Error::io_error;
+    return Error::ok;
+}
+} // namespace hcc::backup

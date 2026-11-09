@@ -138,6 +138,27 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
+    if(event.kind==bb::EventKind::move_files){
+        if(!contents_.scratch)return fail(HCCBackupError::unsupported);
+        reply_.emplace(output_,output_capacity_);
+        // Preflight the larger error envelope before changing any metadata.
+        if(reply_->begin(-1,"Move unavailable in capture",true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        auto key=doc.get(event.payload)->first;bb::Error moved=bb::Error::ok;unsigned count=0;
+        while(key!=hcc::plist::none){
+            const auto value=doc.get(key)->next;
+            moved=capture_.moveFile(doc.string(key),doc.string(value),*contents_.scratch);
+            if(moved!=bb::Error::ok)break;
+            ++count;key=doc.get(value)->next;
+        }
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] MoveItems files_moved=%u result=%s\n",count,bb::error_name(moved));
+#endif
+        if(moved==bb::Error::ok){
+            reply_.emplace(output_,output_capacity_);
+            if(reply_->begin(0,nullptr,true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        }
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::purge_disk_space){
         // Match idevicebackup2: refuse host purging with an explicit status,
         // then allow the peer to decide whether to continue or return an error.

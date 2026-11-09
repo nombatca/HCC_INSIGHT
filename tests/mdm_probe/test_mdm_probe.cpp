@@ -137,6 +137,7 @@ static void check_output(const std::vector<uint8_t> &out) {
     assert(count == 2); // version reply and Hello only.
 }
 int main() {
+    std::setvbuf(stdout,nullptr,_IONBF,0);
     char temp[]="/tmp/hcc-mdm-glue-XXXXXX";assert(mkdtemp(temp));sd_root=temp;
     using State = HCCUSBTransport::MdmState;
     {
@@ -238,7 +239,7 @@ int main() {
             std::uint8_t length[4];bb::write_be32(length,result.size());tls.ssl.input.insert(tls.ssl.input.end(),length,length+4);tls.ssl.input.insert(tls.ssl.input.end(),result.begin(),result.end());
         }
         if(mode==13||mode==14){
-            const std::string tag=mode==13?"DLMessageMoveItems":std::string("unexpected\n")+std::string(100,'x');
+            const std::string tag=mode==13?"DLMessageUnknownCommand":std::string("unexpected\n")+std::string(100,'x');
             const std::string msg="<plist><array><string>"+tag+"</string><dict/></array></plist>";
             uint8_t h[4];bb::write_be32(h,msg.size());tls.ssl.input.insert(tls.ssl.input.end(),h,h+4);
             tls.ssl.input.insert(tls.ssl.input.end(),msg.begin(),msg.end());
@@ -275,7 +276,7 @@ int main() {
             if(!ok)break;
         }
         assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
-        if(mode==13)assert(t._mdm_probe->link.rejected_message()=="DLMessageMoveItems");
+        if(mode==13)assert(t._mdm_probe->link.rejected_message()=="DLMessageUnknownCommand");
         if(mode==14){const auto tag=t._mdm_probe->link.rejected_message();assert(tag.size()==64&&tag.substr(0,11)=="unexpected?");}
         assert(HCCSdAccess::gate.owner()==bb::SdOwner::free&&!t._mdm_backup_requested.load());
         assert(!t.requestMdmBackup());
@@ -358,6 +359,15 @@ int main() {
         assert(t.mdmBackupFiles()==1&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running);
         t._tx_in_flight=false;
         for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        bytes.clear();name("<plist><array><string>DLMessageMoveItems</string><dict><key>backup/burst.bin</key><string>backup/final.bin</string></dict></array></plist>");
+        const auto move_reply_start=tls.ssl.output.size();
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        const auto* move_reply=tls.ssl.output.data()+move_reply_start;
+        hcc::plist::Node move_nodes[32];char move_text[512];hcc::plist::Document move_doc;
+        assert(hcc::plist::parse(move_reply+4,bb::read_be32(move_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
+        assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
         bytes.clear();name("<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>0</integer></dict></array></plist>");
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));

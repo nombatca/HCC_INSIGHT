@@ -77,6 +77,20 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         out.kind=EventKind::create_directory;out.payload=path;pending_=out.kind;
         phase_=Phase::request_pending;return SessionError::ok;
     }
+    if(tag=="DLMessageMoveItems"||tag=="DLMessageMoveFiles") {
+        if(phase_!=Phase::running)return SessionError::wrong_state;
+        const auto id=d.at(d.root,1);const auto* moves=d.get(id);
+        if(!moves||moves->kind!=plist::Kind::dict||moves->count>64)return SessionError::malformed_message;
+        auto key=moves->first;
+        while(key!=plist::none){
+            const auto* k=d.get(key);const auto value=k?k->next:plist::none;const auto* v=d.get(value);
+            if(!k||!v||k->kind!=plist::Kind::string||v->kind!=plist::Kind::string)return SessionError::malformed_message;
+            if(!valid_relative_backup_path(d.string(key))||!valid_relative_backup_path(d.string(value)))return SessionError::invalid_path;
+            key=v->next;
+        }
+        out.kind=EventKind::move_files;out.payload=id;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessagePurgeDiskSpace") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         out.kind=EventKind::purge_disk_space;pending_=out.kind;
