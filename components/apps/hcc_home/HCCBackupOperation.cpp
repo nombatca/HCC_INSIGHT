@@ -13,7 +13,7 @@ HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -71,17 +71,19 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     const auto deadline=checkDeadline(now);
     if(deadline!=HCCBackupError::would_block)return deadline;
     Progress context{this,io,now};const bb::Duplex tracked{&context,Progress::read,Progress::write};
-    if(phase_==HCCBackupPhase::moving){
+    if(phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing){
         bb::Error moved=bb::Error::ok;
         if(move_key_!=hcc::plist::none){
+            const bool removing=phase_==HCCBackupPhase::removing;
             const auto value=move_doc_.get(move_key_)->next;
-            moved=capture_.moveFile(move_doc_.string(move_key_),move_doc_.string(value),*contents_.scratch);
+            moved=removing?capture_.removeItem(move_doc_.string(move_key_),*contents_.scratch)
+                          :capture_.moveFile(move_doc_.string(move_key_),move_doc_.string(value),*contents_.scratch);
             if(moved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
-            if(moved==bb::Error::ok){++moves_done_;move_key_=move_doc_.get(value)->next;progress_=now;}
+            if(moved==bb::Error::ok){++moves_done_;move_key_=removing?value:move_doc_.get(value)->next;progress_=now;}
         }
 #ifdef ESP_PLATFORM
         if(moved!=bb::Error::ok||move_key_==hcc::plist::none||moves_done_%8==0)
-            printf("[HCC BACKUP] MoveItems progress=%u result=%s\n",moves_done_,bb::error_name(moved));
+            printf("[HCC BACKUP] %s progress=%u result=%s\n",phase_==HCCBackupPhase::removing?"RemoveItems":"MoveItems",moves_done_,bb::error_name(moved));
 #endif
         if(moved!=bb::Error::ok||move_key_==hcc::plist::none){
             if(moved==bb::Error::ok){reply_.emplace(output_,output_capacity_);if(reply_->begin(0,nullptr,true)!=bb::Error::ok)return fail(HCCBackupError::transfer);}
@@ -157,13 +159,13 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
-    if(event.kind==bb::EventKind::move_files){
+    if(event.kind==bb::EventKind::move_files||event.kind==bb::EventKind::remove_items){
         if(!contents_.scratch)return fail(HCCBackupError::unsupported);
         reply_.emplace(output_,output_capacity_);
         // Preflight the larger error envelope before changing any metadata.
-        if(reply_->begin(-1,"Move unavailable in capture",true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        if(reply_->begin(-1,"Namespace operation failed",true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
         move_doc_=doc;move_key_=doc.get(event.payload)->first;moves_done_=0;
-        phase_=HCCBackupPhase::moving;return HCCBackupError::would_block;
+        phase_=event.kind==bb::EventKind::remove_items?HCCBackupPhase::removing:HCCBackupPhase::moving;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::purge_disk_space){
         // Match idevicebackup2: refuse host purging with an explicit status,

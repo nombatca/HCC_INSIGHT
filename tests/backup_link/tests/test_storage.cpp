@@ -144,8 +144,40 @@ int main(){
         // Newly committed data invalidates the index and is discoverable.
         assert(cb.begin(cb.context,"source","new-file")==bb::Error::ok&&cb.finish(cb.context,true)==bb::Error::ok);
         assert(move(target,"new-file","new-name",scratch)==bb::Error::ok&&scratch.move_builds==builds+2);
+        for(unsigned i=0;i<128;++i)assert(target.remove_item("after/"+std::to_string(i),scratch)==bb::Error::ok);
+        assert(scratch.move_builds==builds+2); // one cached index across entire removal batch
+        bb::DirectoryEntry entries[2];bb::DirectoryListing listing{entries,2,0};
+        assert(target.list_directory("after",listing,scratch)==bb::Error::ok&&listing.count==0);
     }
     std::cout<<"PASS: 128 moves share one incremental eight-record scan; new upload invalidates index\n";
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);
+        const fs::path root(target.session_path());auto cb=target.target();static bb::ListingScratch scratch;
+        auto remove=[&](std::string_view path){for(unsigned i=0;i<1000;++i){auto e=target.remove_item(path,scratch);if(e!=bb::Error::would_block)return e;}assert(false);return bb::Error::io_error;};
+        for(const char* path:{"backup/file","backup/keep"}){
+            assert(cb.begin(cb.context,"source",path)==bb::Error::ok);
+            const uint8_t body[]={4,5,6};assert(cb.write(cb.context,body,3).bytes==3);assert(cb.finish(cb.context,true)==bb::Error::ok);
+        }
+        const auto identity=read(root/"000001.ready/identity.bin");
+        assert(remove("../escape")==bb::Error::invalid_argument);
+        assert(remove("backup")==bb::Error::io_error); // nonempty logical directory
+        std::ofstream(root/"000001.removed")<<"collision";
+        assert(remove("backup/file")==bb::Error::io_error&&fs::exists(root/"000001.ready"));
+        fs::remove(root/"000001.removed");
+        assert(remove("backup\\file")==bb::Error::ok&&!fs::exists(root/"000001.ready"));
+        assert(read(root/"000001.removed/payload.bin")==std::vector<uint8_t>({4,5,6}));
+        assert(read(root/"000001.removed/identity.bin")==identity);
+        assert(remove("backup/file")==bb::Error::io_error);
+        assert(move(target,"backup/keep","backup/file",scratch)==bb::Error::ok); // removed cached entry isn't a collision
+        bb::DirectoryEntry entries[8];bb::DirectoryListing listing{entries,8,0};
+        assert(target.list_directory("backup",listing,scratch)==bb::Error::ok&&listing.count==1);
+        assert(target.create_directory("backup/empty")==bb::Error::ok);
+        assert(remove("backup/empty")==bb::Error::ok&&!fs::exists(root/"directories/backup/empty"));
+        fs::create_directory_symlink(parent,root/"directories/link");
+        assert(remove("link")==bb::Error::io_error&&fs::exists(parent));
+        assert(target.committed_files()==2); // historical capture count; recovery retained
+    }
+    std::cout<<"PASS: RemoveItems hides files, preserves recovery bytes, removes only empty directories and refuses traversal/symlinks/collisions\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

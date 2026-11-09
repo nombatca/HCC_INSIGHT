@@ -11,7 +11,7 @@ enum class SessionError { ok, malformed_message, wrong_state, unsupported_messag
                           unsupported_operation, invalid_path, incompatible_version };
 constexpr std::size_t kMaxMovePairs=1024;
 enum class EventKind { version_offer, device_ready, download_files, upload_files, free_disk_space, create_directory,
-                       contents_of_directory, process_message, result, disconnect, unsupported, purge_disk_space, move_files };
+                       contents_of_directory, process_message, result, disconnect, unsupported, purge_disk_space, move_files, remove_items };
 struct SessionEvent {
     EventKind kind=EventKind::unsupported;
     std::uint32_t payload=plist::none;

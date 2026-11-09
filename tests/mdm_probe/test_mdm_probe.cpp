@@ -383,6 +383,17 @@ int main() {
         assert(hcc::plist::parse(move_reply+4,bb::read_be32(move_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
         assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup/final.bin</string></array></array></plist>");
+        const auto remove_reply_start=tls.ssl.output.size();t._tx_in_flight=true;
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::replying&&tls.ssl.output.size()==remove_reply_start);
+        t._tx_in_flight=false;
+        for(unsigned i=0;i<1000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        const auto* remove_reply=tls.ssl.output.data()+remove_reply_start;
+        assert(hcc::plist::parse(remove_reply+4,bb::read_be32(remove_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
+        assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
+        assert(fs::exists(fs::path(t._mdm_probe->operation->sessionPath())/"000001.removed/payload.bin"));
         bytes.clear();name("<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>0</integer></dict></array></plist>");
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
         assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::done);

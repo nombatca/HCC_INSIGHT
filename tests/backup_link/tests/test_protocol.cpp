@@ -178,7 +178,14 @@ void request_validation_and_unsupported() {
     CHECK(m.xml("<array><string>DLMessageDownloadFiles</string><array><string>../escape</string></array></array>")==pp::Error::ok);
     CHECK(s.consume(m.doc,e)==bb::SessionError::invalid_path && s.phase()==bb::Phase::running);
     CHECK(m.xml("<array><string>DLMessageRemoveFiles</string><array/></array>")==pp::Error::ok);
-    CHECK(s.consume(m.doc,e)==bb::SessionError::unsupported_operation && s.phase()==bb::Phase::running);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::ok && e.kind==bb::EventKind::remove_items);
+    CHECK(s.consume(m.doc,e)==bb::SessionError::wrong_state);
+    CHECK(s.complete_request(true)==bb::SessionError::ok);
+    for(const char* item:{"<integer>1</integer>","<string>../escape</string>"}){
+        CHECK(m.xml(std::string("<array><string>DLMessageRemoveItems</string><array>")+item+"</array></array>")==pp::Error::ok);
+        CHECK(s.consume(m.doc,e)==(item[1]=='i'?bb::SessionError::malformed_message:bb::SessionError::invalid_path));
+        CHECK(s.phase()==bb::Phase::running);
+    }
     CHECK(m.xml("<array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><string>0</string></dict></array>")==pp::Error::ok);
     CHECK(s.consume(m.doc,e)==bb::SessionError::malformed_message && s.outcome()==bb::Outcome::none);
     CHECK(m.xml("<array><string>DLMessageUploadFiles</string><integer>0</integer></array>")==pp::Error::ok);
@@ -205,6 +212,15 @@ void move_large_dictionary() {
             CHECK(event.kind==bb::EventKind::move_files&&observer.phase()==bb::Phase::request_pending);
             CHECK(observer.complete_request(true)==bb::SessionError::ok);
         }else CHECK(observer.phase()==bb::Phase::running);
+    }
+    for(unsigned count:{1024u,1025u}){
+        std::string xml="<plist><array><string>DLMessageRemoveItems</string><array>";
+        for(unsigned i=0;i<count;++i)xml+="<string>a/"+std::to_string(i)+"</string>";
+        xml+="</array></array></plist>";
+        CHECK(pp::parse(reinterpret_cast<const uint8_t*>(xml.data()),xml.size(),{nodes,4096,text,sizeof(text)},doc)==pp::Error::ok);
+        const auto result=observer.consume(doc,event);
+        CHECK(result==(count==1024?bb::SessionError::ok:bb::SessionError::malformed_message));
+        if(result==bb::SessionError::ok)CHECK(observer.complete_request(true)==bb::SessionError::ok);
     }
     CHECK(handshake.xml("<array><string>DLMessageMoveItems</string><dict><key>a</key><integer>1</integer></dict></array>")==pp::Error::ok);
     CHECK(observer.consume(handshake.doc,event)==bb::SessionError::malformed_message);

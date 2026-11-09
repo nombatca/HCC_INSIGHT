@@ -106,6 +106,21 @@ SessionError SessionObserver::consume(const plist::Document& d,SessionEvent& out
         out.kind=EventKind::move_files;out.payload=id;pending_=out.kind;
         phase_=Phase::request_pending;return SessionError::ok;
     }
+    if(tag=="DLMessageRemoveItems"||tag=="DLMessageRemoveFiles") {
+        if(phase_!=Phase::running)return SessionError::wrong_state;
+        const auto id=d.at(d.root,1);const auto* items=d.get(id);
+        if(!items||items->kind!=plist::Kind::array||items->count>kMaxMovePairs)return SessionError::malformed_message;
+        for(auto item=items->first;item!=plist::none;item=d.get(item)->next){
+            const auto* node=d.get(item);
+            if(!node||node->kind!=plist::Kind::string)return SessionError::malformed_message;
+            if(!valid_relative_backup_path(d.string(item)))return SessionError::invalid_path;
+        }
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] RemoveItems request items=%u\n",items->count);
+#endif
+        out.kind=EventKind::remove_items;out.payload=id;pending_=out.kind;
+        phase_=Phase::request_pending;return SessionError::ok;
+    }
     if(tag=="DLMessagePurgeDiskSpace") {
         if(phase_!=Phase::running) return SessionError::wrong_state;
         out.kind=EventKind::purge_disk_space;pending_=out.kind;

@@ -34,6 +34,10 @@ public:
     // Returns would_block while indexing <=8 records per call; call again.
     // Metadata swap rolls back ordinary rename errors; not power-loss atomic.
     Error move_file(std::string_view from,std::string_view to,ListingScratch& scratch);
+    // Remove from this session's logical namespace. Files are renamed to
+    // .removed recovery records, preserving payload/identity; no space reclaimed.
+    // Only empty directories; no recursive deletion. May yield while indexing.
+    Error remove_item(std::string_view path,ListingScratch& scratch);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
     std::uint32_t committed_files() const {return committed_;}

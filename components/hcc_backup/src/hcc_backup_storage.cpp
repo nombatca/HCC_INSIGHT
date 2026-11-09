@@ -362,7 +362,7 @@ Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,Li
     const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
     char* source=scratch.record;source[0]=0;std::uint32_t source_index=0;bool collision=false;
     for(std::uint32_t i=0;i<scratch.move_count;++i){
-        const auto& entry=scratch.move_entries[i];const std::string_view dest(scratch.move_paths+entry.offset,entry.length);
+        const auto& entry=scratch.move_entries[i];if(!entry.length)continue;const std::string_view dest(scratch.move_paths+entry.offset,entry.length);
         if(equal(dest,from)){
             if(source[0])return Error::io_error;
             const int n=std::snprintf(source,sizeof(scratch.record),"%s/%06u.ready",root_,entry.record);
@@ -423,6 +423,68 @@ Error StagedUploadTarget::move_file(std::string_view from,std::string_view to,Li
     if(unlink(previous)!=0){scratch.move_ready=false;return Error::io_error;}
     auto& entry=scratch.move_entries[source_index];entry.offset=scratch.move_used;entry.length=static_cast<std::uint32_t>(to.size());
     std::memcpy(scratch.move_paths+scratch.move_used,to.data(),to.size());scratch.move_used+=to.size();
+    ++revision_;scratch.move_revision=revision_;
+    return Error::ok;
+}
+} // namespace hcc::backup
+
+namespace hcc::backup {
+Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scratch){
+    if(active_)return Error::busy;
+    if(!root_[0]||!valid_relative_backup_path(path))return Error::invalid_argument;
+    if(path.size()>=sizeof(scratch.path))return Error::too_large;
+    const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
+    auto equal=[](std::string_view a,std::string_view b){
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
+        return true;
+    };
+    std::uint32_t found=UINT32_MAX;
+    for(std::uint32_t i=0;i<scratch.move_count;++i){
+        const auto& item=scratch.move_entries[i];if(!item.length)continue;
+        const std::string_view dest(scratch.move_paths+item.offset,item.length);
+        if(equal(dest,path)){if(found!=UINT32_MAX)return Error::io_error;found=i;}
+        // A logical directory containing payloads is never removed recursively.
+        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))return Error::io_error;
+    }
+    // Validate all namespace ancestors without following host symlinks.
+    const int count=std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
+    if(count<=0||static_cast<std::size_t>(count)+path.size()>=sizeof(scratch.nsdir))return Error::too_large;
+    auto used=static_cast<std::size_t>(count);
+    for(char c:path)scratch.nsdir[used++]=c=='\\'?'/':c;
+    scratch.nsdir[used]=0;bool explicit_dir=false;
+    for(std::size_t i=std::strlen(root_)+1;i<=used;++i){
+        if(scratch.nsdir[i]!='/'&&i!=used)continue;
+        const auto saved=scratch.nsdir[i];scratch.nsdir[i]=0;struct stat st{};
+#ifdef ESP_PLATFORM
+        const int seen=stat(scratch.nsdir,&st);
+#else
+        const int seen=lstat(scratch.nsdir,&st);
+#endif
+        const int why=errno;scratch.nsdir[i]=saved;
+        if(seen!=0){if(why!=ENOENT)return Error::io_error;break;}
+        if(!S_ISDIR(st.st_mode))return Error::io_error;
+        if(i==used)explicit_dir=true;
+    }
+    if(found!=UINT32_MAX){
+        if(explicit_dir)return Error::io_error; // ambiguous file/directory identity
+        auto& item=scratch.move_entries[found];
+        std::snprintf(scratch.record,sizeof(scratch.record),"%s/%06u.ready",root_,item.record);
+        std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
+        if(!plain_directory(scratch.record)||!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time)||!equal({scratch.path,length},path))return Error::io_error;
+        std::snprintf(scratch.sub,sizeof(scratch.sub),"%s/%06u.removed",root_,item.record);
+        struct stat prior{};
+#ifdef ESP_PLATFORM
+        const int exists=stat(scratch.sub,&prior);
+#else
+        const int exists=lstat(scratch.sub,&prior);
+#endif
+        if(exists==0||errno!=ENOENT)return Error::io_error;
+        if(rename(scratch.record,scratch.sub)!=0)return Error::io_error;
+        item.length=0; // immediately absent from cached logical namespace
+    }else{
+        if(!explicit_dir||rmdir(scratch.nsdir)!=0)return Error::io_error;
+    }
     ++revision_;scratch.move_revision=revision_;
     return Error::ok;
 }

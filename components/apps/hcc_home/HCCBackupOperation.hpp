@@ -4,7 +4,7 @@
 #include "hcc_backup_upload_request.hpp"
 #include "hcc_backup_batch.hpp"
 #include <optional>
-enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving};
+enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving,removing};
 enum class HCCBackupError {ok,would_block,invalid_argument,busy,storage,quota,transfer,
                            timeout,clock,unsupported,remote,disconnected,cancelled};
 struct HCCBackupConfig {

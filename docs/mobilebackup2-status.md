@@ -707,3 +707,30 @@ Tests verify 128 file moves share one incremental scan, new upload invalidation,
 128 chained MoveItems yield between pairs with no early response, cancellation
 in moving, exact file/final result and existing storage rejection behavior.
 File-only/no-existing-target restrictions and power-loss limitations remain.
+
+
+### RemoveItems capture namespace (2026-11-09)
+
+Physical device reached 706 committed files / 69879716 bytes, then requested
+DLMessageRemoveItems. Recognize RemoveItems and RemoveFiles array-of-path requests
+(up to 1024), validating all path/type entries before changing storage. A removing
+phase borrows the control document, indexes incrementally and processes at most
+one item per poll; cancellation and existing deadlines apply. Logs request count
+and progress every eight items, on completion and on failure. Status 0 is staged
+only after all requested items succeed; the first storage failure stages -1 and
+awaits the peer result. Previously completed items remain changed.
+
+A uniquely matching .ready file record is renamed to .removed, retaining its
+payload and identity for recovery while removing it from logical listings and
+future moves. Capture counts remain historical; neither byte quota nor advertised
+free space is credited for retained records. Only explicitly created empty
+namespace directories can be removed, with ancestor symlink checks and no
+recursive deletion. Nonempty directories, missing/ambiguous files, recovery-name
+collisions and I/O errors fail explicitly. Other capture sessions are untouched.
+This is capture namespace support, not a full Apple-restorable backup.
+
+Validation: protocol state/type/path/cap tests, storage recovery/listing/move-cache
+and 128-item tests, production P4 coordinator with transparent host TLS stub through
+upload, 128 moves, RemoveItems deferred status and final result. Host sanitizers
+cover storage, adapter and SD coordinator. Physical firmware behavior still needs
+confirmation after CI and flashing.
