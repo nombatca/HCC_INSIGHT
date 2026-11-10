@@ -36,7 +36,9 @@ public:
     Error move_file(std::string_view from,std::string_view to,ListingScratch& scratch);
     // Remove from this session's logical namespace. Files are renamed to
     // .removed recovery records, preserving payload/identity; no space reclaimed.
-    // Only empty directories; no recursive deletion. May yield while indexing.
+    // Directory subtrees archive at most one matching file per call, then
+    // rename the created-directory tree to recovery storage. May yield; caller
+    // retries the SAME path until completion. Earlier changes survive failure.
     Error remove_item(std::string_view path,ListingScratch& scratch);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
@@ -54,6 +56,6 @@ private:
     char root_[256]{},stage_[288]{},ready_[288]{};
     FILE* payload_=nullptr;
     bool active_=false;
-    std::uint32_t sequence_=0,committed_=0,directories_=0;
+    std::uint32_t sequence_=0,committed_=0,directories_=0,removed_directories_=0;
 };
 } // namespace hcc::backup

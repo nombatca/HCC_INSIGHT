@@ -317,7 +317,7 @@ namespace hcc::backup {
 Error StagedUploadTarget::prepare_move_index(ListingScratch& scratch){
     if(scratch.move_ready&&scratch.move_revision==revision_&&std::strcmp(scratch.move_owner,root_)==0)return Error::ok;
     if(!move_scan_){
-        scratch.move_ready=false;scratch.move_count=0;scratch.move_used=0;
+        scratch.remove_active=false;scratch.move_ready=false;scratch.move_count=0;scratch.move_used=0;
         if(!plain_directory(root_))return Error::io_error;
         move_scan_=opendir(root_);if(!move_scan_)return Error::io_error;
         std::strcpy(scratch.move_owner,root_);++scratch.move_builds;
@@ -433,21 +433,40 @@ Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scra
     if(active_)return Error::busy;
     if(!root_[0]||!valid_relative_backup_path(path))return Error::invalid_argument;
     if(path.size()>=sizeof(scratch.path))return Error::too_large;
+    // Namespace paths must also be unambiguous on FAT (no trailing dot/space).
+    std::size_t component=0;
+    for(std::size_t i=0;i<=path.size();++i){
+        if(i<path.size()&&path[i]!='/'&&path[i]!='\\'){
+            const auto c=static_cast<unsigned char>(path[i]);
+            if(c==127||c=='*'||c=='?'||c=='"'||c=='<'||c=='>'||c=='|')return Error::invalid_argument;
+            continue;
+        }
+        if(i-component>255||path[i-1]=='.'||path[i-1]==' ')return Error::invalid_argument;
+        component=i+1;
+    }
     const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
     auto equal=[](std::string_view a,std::string_view b){
         if(a.size()!=b.size())return false;
         for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
         return true;
     };
-    std::uint32_t found=UINT32_MAX;
+    if(scratch.remove_active&&!equal(path,scratch.remove_path))return Error::busy;
+    auto fail=[&](const char* reason){
+        scratch.remove_active=false;
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] RemoveItems failed reason=%s errno=%d\n",reason,errno);
+#else
+        (void)reason;
+#endif
+        return Error::io_error;
+    };
+    std::uint32_t found=UINT32_MAX,child_index=UINT32_MAX;
     for(std::uint32_t i=0;i<scratch.move_count;++i){
         const auto& item=scratch.move_entries[i];if(!item.length)continue;
         const std::string_view dest(scratch.move_paths+item.offset,item.length);
-        if(equal(dest,path)){if(found!=UINT32_MAX)return Error::io_error;found=i;}
-        // A logical directory containing payloads is never removed recursively.
-        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))return Error::io_error;
+        if(equal(dest,path)){if(found!=UINT32_MAX)return fail("ambiguous");found=i;}
+        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))child_index=i;
     }
-    // Validate all namespace ancestors without following host symlinks.
     const int count=std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
     if(count<=0||static_cast<std::size_t>(count)+path.size()>=sizeof(scratch.nsdir))return Error::too_large;
     auto used=static_cast<std::size_t>(count);
@@ -462,16 +481,26 @@ Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scra
         const int seen=lstat(scratch.nsdir,&st);
 #endif
         const int why=errno;scratch.nsdir[i]=saved;
-        if(seen!=0){if(why!=ENOENT)return Error::io_error;break;}
-        if(!S_ISDIR(st.st_mode))return Error::io_error;
+        if(seen!=0){if(why!=ENOENT)return fail("namespace_lookup");break;}
+        if(!S_ISDIR(st.st_mode))return fail("namespace_type");
         if(i==used)explicit_dir=true;
     }
-    if(found!=UINT32_MAX){
-        if(explicit_dir)return Error::io_error; // ambiguous file/directory identity
-        auto& item=scratch.move_entries[found];
+    if(found!=UINT32_MAX&&(explicit_dir||child_index!=UINT32_MAX))return fail("file_directory_collision");
+    const bool subtree=child_index!=UINT32_MAX||scratch.remove_active;
+    if(subtree&&!scratch.remove_active){
+        std::memcpy(scratch.remove_path,path.data(),path.size());scratch.remove_path[path.size()]=0;
+        scratch.remove_active=true;scratch.remove_done=0;
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] RemoveItems subtree starting\n");
+#endif
+    }
+    const auto record_index=found!=UINT32_MAX?found:child_index;
+    if(record_index!=UINT32_MAX){
+        auto& item=scratch.move_entries[record_index];
+        const std::string_view expected(scratch.move_paths+item.offset,item.length);
         std::snprintf(scratch.record,sizeof(scratch.record),"%s/%06u.ready",root_,item.record);
         std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
-        if(!plain_directory(scratch.record)||!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time)||!equal({scratch.path,length},path))return Error::io_error;
+        if(!plain_directory(scratch.record)||!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time)||!equal({scratch.path,length},expected))return fail("record_validation");
         std::snprintf(scratch.sub,sizeof(scratch.sub),"%s/%06u.removed",root_,item.record);
         struct stat prior{};
 #ifdef ESP_PLATFORM
@@ -479,13 +508,37 @@ Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scra
 #else
         const int exists=lstat(scratch.sub,&prior);
 #endif
-        if(exists==0||errno!=ENOENT)return Error::io_error;
-        if(rename(scratch.record,scratch.sub)!=0)return Error::io_error;
-        item.length=0; // immediately absent from cached logical namespace
-    }else{
-        if(!explicit_dir||rmdir(scratch.nsdir)!=0)return Error::io_error;
+        if(exists==0||errno!=ENOENT)return fail("recovery_collision");
+        if(rename(scratch.record,scratch.sub)!=0)return fail("record_rename");
+        item.length=0;++revision_;scratch.move_revision=revision_;
+#ifdef ESP_PLATFORM
+        if(subtree&&++scratch.remove_done%8==0)printf("[HCC BACKUP] RemoveItems subtree archived=%u\n",scratch.remove_done);
+#else
+        if(subtree)++scratch.remove_done;
+#endif
+        // Return control after each file; keep request pending until whole subtree ends.
+        return subtree?Error::would_block:Error::ok;
     }
-    ++revision_;scratch.move_revision=revision_;
+    if(explicit_dir){
+        // Archive the whole namespace tree, including empty descendants. No walk,
+        // recursive unlink or traversal into namespace children is performed.
+        const auto number=++removed_directories_;
+        std::snprintf(scratch.sub,sizeof(scratch.sub),"%s/removed_directory_%06u",root_,number);
+        std::snprintf(scratch.record,sizeof(scratch.record),"%s/removed_directory_%06u.path",root_,number);
+        struct stat prior{};
+#ifdef ESP_PLATFORM
+        const int exists=stat(scratch.sub,&prior);
+#else
+        const int exists=lstat(scratch.sub,&prior);
+#endif
+        if(exists==0||errno!=ENOENT)return fail("directory_recovery_collision");
+        FILE* mapping=exclusive_file(scratch.record);if(!mapping)return fail("directory_mapping_open");
+        const bool wrote=std::fwrite(path.data(),1,path.size(),mapping)==path.size();
+        const bool synced=sync_close(mapping);
+        if(!wrote||!synced){unlink(scratch.record);return fail("directory_mapping_write");}
+        if(rename(scratch.nsdir,scratch.sub)!=0){const auto why=errno;unlink(scratch.record);errno=why;return fail("directory_rename");}
+    }else if(!scratch.remove_active)return fail("missing");
+    scratch.remove_active=false;++revision_;scratch.move_revision=revision_;
     return Error::ok;
 }
 } // namespace hcc::backup

@@ -48,6 +48,9 @@ struct ListingScratch {
     char move_owner[256]{};
     std::uint32_t move_count=0,move_used=0,move_revision=0,move_builds=0;
     bool move_ready=false;
+    bool remove_active=false;
+    std::uint32_t remove_done=0;
+    char remove_path[4096]{};
     char prefix[4096];   // normalized requested path
     char path[4096];     // a record's destination, normalized in place
     char nsdir[4400];    // <root>/directories/<prefix>

@@ -144,7 +144,12 @@ int main(){
         // Newly committed data invalidates the index and is discoverable.
         assert(cb.begin(cb.context,"source","new-file")==bb::Error::ok&&cb.finish(cb.context,true)==bb::Error::ok);
         assert(move(target,"new-file","new-name",scratch)==bb::Error::ok&&scratch.move_builds==builds+2);
-        for(unsigned i=0;i<128;++i)assert(target.remove_item("after/"+std::to_string(i),scratch)==bb::Error::ok);
+        assert(target.create_directory("after/empty/nested")==bb::Error::ok);
+        unsigned removed_polls=0;
+        for(;;){const auto e=target.remove_item("after",scratch);++removed_polls;if(e==bb::Error::would_block)continue;assert(e==bb::Error::ok);break;}
+        assert(removed_polls==129&&!scratch.remove_active&&scratch.remove_done==128);
+        assert(std::filesystem::exists(std::filesystem::path(target.session_path())/"removed_directory_000001/empty/nested"));
+        for(unsigned i=1;i<=128;++i){char name[40];std::snprintf(name,sizeof(name),"%06u.removed",i);assert(std::filesystem::exists(std::filesystem::path(target.session_path())/name));}
         assert(scratch.move_builds==builds+2); // one cached index across entire removal batch
         bb::DirectoryEntry entries[2];bb::DirectoryListing listing{entries,2,0};
         assert(target.list_directory("after",listing,scratch)==bb::Error::ok&&listing.count==0);
@@ -160,7 +165,7 @@ int main(){
         }
         const auto identity=read(root/"000001.ready/identity.bin");
         assert(remove("../escape")==bb::Error::invalid_argument);
-        assert(remove("backup")==bb::Error::io_error); // nonempty logical directory
+        assert(remove("missing")==bb::Error::io_error);
         std::ofstream(root/"000001.removed")<<"collision";
         assert(remove("backup/file")==bb::Error::io_error&&fs::exists(root/"000001.ready"));
         fs::remove(root/"000001.removed");
@@ -175,9 +180,14 @@ int main(){
         assert(remove("backup/empty")==bb::Error::ok&&!fs::exists(root/"directories/backup/empty"));
         fs::create_directory_symlink(parent,root/"directories/link");
         assert(remove("link")==bb::Error::io_error&&fs::exists(parent));
+        assert(target.create_directory("snapshot/empty/nested")==bb::Error::ok);
+        assert(remove("snapshot.")==bb::Error::invalid_argument&&fs::exists(root/"directories/snapshot"));
+        assert(remove("snapshot")==bb::Error::ok&&!fs::exists(root/"directories/snapshot"));
+        assert(fs::exists(root/"removed_directory_000002/empty/nested"));
+        const auto mapping=read(root/"removed_directory_000002.path");assert(std::string(mapping.begin(),mapping.end())=="snapshot");
         assert(target.committed_files()==2); // historical capture count; recovery retained
     }
-    std::cout<<"PASS: RemoveItems hides files, preserves recovery bytes, removes only empty directories and refuses traversal/symlinks/collisions\n";
+    std::cout<<"PASS: RemoveItems hides files, preserves recovery bytes, archives directory subtrees and refuses traversal/symlinks/collisions\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

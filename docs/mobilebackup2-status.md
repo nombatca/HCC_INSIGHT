@@ -734,3 +734,27 @@ and 128-item tests, production P4 coordinator with transparent host TLS stub thr
 upload, 128 moves, RemoveItems deferred status and final result. Host sanitizers
 cover storage, adapter and SD coordinator. Physical firmware behavior still needs
 confirmation after CI and flashing.
+
+
+### Snapshot directory cleanup correction (2026-11-10)
+
+RemoveItems previously refused nonempty logical directories. It now supports
+current-session directory subtrees: index once, archive at most one matching
+payload record per poll, then rename the created-directory namespace subtree to
+removed_directory_NNNNNN. A synced .path sidecar retains the original logical
+name. Payload records remain .removed with their original identities; no disk
+space or byte quota is credited. Empty descendant directories are retained in
+the recovered tree. No recursive unlink or traversal into namespace children is
+performed, and other sessions remain untouched.
+
+The request stays pending until the entire subtree ends; cancellation/deadlines
+still apply. Earlier archived files remain archived on error/cancel (not batch
+atomic or guaranteed power-loss atomic). FAT-ambiguous path components, missing
+items, duplicate file identities, file/directory collisions, bad ancestors and
+recovery collisions fail explicitly. Failure logs distinguish lookup, validation,
+missing, collision and rename stages without dumping device paths. Logs count
+archived children every eight records. Missing directory requests still fail.
+
+Regression coverage includes a populated 128-file tree with nested empty
+namespace directories, recovery mapping, cache/listing exclusion, FAT aliases, namespace links, cancellation, and the P4 host adapter
+upload/move/subtree-remove/final-result path. Physical success remains unconfirmed.
