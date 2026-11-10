@@ -313,6 +313,8 @@ const char *stateText()
 {
     if (s_state.load() == State::Off && HCCSdAccess::gate.owner() == hcc::backup::SdOwner::capture)
         return "SD ĐANG LƯU CAPTURE - CHƯA THỂ BẬT USB DISK";
+    if (s_state.load() == State::Off && HCCSdAccess::gate.owner() == hcc::backup::SdOwner::file_manager)
+        return "SD ĐANG QUẢN LÝ TỆP - CHỜ HOÀN TẤT";
     switch (s_state.load()) {
     case State::Off: return "TẮT - thẻ SD đang dùng cho board";
     case State::Starting: return "Đang bật...";

@@ -1,7 +1,7 @@
 #pragma once
 #include <atomic>
 namespace hcc::backup {
-enum class SdOwner { free, capture, usb_disk };
+enum class SdOwner { free, capture, usb_disk, file_manager };
 class SdLease;
 class SdAccess {
 public:

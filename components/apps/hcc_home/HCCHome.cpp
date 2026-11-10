@@ -1,6 +1,8 @@
 #include "HCCHome.hpp"
 #include "hcc_cores.h"
 #include "HCCUsbDisk.hpp"
+#include "HCCSdFiles.hpp"
+#include "HCCSdFilesView.hpp"
 #include "HCCBackupSdSelfTest.hpp"
 #include "setting/hcc_clock.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
@@ -915,6 +917,7 @@ void HCCHome::detachScreenObjects()
     _ud_info = nullptr;
     _ud_btn = nullptr;
     _ud_btn_label = nullptr;
+    _ud_files_btn = nullptr;
 }
 
 void HCCHome::showHome()
@@ -5671,10 +5674,10 @@ void HCCHome::showUsbDisk()
     lv_label_set_long_mode(guide, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(guide, 940);
     lv_label_set_text(guide,
-                      "Bật để máy tính thấy thẻ SD như một ổ USB (chép nhạc vào thư mục music, lấy case trong kb/v1/cases...).\n"
-                      "1. Bấm BẬT USB DISK.  2. Cắm cáp vào cổng USB của chip ESP32-P4 (KHÔNG phải cổng UART dùng để flash/monitor).\n"
-                      "3. Chép xong: EJECT ổ đĩa trên máy tính rồi mới bấm TẮT USB DISK.\n"
-                      "Trong lúc bật: board không dùng được thẻ SD. Cổng UART vẫn monitor bình thường.");
+                      "Bật USB DISK để chép dữ liệu giữa thẻ SD và máy tính.\n"
+                      "Cắm cáp vào cổng USB của ESP32-P4, không phải cổng UART flash/monitor.\n"
+                      "Chép xong: EJECT trên máy tính rồi mới bấm TẮT USB DISK.\n"
+                      "Khi USB DISK đã tắt, bấm QUẢN LÝ TỆP để xem và xóa dữ liệu trực tiếp trên thẻ.");
     lv_obj_align(guide, LV_ALIGN_TOP_LEFT, 28, 70);
     lv_obj_set_style_text_color(guide, lv_color_hex(0xB8C5CF), 0);
     lv_obj_set_style_text_font(guide, &lv_font_be_vietnam_16, 0);
@@ -5698,6 +5701,17 @@ void HCCHome::showUsbDisk()
     _ud_btn_label = lv_label_create(_ud_btn);
     lv_obj_center(_ud_btn_label);
     lv_obj_set_style_text_font(_ud_btn_label, &lv_font_be_vietnam_18, 0);
+
+    _ud_files_btn = lv_btn_create(_screen);
+    lv_obj_set_size(_ud_files_btn, 300, 64);
+    lv_obj_align(_ud_files_btn, LV_ALIGN_TOP_LEFT, 350, 320);
+    lv_obj_set_style_radius(_ud_files_btn, 12, 0);
+    lv_obj_set_style_bg_color(_ud_files_btn, lv_color_hex(0x2478D0), 0);
+    lv_obj_add_event_cb(_ud_files_btn, onSdFilesClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *files_label = lv_label_create(_ud_files_btn);
+    lv_label_set_text(files_label, "QUẢN LÝ TỆP");
+    lv_obj_set_style_text_font(files_label, &lv_font_be_vietnam_18, 0);
+    lv_obj_center(files_label);
 
     lv_obj_t *back = lv_btn_create(_screen);
     lv_obj_set_size(back, 160, 52);
@@ -5743,14 +5757,34 @@ void HCCHome::refreshUsbDisk()
     const bool busy = st == State::Starting || st == State::Stopping;
     lv_label_set_text(_ud_btn_label, busy ? "ĐANG XỬ LÝ..." : (on ? "TẮT USB DISK" : "BẬT USB DISK"));
     lv_obj_set_style_bg_color(_ud_btn, lv_color_hex(on ? 0xC0392B : 0x2478D0), 0);
-    if (busy) lv_obj_add_state(_ud_btn, LV_STATE_DISABLED);
+    if (busy || HCCSdFiles::busy()) lv_obj_add_state(_ud_btn, LV_STATE_DISABLED);
     else lv_obj_clear_state(_ud_btn, LV_STATE_DISABLED);
+    if (_ud_files_btn) {
+        if (st != State::Off || HCCSdFiles::busy()) lv_obj_add_state(_ud_files_btn, LV_STATE_DISABLED);
+        else lv_obj_clear_state(_ud_files_btn, LV_STATE_DISABLED);
+    }
+}
+
+void HCCHome::onSdFilesClicked(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (!app || HCCUsbDisk::state() != HCCUsbDisk::State::Off || HCCSdFiles::busy()) return;
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCSdFilesView::show(app->_screen, onSdFilesBack, app);
+}
+
+void HCCHome::onSdFilesBack(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showUsbDisk();
 }
 
 void HCCHome::onUsbDiskToggle(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr) return;
+    if (HCCSdFiles::busy()) return;
     using HCCUsbDisk::State;
     const State st = HCCUsbDisk::state();
     if (st == State::Ready || st == State::Connected || st == State::Error) {
