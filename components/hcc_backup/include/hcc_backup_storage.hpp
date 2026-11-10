@@ -39,6 +39,7 @@ public:
     // Directory subtrees archive at most one matching file per call, then
     // rename the created-directory tree to recovery storage. May yield; caller
     // retries the SAME path until completion. Earlier changes survive failure.
+    // Validated absence succeeds (ENOENT semantics); I/O/corruption still fail.
     Error remove_item(std::string_view path,ListingScratch& scratch);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}

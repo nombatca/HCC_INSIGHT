@@ -537,7 +537,15 @@ Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scra
         const bool synced=sync_close(mapping);
         if(!wrote||!synced){unlink(scratch.record);return fail("directory_mapping_write");}
         if(rename(scratch.nsdir,scratch.sub)!=0){const auto why=errno;unlink(scratch.record);errno=why;return fail("directory_rename");}
-    }else if(!scratch.remove_active)return fail("missing");
+    }else if(!scratch.remove_active){
+        // idevicebackup2 ignores ENOENT for RemoveItems: an old index or
+        // previously removed item already satisfies the requested final state.
+        // Only reach this after the record index and namespace lookup validated.
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] RemoveItems already_absent result=ok\n");
+#endif
+        return Error::ok;
+    }
     scratch.remove_active=false;++revision_;scratch.move_revision=revision_;
     return Error::ok;
 }

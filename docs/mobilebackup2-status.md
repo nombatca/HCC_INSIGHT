@@ -758,3 +758,23 @@ archived children every eight records. Missing directory requests still fail.
 Regression coverage includes a populated 128-file tree with nested empty
 namespace directories, recovery mapping, cache/listing exclusion, FAT aliases, namespace links, cancellation, and the P4 host adapter
 upload/move/subtree-remove/final-result path. Physical success remains unconfirmed.
+
+
+### Missing old-index cleanup (2026-11-10)
+
+Correct RemoveItems absence semantics to match the current primary reference:
+libimobiledevice tools/idevicebackup2.c ignores ENOENT for removal. After a fully
+validated committed-record index and namespace lookup establish absence, return
+success and log already_absent. A missing old index or repeated remove is thus a
+no-op. This supersedes the earlier documented "missing items fail" limitation;
+other namespace, metadata, recovery and I/O errors still fail. MoveItems missing
+source behavior is unchanged.
+
+Regression tests cover absent and repeated removals, missing Manifest.mbdx,
+corrupt metadata while resolving an absent name, recovery collisions, and a P4
+host adapter batch with an absent old index before and after a populated subtree.
+The physical device's old-index error alone does not prove absence; the previous
+local failure reason is not included in the supplied excerpt. Hardware retest is
+required to confirm the cause and final backup outcome.
+
+Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c

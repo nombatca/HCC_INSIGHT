@@ -384,7 +384,7 @@ int main() {
         assert(hcc::plist::parse(move_reply+4,bb::read_be32(move_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
         assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
-        bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup</string></array></array></plist>");
+        bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup/Manifest.mbdx</string><string>backup</string><string>backup/Manifest.mbdx</string></array></array></plist>");
         const auto remove_reply_start=tls.ssl.output.size();t._tx_in_flight=true;
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::removing&&tls.ssl.output.size()==remove_reply_start);

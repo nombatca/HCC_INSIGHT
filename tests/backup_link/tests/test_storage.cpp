@@ -165,14 +165,14 @@ int main(){
         }
         const auto identity=read(root/"000001.ready/identity.bin");
         assert(remove("../escape")==bb::Error::invalid_argument);
-        assert(remove("missing")==bb::Error::io_error);
+        assert(remove("missing")==bb::Error::ok);
         std::ofstream(root/"000001.removed")<<"collision";
         assert(remove("backup/file")==bb::Error::io_error&&fs::exists(root/"000001.ready"));
         fs::remove(root/"000001.removed");
         assert(remove("backup\\file")==bb::Error::ok&&!fs::exists(root/"000001.ready"));
         assert(read(root/"000001.removed/payload.bin")==std::vector<uint8_t>({4,5,6}));
         assert(read(root/"000001.removed/identity.bin")==identity);
-        assert(remove("backup/file")==bb::Error::io_error);
+        assert(remove("backup/file")==bb::Error::ok);
         assert(move(target,"backup/keep","backup/file",scratch)==bb::Error::ok); // removed cached entry isn't a collision
         bb::DirectoryEntry entries[8];bb::DirectoryListing listing{entries,8,0};
         assert(target.list_directory("backup",listing,scratch)==bb::Error::ok&&listing.count==1);
@@ -186,6 +186,10 @@ int main(){
         assert(fs::exists(root/"removed_directory_000002/empty/nested"));
         const auto mapping=read(root/"removed_directory_000002.path");assert(std::string(mapping.begin(),mapping.end())=="snapshot");
         assert(target.committed_files()==2); // historical capture count; recovery retained
+        assert(remove("backup/Manifest.mbdx")==bb::Error::ok);
+        // Absence must not mask corrupt metadata discovered during indexing.
+        scratch.move_ready=false;std::ofstream(root/"000002.ready/identity.bin",std::ios::trunc)<<"broken";
+        assert(remove("missing")==bb::Error::io_error);
     }
     std::cout<<"PASS: RemoveItems hides files, preserves recovery bytes, archives directory subtrees and refuses traversal/symlinks/collisions\n";
     fs::remove_all(parent);
