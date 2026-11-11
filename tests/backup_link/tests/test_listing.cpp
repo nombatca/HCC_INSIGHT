@@ -28,9 +28,9 @@ static const bb::DirectoryEntry* find(const bb::DirectoryListing& l,const char* 
 }
 
 // Decode an encoded reply and assert the four-item status envelope plus a dict.
-static pp::Document decode(const std::vector<std::uint8_t>& bytes,pp::Node* nodes,std::size_t node_cap,char* text,std::size_t text_cap){
+static pp::Document decode(const std::vector<std::uint8_t>& bytes,pp::Node* nodes,std::size_t node_cap,char* text,std::size_t text_cap,pp::Limits limits={}){
     pp::Document d;
-    assert(pp::parse(bytes.data(),bytes.size(),{nodes,node_cap,text,text_cap},d)==pp::Error::ok);
+    assert(pp::parse(bytes.data(),bytes.size(),{nodes,node_cap,text,text_cap},d,limits)==pp::Error::ok);
     assert(d.string(d.at(d.root,0))=="DLMessageStatusResponse");
     assert(d.get(d.at(d.root,1))->integer==0);
     assert(d.string(d.at(d.root,2))=="___EmptyParameterString___");
@@ -156,6 +156,31 @@ int main(){
         assert(t.list_directory("c",list,scratch)==bb::Error::io_error);
     }
     std::cout<<"PASS: namespace ancestors, trailing metadata, source bounds and corrupt destination are rejected\n";
+    {
+        bb::StagedUploadTarget t;assert(t.open_session(tmpl)==bb::Error::ok);
+        for(unsigned i=0;i<256;++i){char path[40];std::snprintf(path,sizeof(path),"shards/%02x",i);assert(t.create_directory(path)==bb::Error::ok);}
+        std::vector<bb::DirectoryEntry> entries(1024);bb::DirectoryListing wide{entries.data(),entries.size(),0};
+        assert(t.list_directory("shards",wide,scratch)==bb::Error::ok&&wide.count==256);
+        upload(t,"versions/Status.plist","old");upload(t,"versions/Status.plist","newest");
+        assert(t.list_directory("versions",wide,scratch)==bb::Error::ok&&wide.count==1);
+        assert(entries[0].size==6&&entries[0].capture_record==2);
+        // Full advertised profile: 1024 maximum-byte UTF-8 basenames. Their
+        // UTF-16 encoding also exercises four-byte offsets and two-byte refs.
+        for(unsigned i=0;i<1024;++i){auto& e=entries[i];char number[8];std::snprintf(number,sizeof(number),"%04u",i);
+            const std::string name=std::string(number)+std::string(249,'x')+"é";assert(name.size()==255);
+            std::memcpy(e.name,name.c_str(),name.size()+1);e.name_length=name.size();e.type=bb::EntryType::regular;e.size=i;e.modification_time=1700000000;
+        }
+        wide.count=entries.size();std::vector<uint32_t> offsets(bb::contents_object_count(entries.size()));
+        std::vector<uint8_t> output(768*1024);size_t written=0;
+        assert(bb::encode_contents_of_directory_response(wide,offsets.data(),offsets.size(),output.data(),8192,written)==bb::LinkError::too_large);
+        assert(bb::encode_contents_of_directory_response(wide,offsets.data(),offsets.size(),output.data(),output.size(),written)==bb::LinkError::ok&&written>65536);
+        output.resize(written);std::vector<pp::Node> nodes(20000);std::vector<char> text(2*1024*1024);
+        pp::Limits decode_limits;decode_limits.max_input=output.size();
+        auto doc=decode(output,nodes.data(),nodes.size(),text.data(),text.size(),decode_limits);const auto dict=doc.at(doc.root,3);assert(doc.get(dict)->count==1024);
+        for(unsigned i:{0u,1023u}){const auto value=doc.find(dict,entries[i].name);assert(value!=pp::none&&doc.get(doc.find(value,"DLFileSize"))->integer==i);}
+        std::ofstream file("build/contents_1024.bplist",std::ios::binary);file.write(reinterpret_cast<const char*>(output.data()),output.size());assert(file.good());
+    }
+    std::cout<<"PASS: 256 shard directories, latest file versions and full 1024-entry long-Unicode reply without truncation\n";
     fs::remove_all(parent);
     std::cout<<"All DLContentsOfDirectory listing tests passed; no device connection performed.\n";
     return 0;

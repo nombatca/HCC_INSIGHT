@@ -209,7 +209,7 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
         while(plen&&prefix[plen-1]=='/')--plen;
     }
     prefix[plen]=0;
-    auto add=[&](const char* name,std::size_t nlen,EntryType type,std::uint64_t size,std::int64_t mtime)->Error{
+    auto add=[&](const char* name,std::size_t nlen,EntryType type,std::uint64_t size,std::int64_t mtime,std::uint32_t record=0)->Error{
         if(nlen==0||nlen>255)return Error::io_error;
         for(std::size_t k=0;k<out.count;++k){
             DirectoryEntry& ex=out.entries[k];
@@ -219,13 +219,22 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
                     if(mtime>ex.modification_time)ex.modification_time=mtime;
                     return Error::ok;
                 }
-                return Error::io_error; // file/dir or file/file collision = ambiguous tree
+                if(ex.type==EntryType::regular&&type==EntryType::regular&&ex.capture_record&&record){
+                    if(record>ex.capture_record){ex.capture_record=record;ex.size=size;ex.modification_time=mtime;}
+                    return Error::ok; // Same destination uploaded again: newest version.
+                }
+                return Error::io_error; // file/directory collision remains ambiguous
             }
         }
-        if(out.count>=out.capacity)return Error::too_large; // never truncate the listing
+        if(out.count>=out.capacity){
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] Directory listing limit count=%u capacity=%u\n",static_cast<unsigned>(out.count),static_cast<unsigned>(out.capacity));
+#endif
+            return Error::too_large; // never truncate the listing
+        }
         DirectoryEntry& e=out.entries[out.count++];
         std::memcpy(e.name,name,nlen);e.name[nlen]=0;e.name_length=static_cast<std::uint16_t>(nlen);
-        e.type=type;e.size=(type==EntryType::directory)?0:size;e.modification_time=mtime;
+        e.type=type;e.size=(type==EntryType::directory)?0:size;e.modification_time=mtime;e.capture_record=record;
         return Error::ok;
     };
     // Map one normalized destination to its immediate child under the prefix.
@@ -254,7 +263,8 @@ Error StagedUploadTarget::list_directory(std::string_view request,DirectoryListi
         for(std::size_t i=0;i<dlen;++i)if(norm[i]=='\\')norm[i]='/'; // normalize in place
         std::size_t cs=0,cl=0; bool leaf=false;
         if(!classify(norm,dlen,cs,cl,leaf))continue;
-        err=leaf?add(norm+cs,cl,EntryType::regular,size,mtime)
+        std::uint32_t record_number=0;for(unsigned i=0;i<6;++i)record_number=record_number*10+static_cast<unsigned>(ent->d_name[i]-'0');
+        err=leaf?add(norm+cs,cl,EntryType::regular,size,mtime,record_number)
                 :add(norm+cs,cl,EntryType::directory,0,0);
     }
     closedir(dir);

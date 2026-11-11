@@ -67,3 +67,14 @@ for full in (False, True):
     assert value == ['DLMessageProcessMessage', expected]
 print('Independent plistlib Backup request decoding PASS')
 PY
+
+python3 - <<'PYLIST'
+import plistlib
+with open('build/contents_1024.bplist','rb') as stream:
+    result=plistlib.load(stream)
+assert result[:3]==['DLMessageStatusResponse',0,'___EmptyParameterString___']
+assert len(result[3])==1024
+for i in (0,1023):
+    assert result[3][f'{i:04d}'+('x'*249)+'é']['DLFileSize']==i
+print('Independent plistlib 1024-entry Unicode directory reply decoding PASS')
+PYLIST

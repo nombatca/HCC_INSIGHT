@@ -25,6 +25,8 @@ struct DirectoryEntry {
     EntryType type;
     std::uint64_t size;
     std::int64_t modification_time;
+    // Internal reconstruction provenance; not serialized in DeviceLink replies.
+    std::uint32_t capture_record=0;
 };
 
 // Caller-owned, fixed-capacity collection. `entries` points at `capacity`

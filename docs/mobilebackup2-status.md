@@ -833,3 +833,35 @@ Tests cover genuine repeated uploads returning latest bytes while preserving bot
 records, a P4 adapter upload-old/upload-new/download sequence with final status0,
 and prior large/empty/moved/removed/missing/changed/corrupt payload and cancellation
 regressions. Hardware rerun must confirm selected-record or stage diagnostics.
+
+
+### P4 directory reply capacity (2026-11-11)
+
+P4 previously provisioned only 64 listing entries and an 8KiB operation reply
+buffer. Provision 1024 entries and a 768KiB operation output buffer inside the
+existing PSRAM-resident MdmProbeContext, plus the matching object-offset array.
+The output allowance covers the tested worst-case 1024 distinct 255-byte UTF-8
+basenames, including UTF-16 expansion and offset tables. Incoming control/parser
+limits and existing payload/file/time quotas are unchanged. Allocation failure
+still follows the existing context-failure cleanup. This does not remove bounds.
+
+Listing regular-file duplicates now select metadata from the highest committed
+record ID, matching DownloadFiles newest-upload read behavior. Directory sources
+still merge, and file/directory conflicts or corrupt metadata fail. Provenance is
+internal only and is not serialized. MoveItems/direct file-removal behavior is
+unchanged. Directory scanning remains synchronous on the USB owner task.
+
+Log bounded requested path, entry/reply capacities, listing failure with count,
+and encoding result/count/capacity. Encoder exhaustion maps to the explicit quota
+error. No silently truncated dictionary or fabricated empty response is sent.
+The physical reason5 occurs in the listing path; request/count diagnostics are
+needed to confirm which bound was reached on device.
+
+Validation: filesystem reconstruction of 256 shard directories and latest
+repeated-upload metadata; 1024 maximum-byte Unicode names encode/decode without
+truncation in both project parser (test-specific outgoing input allowance) and
+independent Python plistlib. Production incoming parser defaults stay unchanged.
+P4 adapter ASan/UBSan sends a 256-entry reply larger than 8KiB under partial TLS
+writes, checks exact count/status, verifies latest file metadata and continues to
+final result. Core suite and SD/coordinator sanitizer regressions pass. Hardware
+rerun and latest firmware CI remain required.

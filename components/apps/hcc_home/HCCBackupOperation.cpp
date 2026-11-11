@@ -233,14 +233,28 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(!contents_.entries||!contents_.entry_capacity||!contents_.scratch||
            contents_.offset_capacity<bb::contents_object_count(contents_.entry_capacity))
             return fail(HCCBackupError::unsupported);
+#ifdef ESP_PLATFORM
+        char requested[161];const auto path=doc.string(event.payload);const auto length=std::min(path.size(),sizeof(requested)-1);
+        for(std::size_t i=0;i<length;++i){const auto c=static_cast<unsigned char>(path[i]);requested[i]=c>=32&&c<127?static_cast<char>(c):'?';}
+        requested[length]=0;
+        printf("[HCC BACKUP] ContentsOfDirectory request path=%s%s entry_capacity=%u reply_capacity=%u\n",requested,path.size()>length?"...":"",static_cast<unsigned>(contents_.entry_capacity),static_cast<unsigned>(output_capacity_));
+#endif
         bb::DirectoryListing listing{contents_.entries,contents_.entry_capacity,0};
         // Too many children or any storage/metadata error fails the operation; the
         // listing is never silently truncated or replaced with an empty reply.
         const auto result=capture_.listDirectory(doc.string(event.payload),listing,*contents_.scratch);
-        if(result!=bb::Error::ok)return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
+        if(result!=bb::Error::ok){
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] ContentsOfDirectory listing error=%s count=%u capacity=%u\n",bb::error_name(result),static_cast<unsigned>(listing.count),static_cast<unsigned>(listing.capacity));
+#endif
+            return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
+        }
         reply_.emplace(output_,output_capacity_);
-        if(reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity)!=bb::Error::ok)
-            return fail(HCCBackupError::transfer);
+        const auto encoded=reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity);
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] ContentsOfDirectory reply entries=%u result=%s capacity=%u\n",static_cast<unsigned>(listing.count),bb::error_name(encoded),static_cast<unsigned>(output_capacity_));
+#endif
+        if(encoded!=bb::Error::ok)return fail(encoded==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::transfer);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::download_files){

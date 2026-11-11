@@ -432,6 +432,21 @@ int main() {
         const auto version_status=number();assert(pos+version_status==tls.ssl.output.size());
         assert(hcc::plist::parse(tls.ssl.output.data()+pos,version_status,{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
         assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
+        static_assert(HCCUSBTransport::MdmProbeContext::kListEntries>=1024,"P4 listing profile must hold the tested bound");
+        const auto namespace_root=fs::path(t._mdm_probe->operation->sessionPath())/"directories/backup/shards";
+        for(unsigned i=0;i<256;++i){char shard[8];std::snprintf(shard,sizeof(shard),"%02x",i);fs::create_directories(namespace_root/shard);}
+        for(const char* requested:{"backup/shards","backup"}){
+            bytes.clear();const std::string request=std::string("<plist><array><string>DLContentsOfDirectory</string><string>")+requested+"</string></array></plist>";name(request.c_str());
+            const auto begin=tls.ssl.output.size();assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+            for(unsigned i=0;i<20000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+            assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+            const auto* reply=tls.ssl.output.data()+begin;const auto size=bb::read_be32(reply);assert(begin+4+size==tls.ssl.output.size());
+            std::vector<hcc::plist::Node> listing_nodes(4096);std::vector<char> listing_text(128*1024);hcc::plist::Document listing;
+            assert(hcc::plist::parse(reply+4,size,{listing_nodes.data(),listing_nodes.size(),listing_text.data(),listing_text.size()},listing)==hcc::plist::Error::ok);
+            assert(listing.get(listing.at(listing.root,1))->integer==0);const auto dict=listing.at(listing.root,3);
+            if(std::strcmp(requested,"backup/shards")==0)assert(listing.get(dict)->count==256&&size>8192);
+            else {assert(listing.get(dict)->count==3);const auto status=listing.find(dict,"Status.plist");assert(listing.get(listing.find(status,"DLFileSize"))->integer==6);}
+        }
         bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup/Manifest.mbdx</string><string>backup</string><string>backup/Manifest.mbdx</string></array></array></plist>");
         const auto remove_reply_start=tls.ssl.output.size();t._tx_in_flight=true;
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
