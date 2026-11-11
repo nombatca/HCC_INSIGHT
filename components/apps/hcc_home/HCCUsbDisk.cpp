@@ -1,4 +1,5 @@
 #include "HCCUsbDisk.hpp"
+#include "HCCSdAccess.hpp"
 
 #include <stdio.h>
 #include <string.h>
@@ -23,7 +24,9 @@ namespace {
 
 const char *TAG = "HCCUsbDisk";
 
-volatile State s_state = State::Off;
+std::atomic<State> s_state{State::Off};
+hcc::backup::SdLease s_sd_lease(HCCSdAccess::gate, hcc::backup::SdOwner::usb_disk);
+bool s_sd_returned = false;
 char s_error[96] = "";
 uint32_t s_capacity_mb = 0;
 sdmmc_card_t *s_card = nullptr;
@@ -140,16 +143,18 @@ bool swapPhy(bool otg_on_type_c)
 void onUsbEvent(tinyusb_event_t *event, void *)
 {
     if (event->id == TINYUSB_EVENT_ATTACHED) {
-        if (s_state == State::Ready) s_state = State::Connected;
+        State expected = State::Ready;
+        s_state.compare_exchange_strong(expected, State::Connected);
         ESP_LOGI(TAG, "Máy tính đã nhận ổ đĩa");
     } else if (event->id == TINYUSB_EVENT_DETACHED) {
-        if (s_state == State::Connected) s_state = State::Ready;
+        State expected = State::Connected;
+        s_state.compare_exchange_strong(expected, State::Ready);
         ESP_LOGI(TAG, "Máy tính đã ngắt ổ đĩa");
     }
 }
 
 // Tháo hết những gì đã dựng (dùng cho cả stop và khi start lỗi giữa chừng), rồi trả thẻ cho board.
-void teardown()
+bool teardown()
 {
     // Trả cổng Type-C cho USB-Serial/JTAG trước tiên: nếu bước sau crash thì monitor vẫn đọc được log.
     breadcrumb(11);
@@ -183,21 +188,26 @@ void teardown()
         ESP_LOGW(TAG, "Gắn lại thẻ SD cho board thất bại: %s", esp_err_to_name(m));
     }
     breadcrumb(0);
+    s_sd_returned = (m == ESP_OK || m == ESP_ERR_INVALID_STATE) && bsp_sdcard != nullptr;
+    if (!s_sd_returned) setError("Không gắn lại được thẻ SD cho board", m == ESP_OK ? ESP_ERR_INVALID_STATE : m);
+    return s_sd_returned;
 }
 
-void doStart()
+bool doStart()
 {
     s_error[0] = '\0';
+    s_sd_returned = bsp_sdcard != nullptr;
     breadcrumb(1);
     // 1) Board nhả thẻ: tháo FAT ở /sdcard (nếu đang gắn). Không có thẻ thì raw_init báo lỗi bên dưới.
     if (bsp_sdcard != nullptr) {
         const esp_err_t u = bsp_sdcard_unmount();
         if (u != ESP_OK) {
+            s_sd_returned = bsp_sdcard != nullptr;
             setError("Không tháo được thẻ SD khỏi board", u);
-            s_state = State::Error;
-            return;
+            return false;
         }
     }
+    s_sd_returned = false;
     breadcrumb(2);
     // 2) Khởi tạo thẻ "thô" (không FAT): máy tính sẽ quản lý hệ thống file.
     esp_err_t err = bsp_sdcard_raw_init(&s_card);
@@ -205,8 +215,7 @@ void doStart()
         s_card = nullptr;
         setError("Không đọc được thẻ SD (chưa cắm thẻ?)", err);
         teardown();
-        s_state = State::Error;
-        return;
+        return false;
     }
     s_capacity_mb = (uint32_t)(((uint64_t)s_card->csd.capacity * s_card->csd.sector_size) / (1024 * 1024));
 
@@ -218,8 +227,7 @@ void doStart()
     if (err != ESP_OK) {
         setError("Lỗi cài MSC", err);
         teardown();
-        s_state = State::Error;
-        return;
+        return false;
     }
     s_msc_driver_installed = true;
 
@@ -233,8 +241,7 @@ void doStart()
         s_storage = nullptr;
         setError("Lỗi tạo ổ đĩa USB", err);
         teardown();
-        s_state = State::Error;
-        return;
+        return false;
     }
 
     breadcrumb(4);
@@ -242,8 +249,7 @@ void doStart()
     if (!swapPhy(true)) {
         snprintf(s_error, sizeof(s_error), "Không chuyển được cổng Type-C sang USB (xem dòng PHY)");
         teardown();
-        s_state = State::Error;
-        return;
+        return false;
     }
     tinyusb_config_t tcfg = TINYUSB_DEFAULT_CONFIG(onUsbEvent);
     tcfg.port = TINYUSB_PORT_FULL_SPEED_0;
@@ -252,27 +258,15 @@ void doStart()
     if (err != ESP_OK) {
         setError("Lỗi khởi động USB", err);
         teardown();
-        s_state = State::Error;
-        return;
+        return false;
     }
     s_tinyusb_installed = true;
     breadcrumb(0);
-    s_state = State::Ready;
     ESP_LOGI(TAG, "USB DISK bật: thẻ %u MB", (unsigned)s_capacity_mb);
+    return true;
 }
 
-void worker(void *arg)
-{
-    const bool start = arg != nullptr;
-    if (start) {
-        doStart();
-    } else {
-        teardown();
-        s_state = State::Off;
-        ESP_LOGI(TAG, "USB DISK tắt, thẻ SD trả lại cho board");
-    }
-    vTaskDelete(nullptr);
-}
+#include "HCCUsbDiskWorker.inc"
 
 bool launch(bool start)
 {
@@ -308,38 +302,20 @@ const char *lastCrash()
     return s_last_crash;
 }
 
-bool requestStart()
-{
-    if (s_state != State::Off && s_state != State::Error) return false;
-    s_state = State::Starting;
-    if (!launch(true)) {
-        s_state = State::Error;
-        snprintf(s_error, sizeof(s_error), "Không tạo được task");
-        return false;
-    }
-    return true;
-}
-
-bool requestStop()
-{
-    if (s_state != State::Ready && s_state != State::Connected && s_state != State::Error) return false;
-    s_state = State::Stopping;
-    if (!launch(false)) {
-        s_state = State::Error;
-        snprintf(s_error, sizeof(s_error), "Không tạo được task");
-        return false;
-    }
-    return true;
-}
+#include "HCCUsbDiskRequests.inc"
 
 State state()
 {
-    return s_state;
+    return s_state.load();
 }
 
 const char *stateText()
 {
-    switch (s_state) {
+    if (s_state.load() == State::Off && HCCSdAccess::gate.owner() == hcc::backup::SdOwner::capture)
+        return "SD ĐANG LƯU CAPTURE - CHƯA THỂ BẬT USB DISK";
+    if (s_state.load() == State::Off && HCCSdAccess::gate.owner() == hcc::backup::SdOwner::file_manager)
+        return "SD ĐANG QUẢN LÝ TỆP - CHỜ HOÀN TẤT";
+    switch (s_state.load()) {
     case State::Off: return "TẮT - thẻ SD đang dùng cho board";
     case State::Starting: return "Đang bật...";
     case State::Ready: return "ĐÃ BẬT - cắm cáp Type-C vào máy tính";

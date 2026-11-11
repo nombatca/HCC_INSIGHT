@@ -27,7 +27,8 @@ void bootInit();
 // "" hoặc mô tả bước đang làm khi board dừng ở lần chạy trước.
 const char *lastCrash();
 
-// Bật / tắt (bất đồng bộ). Trả false nếu đang bận.
+// Bật / tắt (bất đồng bộ). Trả false nếu đang bận hoặc capture đang giữ SD.
+// Quyền SD chỉ nhả sau khi mount lại thành công; lỗi mount lại cần thử stop lần nữa.
 bool requestStart();
 bool requestStop();
 

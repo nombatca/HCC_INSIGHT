@@ -97,6 +97,7 @@ private:
     static void *i2cBusForScope(void *user);
     static void onBackClicked(lv_event_t *event);
     static void onRecoveryClicked(lv_event_t *event);
+    static void onMdmClicked(lv_event_t *event);
     // IPHONE HARDWARE CHECK (trong màn USB HUB).
     static void onHardwareCheckClicked(lv_event_t *event);
     void showHardwareCheck();
@@ -419,6 +420,9 @@ private:
     lv_obj_t *_ud_info = nullptr;
     lv_obj_t *_ud_btn = nullptr;
     lv_obj_t *_ud_btn_label = nullptr;
+    lv_obj_t *_ud_files_btn = nullptr;
+    static void onSdFilesClicked(lv_event_t *event);
+    static void onSdFilesBack(lv_event_t *event);
     void showUsbDisk();
     void refreshUsbDisk();
     static void onUsbDiskClicked(lv_event_t *event);
