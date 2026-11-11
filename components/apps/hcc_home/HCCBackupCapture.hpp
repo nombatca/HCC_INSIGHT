@@ -12,6 +12,7 @@ public:
     hcc::backup::Error listDirectory(std::string_view path,hcc::backup::DirectoryListing& out,hcc::backup::ListingScratch& scratch){return storage_.list_directory(path,out,scratch);}
     hcc::backup::Error removeItem(std::string_view path,hcc::backup::ListingScratch& scratch){return storage_.remove_item(path,scratch);}
     hcc::backup::Error moveFile(std::string_view from,std::string_view to,hcc::backup::ListingScratch& scratch){return storage_.move_file(from,to,scratch);}
+    hcc::backup::Error lookupDownload(std::string_view path,hcc::backup::ListingScratch& scratch,hcc::backup::CapturedFileSource& out,bool& found){return storage_.lookup_download(path,scratch,out,found);}
     hcc::backup::UploadTarget target(){return storage_.target();}
     const char* sessionPath() const {return storage_.session_path();}
 private:

@@ -181,6 +181,7 @@ static void operation_flow(unsigned mode){
         wire.name("/device/source");wire.name("Status.plist");wire.number(6);wire.input.push_back(0x0c);wire.bytes("hello");
         wire.number(1);wire.input.push_back(0);wire.number(0);
         wire.xml("<array><string>DLMessageDownloadFiles</string><array><string>Status.plist</string></array></array>");
+        wire.fixture("result_ok.xml");
     }else if(mode>=28){
         // Device asks to download existing backup files (none present), then uploads one.
         wire.xml("<array><string>DLMessageDownloadFiles</string><array><string>Status.plist</string><string>Manifest.db</string></array></array>");
@@ -246,7 +247,7 @@ static void operation_flow(unsigned mode){
             else if(mode==5)assert(result==HCCBackupError::clock);
             else if(mode==6||mode==13){assert(result==HCCBackupError::quota&&operation.committedFiles()==1);}
             else if(mode==7)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==0&&observer->outcome()==bb::Outcome::success);
-            else if(mode==32)assert(result==HCCBackupError::unsupported&&operation.committedFiles()==1);
+            else if(mode==32)assert(result==HCCBackupError::ok&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::success);
             else if(mode==33)assert(result==HCCBackupError::remote&&operation.remoteCode()==42&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::remote_error);
             else if(mode==34)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::success);
             else if(mode==28)assert(result==HCCBackupError::ok&&operation.phase()==HCCBackupPhase::succeeded&&operation.committedFiles()==1&&observer->outcome()==bb::Outcome::success);

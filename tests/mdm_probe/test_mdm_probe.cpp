@@ -219,13 +219,13 @@ int main() {
         t.releaseMdmProbe();t._service_tls=nullptr;
     }
     std::puts("PASS: P4 TLS post-Hello control reads preserve WANT retry arguments");
-    for(unsigned mode=0;mode<18;++mode){
+    for(unsigned mode=0;mode<19;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
         assert(!t.requestMdmBackup()); // negotiation is not enough to claim an operation
         for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
         std::strcpy(t._session_udid.data(),mode==1?"invalid":"00008101-001234567890ABCD");
-        if(mode==0||mode==5||mode==12||mode==16||mode==17){
+        if(mode==0||mode==5||mode==12||mode==16||mode==17||mode==18){
             auto& bytes=tls.ssl.input;
             auto length=[&](std::uint32_t n){std::uint8_t h[4];bb::write_be32(h,n);bytes.insert(bytes.end(),h,h+4);};
             auto name=[&](const char* s){length(std::strlen(s));bytes.insert(bytes.end(),s,s+std::strlen(s));};
@@ -234,6 +234,7 @@ int main() {
             length(6);bytes.push_back(0x0c);for(char c:std::string_view("hello"))bytes.push_back(c);
             if(mode==16){length(1);bytes.push_back(0);length(0);name("<plist><array><string>DLMessageMoveItems</string><dict><key>backup/glue.bin</key><string>backup/new.bin</string></dict></array></plist>");}
             if(mode==17){length(1);bytes.push_back(0);length(0);name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup</string></array></array></plist>");}
+            if(mode==18){length(1);bytes.push_back(0);length(0);name("<plist><array><string>DLMessageDownloadFiles</string><array><string>backup/glue.bin</string></array></array></plist>");}
             if(mode==0){length(1);bytes.push_back(0x0b);length(0);name("<plist><array><string>DLMessageProcessMessage</string><dict><key>MessageName</key><string>Response</string><key>ErrorCode</key><integer>0</integer></dict></array></plist>");}
         }
         if(mode==7){
@@ -276,6 +277,9 @@ int main() {
             }
             if(mode==3&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::waiting){t.releaseMdmProbe();break;}
             if((mode==16||mode==17)&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==(mode==16?HCCBackupPhase::moving:HCCBackupPhase::removing)){
+                t._mdm_probe->operation->cancel();assert(!t.pollMdmProbe());break;
+            }
+            if(mode==18&&t._mdm_probe->operation&&t._mdm_probe->operation->phase()==HCCBackupPhase::preparing_download){
                 t._mdm_probe->operation->cancel();assert(!t.pollMdmProbe());break;
             }
             if(!ok)break;
@@ -384,6 +388,31 @@ int main() {
         assert(hcc::plist::parse(move_reply+4,bb::read_be32(move_reply),{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
         assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
         assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        // Device downloads the renamed committed file twice, then an absent name.
+        // The sender must stop at that missing file and omit the final entry.
+        bytes.clear();name("<plist><array><string>DLMessageDownloadFiles</string><array><string>backup/final.bin</string><string>backup/final.bin</string><string>backup/missing</string><string>backup/final.bin</string></array></array></plist>");
+        const auto download_begin=tls.ssl.output.size();t._tx_in_flight=true;
+        assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::preparing_download&&tls.ssl.output.size()==download_begin);
+        t._tx_in_flight=false;
+        for(unsigned i=0;i<500000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        size_t pos=download_begin;
+        auto number=[&](){assert(pos+4<=tls.ssl.output.size());const auto n=bb::read_be32(tls.ssl.output.data()+pos);pos+=4;return n;};
+        for(unsigned file=0;file<3;++file){
+            const auto n=number();assert(pos+n<=tls.ssl.output.size());
+            const std::string path(reinterpret_cast<const char*>(tls.ssl.output.data()+pos),n);pos+=n;
+            assert(path==(file<2?"backup/final.bin":"backup/missing"));size_t received=0;
+            for(;;){const auto frame=number();assert(frame&&pos+frame<=tls.ssl.output.size());const auto code=tls.ssl.output[pos++];
+                if(file==2){assert(code==0x06);pos+=frame-1;break;}
+                if(code==0){assert(frame==1&&received==payload_size);break;}
+                assert(code==0x0c);for(unsigned j=1;j<frame;++j)assert(tls.ssl.output[pos++]==static_cast<uint8_t>(received++));
+            }
+        }
+        assert(number()==0);const auto status_size=number();assert(pos+status_size==tls.ssl.output.size());
+        assert(hcc::plist::parse(tls.ssl.output.data()+pos,status_size,{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
+        assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==-13);
+        assert(move_doc.find(move_doc.at(move_doc.root,3),"backup/missing")!=hcc::plist::none);
         bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup/Manifest.mbdx</string><string>backup</string><string>backup/Manifest.mbdx</string></array></array></plist>");
         const auto remove_reply_start=tls.ssl.output.size();t._tx_in_flight=true;
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));

@@ -778,3 +778,34 @@ local failure reason is not included in the supplied excerpt. Hardware retest is
 required to confirm the cause and final backup outcome.
 
 Reference: https://cgit.libimobiledevice.org/libimobiledevice.git/tree/tools/idevicebackup2.c
+
+
+### DownloadFiles from committed capture records (2026-11-11)
+
+The coordinator no longer rejects a nonempty DownloadFiles request solely because
+uploads have already committed. Copy up to 24 requested paths into the existing
+2KiB arena, resolve one per poll using the incrementally built current-session
+index, then run the existing bounded DownloadBatchSender. Only unique exact
+.ready destination identities are served, including names updated by MoveItems;
+removed records, other sessions and arbitrary SD paths are not opened. Validated
+absence retains the existing raw error frame/first-error multi-status semantics.
+Directory requests, ambiguous identities, corrupt metadata and storage errors
+fail rather than being misreported as absent.
+
+CapturedFileSource binds metadata without opening a handle; each file opens
+lazily when streamed and closes on EOF. Sequential sending therefore holds at
+most one payload handle, using existing caller scratch up to 32KiB. Check record
+and payload type/size before reading, detect short reads/extra data, and close all
+sources on completion, failure, cancellation or destruction. Exclusive SD lease
+remains with the capture. Preparation yields during indexing, updates local work
+progress and remains subject to the total deadline. No restore/service request
+or cross-session resume is introduced; full Apple backup layout remains absent.
+
+Validation: storage readback/24 lazy preflights/empty/moved/missing/removed names,
+ambiguous identities and changed/symlink/corrupt payload rejection; coordinator
+upload->DownloadFiles->final result; P4 host adapter serves a renamed 512KiB file
+twice with stable WANT_WRITE retries, validates every raw byte/frame and first
+missing-file multi-status, then proceeds through removal and final result.
+Cancellation during preparation and reader reset are covered. Host stubs are not
+physical USB/TLS validation; hardware rerun must confirm the late DownloadFiles
+request is serviced and capture reaches a terminal device result.

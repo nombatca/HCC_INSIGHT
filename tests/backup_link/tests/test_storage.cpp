@@ -192,6 +192,46 @@ int main(){
         assert(remove("missing")==bb::Error::io_error);
     }
     std::cout<<"PASS: RemoveItems hides files, preserves recovery bytes, archives directory subtrees and refuses traversal/symlinks/collisions\n";
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);const fs::path root(target.session_path());
+        auto cb=target.target();static bb::ListingScratch scratch;
+        std::vector<uint8_t> expected(100000);for(size_t i=0;i<expected.size();++i)expected[i]=static_cast<uint8_t>(i*7);
+        assert(cb.begin(cb.context,"source","backup/read.bin")==bb::Error::ok);
+        assert(cb.write(cb.context,expected.data(),expected.size()).bytes==expected.size());assert(cb.finish(cb.context,true)==bb::Error::ok);
+        assert(cb.begin(cb.context,"source","backup/empty")==bb::Error::ok&&cb.finish(cb.context,true)==bb::Error::ok);
+        auto lookup=[&](std::string_view path,bb::CapturedFileSource& reader,bool& found){for(unsigned i=0;i<1000;++i){const auto e=target.lookup_download(path,scratch,reader,found);if(e!=bb::Error::would_block)return e;}assert(false);return bb::Error::io_error;};
+        bb::CapturedFileSource readers[24];bool found=false;
+        for(auto& reader:readers)assert(lookup("backup/read.bin",reader,found)==bb::Error::ok&&found); // lazy; no 24 open handles
+        for(auto& reader:readers){
+            std::vector<uint8_t> received;uint8_t buffer[317];auto source=reader.source();
+            for(;;){auto r=source.read(source.context,buffer,sizeof(buffer));assert(r.error==bb::Error::ok);received.insert(received.end(),buffer,buffer+r.bytes);if(r.eof)break;}
+            assert(received==expected);reader.reset();
+        }
+        fs::copy(root/"000002.ready",root/"000003.ready",fs::copy_options::recursive);scratch.move_ready=false;
+        assert(lookup("backup/empty",readers[0],found)==bb::Error::io_error&&!found);
+        fs::remove_all(root/"000003.ready");scratch.move_ready=false;
+        assert(lookup("backup/empty",readers[0],found)==bb::Error::ok&&found);uint8_t b[8];auto io=readers[0].source();auto end=io.read(io.context,b,sizeof(b));assert(end.eof&&end.bytes==0&&end.error==bb::Error::ok);
+        assert(lookup("../escape",readers[0],found)==bb::Error::invalid_argument&&!found);
+        assert(lookup("backup/missing",readers[0],found)==bb::Error::ok&&!found);
+        assert(target.remove_item("backup/empty",scratch)==bb::Error::ok);
+        assert(lookup("backup/empty",readers[0],found)==bb::Error::ok&&!found);
+        assert(lookup("backup/read.bin",readers[0],found)==bb::Error::ok&&found);
+        io=readers[0].source();assert(io.read(io.context,b,sizeof(b)).bytes==sizeof(b));readers[0].reset();
+        assert(io.read(io.context,b,sizeof(b)).error==bb::Error::invalid_argument);
+        assert(lookup("backup",readers[0],found)==bb::Error::io_error); // logical directory is not an absent file
+        assert(move(target,"backup/read.bin","backup/renamed.bin",scratch)==bb::Error::ok);
+        assert(lookup("backup/read.bin",readers[0],found)==bb::Error::ok&&!found);
+        assert(lookup("backup/renamed.bin",readers[0],found)==bb::Error::ok&&found);
+        // Changed/truncated/symlink payloads after preflight never become ENOENT.
+        std::ofstream(root/"000001.ready/payload.bin",std::ios::trunc)<<"short";
+        io=readers[0].source();assert(io.read(io.context,b,sizeof(b)).error==bb::Error::io_error);
+        assert(lookup("backup/renamed.bin",readers[0],found)==bb::Error::ok&&found);
+        fs::remove(root/"000001.ready/payload.bin");fs::create_symlink(root/"000002.removed/payload.bin",root/"000001.ready/payload.bin");
+        io=readers[0].source();assert(io.read(io.context,b,sizeof(b)).error==bb::Error::io_error);
+        readers[0].reset();scratch.move_ready=false;
+        assert(lookup("missing",readers[0],found)==bb::Error::io_error&&!found);
+    }
+    std::cout<<"PASS: lazy capture download sources, 24 preflights, exact chunks/empty/renamed/absent paths and changed/corrupt payload refusal\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

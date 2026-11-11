@@ -550,3 +550,86 @@ Error StagedUploadTarget::remove_item(std::string_view path,ListingScratch& scra
     return Error::ok;
 }
 } // namespace hcc::backup
+
+namespace hcc::backup {
+void CapturedFileSource::reset(){
+    if(file_)std::fclose(file_);
+    file_=nullptr;path_[0]=0;expected_=remaining_=0;done_=failed_=false;
+}
+Error CapturedFileSource::bind(const char* record,std::uint64_t size){
+    reset();const int n=std::snprintf(path_,sizeof(path_),"%s/payload.bin",record);
+    if(n<=0||static_cast<std::size_t>(n)>=sizeof(path_)){reset();return Error::too_large;}
+    expected_=remaining_=size;return Error::ok;
+}
+SourceResult CapturedFileSource::read_callback(void* context,std::uint8_t* bytes,std::size_t capacity){
+    auto& self=*static_cast<CapturedFileSource*>(context);
+    auto error=[&](Error e){if(self.file_)std::fclose(self.file_);self.file_=nullptr;self.failed_=true;return SourceResult{0,false,e};};
+    if(self.failed_)return {0,false,Error::io_error};
+    if(!bytes||!capacity||!self.path_[0])return error(Error::invalid_argument);
+    if(self.done_)return {0,true,Error::ok};
+    if(!self.file_){
+        auto* slash=std::strrchr(self.path_,'/');if(!slash)return error(Error::invalid_argument);
+        *slash=0;const bool parent=plain_directory(self.path_);*slash='/';
+        struct stat st{};
+#ifdef ESP_PLATFORM
+        const int seen=stat(self.path_,&st);
+#else
+        const int seen=lstat(self.path_,&st);
+#endif
+        if(!parent||seen!=0||!S_ISREG(st.st_mode)||st.st_size<0||static_cast<std::uint64_t>(st.st_size)!=self.expected_)return error(Error::io_error);
+        self.file_=std::fopen(self.path_,"rb");if(!self.file_)return error(Error::io_error);
+    }
+    const auto take=self.remaining_<capacity?static_cast<std::size_t>(self.remaining_):capacity;
+    const auto got=take?std::fread(bytes,1,take,self.file_):0;
+    if(std::ferror(self.file_))return error(Error::io_error);
+    if(got!=take)return error(Error::truncated);
+    self.remaining_-=got;
+    if(!self.remaining_){
+        const bool extra=std::fgetc(self.file_)!=EOF||std::ferror(self.file_);
+        const int closed=std::fclose(self.file_);self.file_=nullptr;
+        if(extra||closed!=0)return error(Error::io_error);
+        self.done_=true;
+    }
+    return {got,self.done_,Error::ok};
+}
+Error StagedUploadTarget::lookup_download(std::string_view path,ListingScratch& scratch,CapturedFileSource& out,bool& found){
+    out.reset();found=false;
+    if(active_)return Error::busy;
+    if(!root_[0]||!valid_relative_backup_path(path))return Error::invalid_argument;
+    const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
+    if(scratch.remove_active)return Error::busy;
+    auto equal=[](std::string_view a,std::string_view b){
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
+        return true;
+    };
+    std::uint32_t record=UINT32_MAX;
+    for(std::uint32_t i=0;i<scratch.move_count;++i){
+        const auto& item=scratch.move_entries[i];if(!item.length)continue;
+        const std::string_view dest(scratch.move_paths+item.offset,item.length);
+        if(equal(dest,path)){if(record!=UINT32_MAX)return Error::io_error;record=item.record;}
+        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))return Error::io_error;
+    }
+    const int n=std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
+    if(n<=0||static_cast<std::size_t>(n)+path.size()>=sizeof(scratch.nsdir))return Error::too_large;
+    auto used=static_cast<std::size_t>(n);for(char c:path)scratch.nsdir[used++]=c=='\\'?'/':c;scratch.nsdir[used]=0;
+    for(std::size_t i=std::strlen(root_)+1;i<=used;++i){
+        if(scratch.nsdir[i]!='/'&&i!=used)continue;
+        const auto saved=scratch.nsdir[i];scratch.nsdir[i]=0;struct stat st{};
+#ifdef ESP_PLATFORM
+        const int seen=stat(scratch.nsdir,&st);
+#else
+        const int seen=lstat(scratch.nsdir,&st);
+#endif
+        const int why=errno;scratch.nsdir[i]=saved;
+        if(seen!=0){if(why!=ENOENT)return Error::io_error;break;}
+        if(!S_ISDIR(st.st_mode)||i==used)return Error::io_error;
+    }
+    if(record==UINT32_MAX)return Error::ok;
+    std::snprintf(scratch.record,sizeof(scratch.record),"%s/%06u.ready",root_,record);
+    std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
+    if(!plain_directory(scratch.record)||!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time)||!equal({scratch.path,length},path))return Error::io_error;
+    const auto bound=out.bind(scratch.record,size);if(bound!=Error::ok)return bound;
+    found=true;return Error::ok;
+}
+}

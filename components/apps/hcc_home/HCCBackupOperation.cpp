@@ -9,11 +9,11 @@ HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
     printf("[HCC BACKUP] stop phase=%d reason=%d\n",static_cast<int>(phase_),static_cast<int>(e));
 #endif
     move_doc_={};move_key_=hcc::plist::none;
-    download_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
+    download_.reset();for(auto& source:download_sources_)source.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing||phase_==HCCBackupPhase::preparing_download){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -91,6 +91,30 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         }
         return HCCBackupError::would_block;
     }
+    if(phase_==HCCBackupPhase::preparing_download){
+        if(download_prepared_<download_count_){
+            bool found=false;
+            const auto resolved=capture_.lookupDownload(download_entries_[download_prepared_].path,*contents_.scratch,download_sources_[download_prepared_],found);
+            if(resolved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
+            if(resolved!=bb::Error::ok){
+#ifdef ESP_PLATFORM
+                printf("[HCC BACKUP] DownloadFiles lookup item=%u error=%s\n",static_cast<unsigned>(download_prepared_+1),bb::error_name(resolved));
+#endif
+                return fail(HCCBackupError::storage);
+            }
+            if(found)download_entries_[download_prepared_].source=download_sources_[download_prepared_].source();
+#ifdef ESP_PLATFORM
+            printf("[HCC BACKUP] DownloadFiles lookup item=%u found=%d\n",static_cast<unsigned>(download_prepared_+1),found);
+#endif
+            ++download_prepared_;progress_=now;
+        }
+        if(download_prepared_==download_count_){
+            download_.emplace(output_,output_capacity_,scratch_,capacity_);
+            if(download_->start(download_entries_,download_count_)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+            phase_=HCCBackupPhase::downloading;
+        }
+        return HCCBackupError::would_block;
+    }
     if(phase_==HCCBackupPhase::starting){
         const auto e=start_->pump({tracked.context,tracked.write});
         if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
@@ -121,7 +145,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
             printf("[HCC BACKUP] DownloadFiles reply complete attempted=%u; waiting for next control\n",static_cast<unsigned>(download_->completed_files()));
 #endif
             if(observer_->complete_request(true)!=bb::SessionError::ok)return fail(HCCBackupError::transfer);
-            download_.reset();phase_=HCCBackupPhase::waiting;
+            download_.reset();for(auto& source:download_sources_)source.reset();phase_=HCCBackupPhase::waiting;
         }
         return HCCBackupError::would_block;
     }
@@ -208,15 +232,11 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
     }
     if(event.kind==bb::EventKind::download_files){
-        // Fresh-backup response: every requested file is reported absent so the
-        // device proceeds to send a full backup. Serving existing capture files
-        // (incremental backup) is future work. Paths are copied because the plist
-        // document is reused by the next receive.
+        // Copy paths before the control document is reused. Resolve only current
+        // committed identities, never arbitrary SD paths or earlier sessions.
         const auto files_node=event.payload;const auto* arr=doc.get(files_node);
         if(arr==nullptr)return fail(HCCBackupError::transfer);
-        // Only the initial empty capture can truthfully report every file absent.
-        // Existing-record download lookup is not implemented; never invent ENOENT.
-        if(arr->count&&capture_.committedFiles()!=0)return fail(HCCBackupError::unsupported);
+        for(auto& source:download_sources_)source.reset();
         std::size_t n=0,used=0;
         for(std::size_t i=0;i<arr->count;++i){
             const auto path=doc.string(doc.at(files_node,i));
@@ -224,6 +244,11 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
             std::memcpy(download_arena_+used,path.data(),path.size());
             download_entries_[n]={std::string_view(download_arena_+used,path.size()),{nullptr,nullptr}};
             used+=path.size();++n;
+        }
+        if(n&&capture_.committedFiles()){
+            if(!contents_.scratch)return fail(HCCBackupError::unsupported);
+            download_count_=n;download_prepared_=0;phase_=HCCBackupPhase::preparing_download;
+            return HCCBackupError::would_block;
         }
         download_.emplace(output_,output_capacity_,scratch_,capacity_);
         if(download_->start(download_entries_,n)!=bb::Error::ok)return fail(HCCBackupError::transfer);

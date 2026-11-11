@@ -3,6 +3,26 @@
 #include "hcc_backup_listing.hpp"
 #include <cstdio>
 namespace hcc::backup {
+// Lazy read-only source for one validated committed payload. No handle is held
+// during lookup; sequential DownloadBatchSender use opens at most one at a time.
+// Caller keeps the mounted session exclusively owned until reset/destruction.
+class CapturedFileSource {
+public:
+    CapturedFileSource()=default;
+    ~CapturedFileSource(){reset();}
+    CapturedFileSource(const CapturedFileSource&)=delete;
+    CapturedFileSource& operator=(const CapturedFileSource&)=delete;
+    void reset();
+    Source source(){return {this,read_callback};}
+private:
+    friend class StagedUploadTarget;
+    Error bind(const char* record,std::uint64_t size);
+    static SourceResult read_callback(void*,std::uint8_t*,std::size_t);
+    char path_[352]{};
+    FILE* file_=nullptr;
+    std::uint64_t expected_=0,remaining_=0;
+    bool done_=false,failed_=false;
+};
 // Synchronous filesystem target for an ALREADY mounted, exclusively owned
 // filesystem. Parent must be trusted and must outlive this object. No mount,
 // USB-disk arbitration or device operation is started by this class.
@@ -41,6 +61,9 @@ public:
     // retries the SAME path until completion. Earlier changes survive failure.
     // Validated absence succeeds (ENOENT semantics); I/O/corruption still fail.
     Error remove_item(std::string_view path,ListingScratch& scratch);
+    // Unique exact destination in current .ready records only. Incremental index
+    // may yield; absent is found=false, while corruption/ambiguity/I/O fail.
+    Error lookup_download(std::string_view path,ListingScratch& scratch,CapturedFileSource& out,bool& found);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}
     std::uint32_t committed_files() const {return committed_;}
