@@ -76,6 +76,7 @@ private:
     char download_arena_[2048];
     hcc::backup::CapturedFileSource download_sources_[kMaxDownloadFiles];
     std::size_t download_count_=0,download_prepared_=0;
+    bool download_lookup_logged_=false;
     hcc::plist::Document move_doc_{};
     std::uint32_t move_key_=hcc::plist::none,moves_done_=0;
     HCCBackupConfig config_{};

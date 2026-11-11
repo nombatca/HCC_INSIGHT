@@ -61,8 +61,9 @@ public:
     // retries the SAME path until completion. Earlier changes survive failure.
     // Validated absence succeeds (ENOENT semantics); I/O/corruption still fail.
     Error remove_item(std::string_view path,ListingScratch& scratch);
-    // Unique exact destination in current .ready records only. Incremental index
-    // may yield; absent is found=false, while corruption/ambiguity/I/O fail.
+    // Exact destination in current .ready records only. Repeated uploads are
+    // versioned records: use the highest committed record ID. Incremental index
+    // may yield; absent is found=false, while corruption/directory/I/O fail.
     Error lookup_download(std::string_view path,ListingScratch& scratch,CapturedFileSource& out,bool& found);
     UploadTarget target(){return {this,begin_callback,write_callback,finish_callback};}
     const char* session_path() const {return root_;}

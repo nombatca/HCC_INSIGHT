@@ -208,7 +208,7 @@ int main(){
             assert(received==expected);reader.reset();
         }
         fs::copy(root/"000002.ready",root/"000003.ready",fs::copy_options::recursive);scratch.move_ready=false;
-        assert(lookup("backup/empty",readers[0],found)==bb::Error::io_error&&!found);
+        assert(lookup("backup/empty",readers[0],found)==bb::Error::ok&&found);
         fs::remove_all(root/"000003.ready");scratch.move_ready=false;
         assert(lookup("backup/empty",readers[0],found)==bb::Error::ok&&found);uint8_t b[8];auto io=readers[0].source();auto end=io.read(io.context,b,sizeof(b));assert(end.eof&&end.bytes==0&&end.error==bb::Error::ok);
         assert(lookup("../escape",readers[0],found)==bb::Error::invalid_argument&&!found);
@@ -232,6 +232,21 @@ int main(){
         assert(lookup("missing",readers[0],found)==bb::Error::io_error&&!found);
     }
     std::cout<<"PASS: lazy capture download sources, 24 preflights, exact chunks/empty/renamed/absent paths and changed/corrupt payload refusal\n";
+    {
+        bb::StagedUploadTarget target;assert(target.open_session(temp)==bb::Error::ok);
+        auto cb=target.target();static bb::ListingScratch scratch;bb::CapturedFileSource reader;
+        for(const char* value:{"old-index","latest-index"}){
+            assert(cb.begin(cb.context,"source","backup/Status.plist")==bb::Error::ok);
+            assert(cb.write(cb.context,reinterpret_cast<const uint8_t*>(value),std::strlen(value)).bytes==std::strlen(value));
+            assert(cb.finish(cb.context,true)==bb::Error::ok);
+        }
+        bool found=false;bb::Error lookup;
+        do{lookup=target.lookup_download("backup/Status.plist",scratch,reader,found);}while(lookup==bb::Error::would_block);
+        assert(lookup==bb::Error::ok&&found);uint8_t body[64];auto source=reader.source();auto read=source.read(source.context,body,sizeof(body));
+        assert(read.eof&&read.error==bb::Error::ok&&std::string(reinterpret_cast<char*>(body),read.bytes)=="latest-index");
+        const fs::path root(target.session_path());assert(fs::exists(root/"000001.ready/payload.bin")&&fs::exists(root/"000002.ready/payload.bin"));
+    }
+    std::cout<<"PASS: repeated uploads of one destination download the newest committed version and retain earlier capture records\n";
     fs::remove_all(parent);
     std::cout<<"PASS: destruction cleans pending data, missing parent and symlink parent rejected\n";
 }

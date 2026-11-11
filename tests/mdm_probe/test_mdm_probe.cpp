@@ -413,6 +413,25 @@ int main() {
         assert(hcc::plist::parse(tls.ssl.output.data()+pos,status_size,{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
         assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==-13);
         assert(move_doc.find(move_doc.at(move_doc.root,3),"backup/missing")!=hcc::plist::none);
+        bytes.clear();name("<plist><array><string>DLMessageUploadFiles</string><integer>0</integer><integer>0</integer><integer>0</integer></array></plist>");
+        for(const char* content:{"old","newest"}){
+            name("/device/source");name("backup/Status.plist");length(std::strlen(content)+1);bytes.push_back(0x0c);
+            bytes.insert(bytes.end(),content,content+std::strlen(content));length(1);bytes.push_back(0);
+        }
+        length(0);assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<5000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting&&t.mdmBackupFiles()==3);
+        bytes.clear();name("<plist><array><string>DLMessageDownloadFiles</string><array><string>backup/Status.plist</string></array></array></plist>");
+        pos=tls.ssl.output.size();assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));
+        for(unsigned i=0;i<5000&&t._mdm_probe->operation->phase()!=HCCBackupPhase::waiting;++i)assert(t.pollMdmProbe());
+        assert(t._mdm_probe->operation->phase()==HCCBackupPhase::waiting);
+        const auto path_size=number();assert(path_size==std::strlen("backup/Status.plist"));pos+=path_size;
+        assert(number()==7&&tls.ssl.output[pos++]==0x0c);
+        assert(std::memcmp(tls.ssl.output.data()+pos,"newest",6)==0);pos+=6;
+        assert(number()==1&&tls.ssl.output[pos++]==0&&number()==0);
+        const auto version_status=number();assert(pos+version_status==tls.ssl.output.size());
+        assert(hcc::plist::parse(tls.ssl.output.data()+pos,version_status,{move_nodes,32,move_text,sizeof(move_text)},move_doc)==hcc::plist::Error::ok);
+        assert(move_doc.get(move_doc.at(move_doc.root,1))->integer==0);
         bytes.clear();name("<plist><array><string>DLMessageRemoveItems</string><array><string>backup/Manifest.mbdx</string><string>backup</string><string>backup/Manifest.mbdx</string></array></array></plist>");
         const auto remove_reply_start=tls.ssl.output.size();t._tx_in_flight=true;
         assert(t.appendServiceTlsRx(bytes.data(),bytes.size()));

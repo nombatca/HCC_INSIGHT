@@ -809,3 +809,27 @@ missing-file multi-status, then proceeds through removal and final result.
 Cancellation during preparation and reader reset are covered. Host stubs are not
 physical USB/TLS validation; hardware rerun must confirm the late DownloadFiles
 request is serviced and capture reaches a terminal device result.
+
+
+### Repeated-upload DownloadFiles versions and lookup diagnostics (2026-11-11)
+
+The capture appends a new monotonic record for every committed upload, including
+repeated uploads of one logical destination. DownloadFiles previously rejected
+such matches as ambiguous. It now selects the highest committed record ID among
+exact normalized destination matches, revalidates that record and serves its
+payload. Earlier captured versions stay on SD. This read-only selection does not
+change MoveItems, direct file RemoveItems or listing behavior for duplicate
+identities; those retain their existing collision checks. It is not a global
+version-overlay implementation and does not authorize source fallback on errors.
+
+Log the requested item/path once (bounded to 160 printable ASCII bytes), version
+count/selected record and exact lookup failure stage: logical directory,
+namespace lookup/type/directory, record directory, metadata/payload validation or
+identity change. Payload bytes and XML are not logged. The physical io_error
+excerpt does not identify which branch failed; repeated uploads reproduce a
+concrete local bug but are not yet proven to be the hardware cause.
+
+Tests cover genuine repeated uploads returning latest bytes while preserving both
+records, a P4 adapter upload-old/upload-new/download sequence with final status0,
+and prior large/empty/moved/removed/missing/changed/corrupt payload and cancellation
+regressions. Hardware rerun must confirm selected-record or stage diagnostics.

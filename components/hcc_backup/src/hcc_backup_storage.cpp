@@ -598,18 +598,36 @@ Error StagedUploadTarget::lookup_download(std::string_view path,ListingScratch& 
     if(!root_[0]||!valid_relative_backup_path(path))return Error::invalid_argument;
     const auto indexed=prepare_move_index(scratch);if(indexed!=Error::ok)return indexed;
     if(scratch.remove_active)return Error::busy;
+    auto io_failure=[&](const char* stage,int why=0){
+#ifdef ESP_PLATFORM
+        printf("[HCC BACKUP] DownloadFiles storage stage=%s errno=%d\n",stage,why);
+#else
+        (void)stage;(void)why;
+#endif
+        return Error::io_error;
+    };
     auto equal=[](std::string_view a,std::string_view b){
         if(a.size()!=b.size())return false;
         for(std::size_t i=0;i<a.size();++i)if((a[i]=='\\'?'/':a[i])!=(b[i]=='\\'?'/':b[i]))return false;
         return true;
     };
-    std::uint32_t record=UINT32_MAX;
+    std::uint32_t record=UINT32_MAX,matches=0;
     for(std::uint32_t i=0;i<scratch.move_count;++i){
         const auto& item=scratch.move_entries[i];if(!item.length)continue;
         const std::string_view dest(scratch.move_paths+item.offset,item.length);
-        if(equal(dest,path)){if(record!=UINT32_MAX)return Error::io_error;record=item.record;}
-        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))return Error::io_error;
+        if(equal(dest,path)){
+            ++matches;
+            // Every committed upload has a monotonically assigned record ID.
+            // Repeated uploads of a destination are versions: serve the newest.
+            if(record==UINT32_MAX||item.record>record)record=item.record;
+        }
+        if(dest.size()>path.size()&&equal(dest.substr(0,path.size()),path)&&(dest[path.size()]=='/'||dest[path.size()]=='\\'))return io_failure("logical_directory");
     }
+#ifdef ESP_PLATFORM
+    if(matches>1)printf("[HCC BACKUP] DownloadFiles versions=%u selected_record=%u\n",matches,record);
+#else
+    (void)matches;
+#endif
     const int n=std::snprintf(scratch.nsdir,sizeof(scratch.nsdir),"%s/directories/",root_);
     if(n<=0||static_cast<std::size_t>(n)+path.size()>=sizeof(scratch.nsdir))return Error::too_large;
     auto used=static_cast<std::size_t>(n);for(char c:path)scratch.nsdir[used++]=c=='\\'?'/':c;scratch.nsdir[used]=0;
@@ -622,13 +640,16 @@ Error StagedUploadTarget::lookup_download(std::string_view path,ListingScratch& 
         const int seen=lstat(scratch.nsdir,&st);
 #endif
         const int why=errno;scratch.nsdir[i]=saved;
-        if(seen!=0){if(why!=ENOENT)return Error::io_error;break;}
-        if(!S_ISDIR(st.st_mode)||i==used)return Error::io_error;
+        if(seen!=0){if(why!=ENOENT)return io_failure("namespace_lookup",why);break;}
+        if(!S_ISDIR(st.st_mode))return io_failure("namespace_type");
+        if(i==used)return io_failure("namespace_directory");
     }
     if(record==UINT32_MAX)return Error::ok;
     std::snprintf(scratch.record,sizeof(scratch.record),"%s/%06u.ready",root_,record);
     std::size_t length=0;std::uint64_t size=0;std::int64_t time=0;
-    if(!plain_directory(scratch.record)||!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time)||!equal({scratch.path,length},path))return Error::io_error;
+    if(!plain_directory(scratch.record))return io_failure("record_directory",errno);
+    if(!read_record(scratch.record,scratch.path,sizeof(scratch.path),length,size,time))return io_failure("record_metadata_or_payload",errno);
+    if(!equal({scratch.path,length},path))return io_failure("identity_changed");
     const auto bound=out.bind(scratch.record,size);if(bound!=Error::ok)return bound;
     found=true;return Error::ok;
 }

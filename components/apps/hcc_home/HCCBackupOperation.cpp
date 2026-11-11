@@ -94,6 +94,18 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     if(phase_==HCCBackupPhase::preparing_download){
         if(download_prepared_<download_count_){
             bool found=false;
+#ifdef ESP_PLATFORM
+            // Bounded request identity: no XML or payload dump. Escape controls
+            // so a requested name cannot forge extra log lines.
+            char name[161];const auto requested=download_entries_[download_prepared_].path;
+            const auto length=std::min(requested.size(),sizeof(name)-1);
+            for(std::size_t i=0;i<length;++i){const auto c=static_cast<unsigned char>(requested[i]);name[i]=c>=32&&c<127?static_cast<char>(c):'?';}
+            name[length]=0;
+            if(!download_lookup_logged_){
+                printf("[HCC BACKUP] DownloadFiles request item=%u path=%s%s\n",static_cast<unsigned>(download_prepared_+1),name,requested.size()>length?"...":"");
+                download_lookup_logged_=true;
+            }
+#endif
             const auto resolved=capture_.lookupDownload(download_entries_[download_prepared_].path,*contents_.scratch,download_sources_[download_prepared_],found);
             if(resolved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
             if(resolved!=bb::Error::ok){
@@ -106,7 +118,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
 #ifdef ESP_PLATFORM
             printf("[HCC BACKUP] DownloadFiles lookup item=%u found=%d\n",static_cast<unsigned>(download_prepared_+1),found);
 #endif
-            ++download_prepared_;progress_=now;
+            ++download_prepared_;download_lookup_logged_=false;progress_=now;
         }
         if(download_prepared_==download_count_){
             download_.emplace(output_,output_capacity_,scratch_,capacity_);
@@ -247,7 +259,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         }
         if(n&&capture_.committedFiles()){
             if(!contents_.scratch)return fail(HCCBackupError::unsupported);
-            download_count_=n;download_prepared_=0;phase_=HCCBackupPhase::preparing_download;
+            download_count_=n;download_prepared_=0;download_lookup_logged_=false;phase_=HCCBackupPhase::preparing_download;
             return HCCBackupError::would_block;
         }
         download_.emplace(output_,output_capacity_,scratch_,capacity_);
