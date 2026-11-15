@@ -1,10 +1,11 @@
 #pragma once
 #include "HCCBackupCapture.hpp"
 #include "hcc_backup_start.hpp"
+#include "hcc_restore_source.hpp"
 #include "hcc_backup_upload_request.hpp"
 #include "hcc_backup_batch.hpp"
 #include <optional>
-enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving,removing,preparing_download};
+enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving,removing,preparing_download,restore_preflight};
 enum class HCCBackupError {ok,would_block,invalid_argument,busy,storage,quota,transfer,
                            timeout,clock,unsupported,remote,disconnected,cancelled};
 struct HCCBackupConfig {
@@ -12,6 +13,7 @@ struct HCCBackupConfig {
     std::uint64_t minimum_free_bytes=1048576;
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
+    bool sample_restore=false; // Explicit confirmation required by caller/UI.
     bool use_sd_capacity=false;
     std::uint64_t reserve_bytes=64ULL*1024*1024;
 };
@@ -38,9 +40,11 @@ class HCCBackupOperation {
 public:
     HCCBackupOperation(hcc::backup::BackupLink& link,std::uint8_t* scratch,std::size_t capacity,
                        std::uint8_t* output,std::size_t output_capacity,
-                       HCCBackupContentsBuffers contents={})
+                       HCCBackupContentsBuffers contents={},
+                       const hcc::backup::RestoreSampleEntry* restore_index=hcc::backup::kRestoreSample,
+                       std::size_t restore_count=hcc::backup::kRestoreSampleCount)
         :link_(link),scratch_(scratch),capacity_(capacity),output_(output),output_capacity_(output_capacity),
-         contents_(contents) {}
+         contents_(contents),restore_index_(restore_index),restore_count_(restore_count) {}
     ~HCCBackupOperation(){cancel();}
     HCCBackupError start(std::string_view udid,std::uint64_t now,HCCBackupConfig={});
     HCCBackupError poll(hcc::backup::Duplex,std::uint64_t now,std::size_t budget=8);
@@ -52,7 +56,7 @@ public:
     HCCBackupPhase phase() const {return phase_;}
     HCCBackupError error() const {return error_;}
     const char* sessionPath() const {return capture_.sessionPath();}
-    std::uint32_t committedFiles() const {return capture_.committedFiles();}
+    std::uint32_t committedFiles() const {return config_.sample_restore?served_files_:capture_.committedFiles();}
     std::int64_t remoteCode() const {return remote_code_;}
 private:
     HCCBackupError fail(HCCBackupError);
@@ -64,6 +68,7 @@ private:
     hcc::backup::BackupLink& link_;
     std::uint8_t* scratch_;std::size_t capacity_;std::uint8_t* output_;std::size_t output_capacity_;
     HCCBackupContentsBuffers contents_;
+    const hcc::backup::RestoreSampleEntry* restore_index_;std::size_t restore_count_;
     hcc::backup::SessionObserver* observer_=nullptr;
     HCCBackupCapture capture_; // Destroy handlers before target and SD lease.
     std::optional<hcc::backup::StatusReplyWriter> reply_;
@@ -71,17 +76,20 @@ private:
     std::optional<hcc::backup::UploadRequestHandler> upload_;
     std::optional<hcc::backup::DownloadBatchSender> download_;
     // Requested download paths are copied here (the plist document is transient).
-    static constexpr std::size_t kMaxDownloadFiles = 24;
+    static constexpr std::size_t kMaxDownloadFiles = 1024;
     hcc::backup::DownloadFile download_entries_[kMaxDownloadFiles];
-    char download_arena_[2048];
+    char download_arena_[131072];
     hcc::backup::CapturedFileSource download_sources_[kMaxDownloadFiles];
     std::size_t download_count_=0,download_prepared_=0;
     bool download_lookup_logged_=false;
+    hcc::backup::RestoreFileSource restore_files_[kMaxDownloadFiles];
+    std::optional<hcc::backup::RestoreSampleSource> restore_source_;
+    char restore_udid_[41]{};
     hcc::plist::Document move_doc_{};
     std::uint32_t move_key_=hcc::plist::none,moves_done_=0;
     HCCBackupConfig config_{};
     HCCBackupPhase phase_=HCCBackupPhase::idle;HCCBackupError error_=HCCBackupError::ok;
     std::uint64_t began_=0,last_now_=0,progress_=0,bytes_=0;
-    std::uint32_t files_=0;
+    std::uint32_t files_=0,served_files_=0;
     std::int64_t remote_code_=0;
 };

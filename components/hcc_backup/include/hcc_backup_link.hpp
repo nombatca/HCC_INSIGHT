@@ -34,6 +34,9 @@ LinkError encode_hello(bool offer_20,bool offer_21,std::uint8_t*,std::size_t,std
 // ForceFullBackup is omitted unless true. No restore/encryption options exist.
 LinkError encode_backup_request(std::string_view udid,bool force_full,
                                 std::uint8_t*,std::size_t,std::size_t& written);
+// Experimental user-supplied 4uKey sample profile. Device-changing operation;
+// caller must verify the source and obtain an explicit UI confirmation first.
+LinkError encode_sample_restore_request(std::string_view udid,std::uint8_t*,std::size_t,std::size_t& written);
 
 // Bounded status reply: ASCII message (0..255 bytes), signed status code,
 // and either an empty dictionary or the DeviceLink empty-parameter sentinel.

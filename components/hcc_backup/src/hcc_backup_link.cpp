@@ -18,7 +18,7 @@ public:
         for(unsigned i=0;i<8;++i) put(std::uint8_t(header[i]));
     }
     bool object() {
-        if(count_>=16 || position_>UINT16_MAX) return ok_=false;
+        if(count_>=32 || position_>UINT16_MAX) return ok_=false;
         offsets_[count_++]=std::uint16_t(position_); return ok_;
     }
     void put(std::uint8_t v) {
@@ -50,7 +50,7 @@ public:
     }
 private:
     std::uint8_t* bytes_;std::size_t capacity_,position_=0;
-    std::uint16_t offsets_[16]{};unsigned count_=0;bool ok_=true;
+    std::uint16_t offsets_[32]{};unsigned count_=0;bool ok_=true;
 };
 }
 LinkError encode_version_reply(std::uint64_t major,std::uint8_t* b,std::size_t n,std::size_t& written) {
@@ -99,6 +99,26 @@ LinkError encode_backup_request(std::string_view udid,bool full,std::uint8_t* b,
         w.object();w.put(0xd1);w.put(10);w.put(11);
         w.object();w.string("ForceFullBackup");
         w.object();w.put(0x09);
+    }
+    return w.finish(written);
+}
+LinkError encode_sample_restore_request(std::string_view udid,std::uint8_t* b,std::size_t n,std::size_t& written) {
+    // Reuse the identifier validator; never emit a partial request on failure.
+    written=0;std::size_t ignored=0;
+    const auto validation=encode_backup_request(udid,false,b,n,ignored);
+    if(validation!=LinkError::ok)return validation;
+    BinaryWriter w(b,n);
+    w.object();w.put(0xa2);w.put(1);w.put(2);
+    w.object();w.string("DLMessageProcessMessage");
+    w.object();w.put(0xd4);for(auto x:{3,4,5,8,6,7,7,9})w.put(x);
+    w.object();w.string("MessageName");w.object();w.string("TargetIdentifier");
+    w.object();w.string("SourceIdentifier");w.object();w.string("Restore");w.object();w.string(udid);
+    w.object();w.string("Options");
+    w.object();w.put(0xd6);for(auto x:{10,12,14,16,18,20,11,13,15,17,19,21})w.put(x);
+    w.object();w.string("Password");w.object();w.string("a");
+    w.object();w.string("RestoreDontCopyBackup");w.object();w.put(0x09);
+    for(auto key:{"RemoveItemsNotRestored","RestoreSystemFiles","RestorePreserveSettings","RestorePreserveCameraRoll"}) {
+        w.object();w.string(key);w.object();w.put(0x08);
     }
     return w.finish(written);
 }

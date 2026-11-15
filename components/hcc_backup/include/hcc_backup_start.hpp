@@ -13,6 +13,7 @@ public:
     BackupStartWriter& operator=(const BackupStartWriter&)=delete;
     ~BackupStartWriter(){cancel();}
     Error begin(std::string_view udid,bool force_full=false);
+    Error begin_sample_restore(std::string_view udid);
     Error pump(Sink);
     void cancel();
     BackupStartPhase phase() const {return phase_;}

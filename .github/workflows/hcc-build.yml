@@ -22,6 +22,7 @@ jobs:
       - name: Protocol and transport glue tests
         run: |
           sh tests/backup_link/run_tests.sh
+          sh tests/restore/run_tests.sh
           sh tests/mdm_probe/run_tests.sh
           sh tests/sd_access/run_tests.sh
           sh tests/sd_files/run_tests.sh
@@ -32,6 +33,7 @@ jobs:
           HCC_TEST_FLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer
         run: |
           sh tests/mdm_probe/run_tests.sh
+          sh tests/restore/run_tests.sh
           sh tests/sd_access/run_tests.sh
           sh tests/sd_files/run_tests.sh
 

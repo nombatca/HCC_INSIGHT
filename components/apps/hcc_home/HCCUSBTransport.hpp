@@ -114,10 +114,12 @@ public:
     const char *mdmStatusText() const;
     bool mdmPollingPending() const;
     // Prototype device->SD backup over the negotiated mobilebackup2 session.
-    // Owner-consented data pull only; no restore or MDM-changing operation.
+    // Separate experimental sample Restore requires an explicit serial-bound UI confirmation.
     // Bounded by the coordinator's prototype caps (partial backup).
     enum class MdmBackupState { none, running, done, failed };
     bool requestMdmBackup();
+    bool requestMdmRestore(const char* confirmed_serial);
+    bool mdmRestoreMode() const {return _mdm_restore_mode.load();}
     MdmBackupState mdmBackupState() const { return _mdm_backup_state.load(); }
     uint32_t mdmBackupFiles() const { return _mdm_backup_files.load(); }
     const char *mdmBackupStatusText();
@@ -263,6 +265,7 @@ private:
     bool beginMdmProbe();
     bool pollMdmProbe();
     bool pumpMdmServiceRx();
+    bool requestMdmOperation(bool restore);
     void finishMdmBackup(bool success);
     void pollMdmBackupWatchdog();
     void releaseMdmProbe();
@@ -398,6 +401,7 @@ private:
     MdmProbeContext *_mdm_probe = nullptr;
     std::atomic<MdmState> _mdm_state{MdmState::Idle};
     std::atomic<bool> _mdm_backup_requested{false};
+    std::atomic<bool> _mdm_restore_mode{false};
     std::atomic<MdmBackupState> _mdm_backup_state{MdmBackupState::none};
     std::atomic<uint32_t> _mdm_backup_files{0};
     char _mdm_backup_text[96]{};

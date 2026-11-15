@@ -30,4 +30,13 @@ Error BackupStartWriter::pump(Sink sink){
     if(!r.bytes)return fail(Error::no_progress);
     return Error::would_block;
 }
+Error BackupStartWriter::begin_sample_restore(std::string_view udid){
+    if(phase_!=BackupStartPhase::idle)return Error::busy;
+    if(observer_.phase()!=Phase::ready||!output_||capacity_<4)return Error::invalid_argument;
+    std::size_t body=0;
+    const auto e=encode_sample_restore_request(udid,output_+4,capacity_-4,body);
+    if(e!=LinkError::ok)return e==LinkError::too_large?Error::too_large:Error::invalid_argument;
+    write_be32(output_,static_cast<std::uint32_t>(body));size_=body+4;sent_=0;
+    phase_=BackupStartPhase::sending;return Error::ok;
+}
 } // namespace hcc::backup

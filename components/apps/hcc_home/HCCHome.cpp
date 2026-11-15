@@ -1588,9 +1588,8 @@ void HCCHome::updateActionLabels(HCCHome *app)
                               ? (app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::done
                                   ? "MDM\nĐã xong - cắm lại"
                                   : app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::running
-                                      ? "MDM\nĐang nhận backup"
-                                      : HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::passed
-                                          ? "MDM\nGiữ: nhận backup" : "MDM\nGiữ: kiểm tra SD") : "MDM")
+                                      ? (app->_usb_transport.mdmRestoreMode()?"RESTORE\nĐang xử lý":"BACKUP\nĐang nhận")
+                                      : "MDM\nGiữ: chọn tác vụ") : "MDM")
                               : (app->_usb_mode == USBMode::ANDROID ? "FASTBOOT" : "-"));
     }
     if (app->_purple_button_label != nullptr) {
@@ -2372,15 +2371,7 @@ void HCCHome::onBootloaderClicked(lv_event_t *event)
     if (app != nullptr) {
         if (lv_event_get_code(event) == LV_EVENT_LONG_PRESSED) {
             if (app->_usb_mode == USBMode::NORMAL && app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Ready) {
-                if (HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::passed) {
-                    // SD proven by the self-test: a further long-press starts the
-                    // owner-consented partial data pull to SD (prototype).
-                    app->_usb_transport.requestMdmBackup();
-                    if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, app->_usb_transport.mdmBackupStatusText());
-                } else {
-                    HCCBackupSdSelfTest::request();
-                    if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, HCCBackupSdSelfTest::statusText());
-                }
+                app->showRestoreConfirm();
                 if (app->_usb_client_registered && app->_usb_client) usb_host_client_unblock(app->_usb_client);
             }
             return;
@@ -2397,6 +2388,51 @@ void HCCHome::onRebootClicked(lv_event_t *event)
     if (app != nullptr) {
         HCCHome::requestAndroidAction(app, AndroidAction::Reboot);
     }
+}
+
+void HCCHome::onRestoreDialogDeleted(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));
+    if(app&&app->_restore_dialog==lv_event_get_target(event))app->_restore_dialog=nullptr;
+}
+void HCCHome::onRestoreCancel(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));
+    if(app&&app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+}
+void HCCHome::onRestoreConfirm(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmRestore(app->_restore_serial);
+    if(app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?app->_usb_transport.mdmBackupStatusText():"Không chạy Restore: thiết bị/phiên đã thay đổi");
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
+void HCCHome::onCaptureConfirm(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmBackup();
+    if(app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?app->_usb_transport.mdmBackupStatusText():"Không chạy Backup: phiên không sẵn sàng");
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
+void HCCHome::showRestoreConfirm(){
+    if(_restore_dialog||!_screen||_usb_transport.mdmBackupState()!=HCCUSBTransport::MdmBackupState::none)return;
+    snprintf(_restore_serial,sizeof(_restore_serial),"%s",_usb_transport.serialNumber());
+    _restore_dialog=lv_obj_create(_screen);lv_obj_set_size(_restore_dialog,LV_PCT(100),LV_PCT(100));lv_obj_center(_restore_dialog);
+    lv_obj_set_style_bg_color(_restore_dialog,lv_color_hex(HCC_BG),0);lv_obj_clear_flag(_restore_dialog,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(_restore_dialog,onRestoreDialogDeleted,LV_EVENT_DELETE,this);
+    auto* title=lv_label_create(_restore_dialog);lv_obj_set_style_text_font(title,&lv_font_be_vietnam_22,0);
+    lv_label_set_text(title,"RESTORE THỬ TỪ BACKUP MẪU");lv_obj_align(title,LV_ALIGN_TOP_MID,0,15);
+    auto* text=lv_label_create(_restore_dialog);lv_obj_set_width(text,LV_PCT(92));lv_obj_set_style_text_font(text,&lv_font_be_vietnam_18,0);
+    char details[850];snprintf(details,sizeof(details),
+        "Thiết bị: %s\nNguồn SD: /hcc_restore/restoremdm\n\nRestore có thể thay đổi hoặc ghi đè dữ liệu/cài đặt iPad.\nChỉ thử trên máy đã sao lưu riêng. Chưa xác nhận tương thích.\n\nHCC kiểm tra đủ 297 tệp trước khi gửi lệnh.\nMáy có thể tự khởi động lại. Không đồng nghĩa đã gỡ MDM.\n\nChọn NHẬN BACKUP để lưu dữ liệu vào SD như trước.",_restore_serial[0]?_restore_serial:"chưa có Serial - không thể Restore");
+    lv_label_set_text(text,details);lv_obj_align(text,LV_ALIGN_TOP_LEFT,20,60);
+    auto make=[this](const char* name,lv_event_cb_t callback,int x,int width){
+        auto* button=lv_btn_create(_restore_dialog);lv_obj_set_size(button,width,58);lv_obj_align(button,LV_ALIGN_BOTTOM_LEFT,x,-12);
+        lv_obj_add_event_cb(button,callback,LV_EVENT_CLICKED,this);auto* label=lv_label_create(button);
+        lv_obj_set_style_text_font(label,&lv_font_be_vietnam_18,0);lv_label_set_text(label,name);lv_obj_center(label);return button;
+    };
+    make("HỦY",onRestoreCancel,20,140);make("NHẬN BACKUP",onCaptureConfirm,190,240);
+    auto* confirm=make("TÔI ĐỒNG Ý RESTORE THỬ",onRestoreConfirm,460,460);
+    lv_obj_set_style_bg_color(confirm,lv_color_hex(0xB03A2E),0);
+    if(!_restore_serial[0])lv_obj_add_state(confirm,LV_STATE_DISABLED);
 }
 
 void HCCHome::onMdmClicked(lv_event_t *event)

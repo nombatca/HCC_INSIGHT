@@ -480,7 +480,73 @@ int main() {
         t._service_tls=nullptr;
     }
     std::puts("PASS: unconsumed RX remains bounded and overflow never overwrites ring data");
+
+    for(unsigned mode=0;mode<6;++mode){
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
+        t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
+        for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        std::strcpy(t._session_udid.data(),"00008101-001234567890ABCD");
+        std::strcpy(t._session_info[HCCUSBTransport::SessionInfoSerialNumber].data(),"RESTORE_TEST");
+        assert(!t.requestMdmRestore(nullptr)&&!t.requestMdmRestore("DIFFERENT_DEVICE"));
+        const auto root=fs::path(sd_root)/"hcc_restore/restoremdm";fs::create_directories(root);
+        const std::string payload(70000,'Q'),metadata="metadata";
+        const bb::RestoreSampleEntry profile[]={
+            {"ab11111111111111111111111111111111111111",70000,bb::restore_crc32(0,reinterpret_cast<const uint8_t*>(payload.data()),payload.size())},
+            {"info.plist",8,bb::restore_crc32(0,reinterpret_cast<const uint8_t*>(metadata.data()),metadata.size())}
+        };
+        std::ofstream(root/profile[0].name,std::ios::binary)<<payload;
+        std::ofstream(root/profile[1].name,std::ios::binary)<<(mode==1?"metadatz":metadata);
+        auto& ctx=*t._mdm_probe;
+        // Dependency-injected synthetic profile; production always uses the
+        // compiled 297-entry index. Never distribute/restore these fixture bytes.
+        ctx.operation.emplace(ctx.link,ctx.op_scratch,sizeof(ctx.op_scratch),ctx.op_output,sizeof(ctx.op_output),
+            HCCBackupContentsBuffers{ctx.list_entries,ctx.kListEntries,ctx.list_offsets,bb::contents_object_count(ctx.kListEntries),&ctx.list_scratch},profile,2);
+        const auto before=tls.ssl.output.size();assert(t.requestMdmRestore("RESTORE_TEST")&&t.mdmRestoreMode());
+        assert(!t.requestMdmBackup());assert(t.pollMdmProbe());
+        assert(ctx.operation->phase()==HCCBackupPhase::restore_preflight&&tls.ssl.output.size()==before);
+        assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
+        if(mode==2){ctx.operation->cancel();t.pollMdmBackupWatchdog();}
+        else if(mode==5){now_ms+=60ULL*60*1000;t._tx_in_flight=true;t.pollMdmBackupWatchdog();t._tx_in_flight=false;}
+        else {
+            for(unsigned i=0;i<2000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running&&ctx.operation->phase()!=HCCBackupPhase::waiting;++i){++now_ms;t.pollMdmProbe();}
+        }
+        if(mode==1||mode==2||mode==5){
+            assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::failed&&tls.ssl.output.size()==before);
+        }else{
+            assert(ctx.operation->phase()==HCCBackupPhase::waiting);
+            hcc::plist::Node nodes[128];char text[4096];hcc::plist::Document d;
+            const auto* request=tls.ssl.output.data()+before;const auto size=bb::read_be32(request);
+            assert(hcc::plist::parse(request+4,size,{nodes,128,text,sizeof(text)},d)==hcc::plist::Error::ok);
+            const auto body=d.at(d.root,1);assert(d.string(d.find(body,"MessageName"))=="Restore");
+            auto frame=[&](const std::string& xml){uint8_t h[4];bb::write_be32(h,xml.size());tls.ssl.input.insert(tls.ssl.input.end(),h,h+4);tls.ssl.input.insert(tls.ssl.input.end(),xml.begin(),xml.end());};
+            const std::string name=std::string("00008101-001234567890ABCD/ab/")+profile[0].name;
+            const auto begin=tls.ssl.output.size();
+            frame("<plist><array><string>DLMessageDownloadFiles</string><array><string>"+name+"</string><string>00008101-001234567890ABCD/Info.plist</string></array></array></plist>");
+            for(unsigned i=0;i<30000;++i){++now_ms;assert(t.pollMdmProbe());if(tls.ssl.offset==tls.ssl.input.size()&&ctx.operation->phase()==HCCBackupPhase::waiting)break;}
+            assert(ctx.operation->phase()==HCCBackupPhase::waiting&&t.mdmBackupFiles()==2);
+            auto offset=begin;
+            for(const auto& expected:{payload,metadata}){
+                const auto length=bb::read_be32(tls.ssl.output.data()+offset);offset+=4;
+                assert(length>0&&offset+length<=tls.ssl.output.size());offset+=length;
+                std::string decoded;
+                for(;;){const auto n=bb::read_be32(tls.ssl.output.data()+offset);offset+=4;assert(n>0&&offset+n<=tls.ssl.output.size());const auto tag=tls.ssl.output[offset++];
+                    if(tag==0){assert(n==1);break;}assert(tag==0x0c);decoded.append(reinterpret_cast<const char*>(tls.ssl.output.data()+offset),n-1);offset+=n-1;}
+                assert(decoded==expected);
+            }
+            assert(bb::read_be32(tls.ssl.output.data()+offset)==0);offset+=4;
+            assert(hcc::plist::parse(tls.ssl.output.data()+offset+4,bb::read_be32(tls.ssl.output.data()+offset),{nodes,128,text,sizeof(text)},d)==hcc::plist::Error::ok);
+            assert(d.get(d.at(d.root,1))->integer==0);
+            if(mode==3)tls.ssl.close=true;
+            else frame(mode==4?"<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>105</integer></dict></array></plist>":"<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>0</integer></dict></array></plist>");
+            for(unsigned i=0;i<2000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){++now_ms;t.pollMdmProbe();}
+            assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
+        }
+        assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
+        std::ifstream unchanged(root/profile[0].name,std::ios::binary);std::string original{std::istreambuf_iterator<char>(unchanged),{}};assert(original==payload);
+        t.releaseMdmProbe();t._service_tls=nullptr;fs::remove_all(root);
+    }
+    std::puts("PASS: experimental Restore verifies source before wire I/O, exact 70KB+metadata with TLS retries, explicit remote result, corruption/cancel/close/timeout and immutable source");
     fs::remove_all(sd_root);
     assert(allocations == 0);
-    std::puts("10 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
+    std::puts("11 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
 }

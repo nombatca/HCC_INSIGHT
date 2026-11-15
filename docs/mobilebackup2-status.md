@@ -1,5 +1,11 @@
 # mobilebackup2 status replies
 
+Current experiment: an explicit, serial-confirmed sample Restore is now available;
+see [P4_RESTORE_EXPERIMENT.md](P4_RESTORE_EXPERIMENT.md). Earlier sections below
+record incremental capture milestones and their then-current limitations.
+The Restore path has not been validated on an actual iPad.
+
+
 Hardware checkpoint reported on 2026-11-08: the P4 negotiated DeviceLink and
 mobilebackup2 protocol 2.1 over paired service TLS. The log explicitly reports
 `no backup/restore request sent`. This verifies negotiation, not an operation.

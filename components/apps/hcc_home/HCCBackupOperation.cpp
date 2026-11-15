@@ -9,11 +9,11 @@ HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
     printf("[HCC BACKUP] stop phase=%d reason=%d\n",static_cast<int>(phase_),static_cast<int>(e));
 #endif
     move_doc_={};move_key_=hcc::plist::none;
-    download_.reset();for(auto& source:download_sources_)source.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
+    download_.reset();for(auto& source:download_sources_)source.reset();for(auto& source:restore_files_)source.reset();restore_source_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing||phase_==HCCBackupPhase::preparing_download){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing||phase_==HCCBackupPhase::preparing_download||phase_==HCCBackupPhase::restore_preflight){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -24,7 +24,7 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
        (config.use_sd_capacity&&config.reserve_bytes==UINT64_MAX)||!config.minimum_free_bytes||!config.idle_timeout_ms||!config.total_timeout_ms||!config.limits.max_files||config.limits.max_files>1024||
        !config.limits.max_frame_payload||!config.limits.max_file_bytes||!config.limits.max_batch_bytes)return HCCBackupError::invalid_argument;
     std::size_t encoded=0;
-    if(bb::encode_backup_request(udid,config.force_full,output_+4,output_capacity_-4,encoded)!=bb::LinkError::ok)return HCCBackupError::invalid_argument;
+    if((config.sample_restore?bb::encode_sample_restore_request(udid,output_+4,output_capacity_-4,encoded):bb::encode_backup_request(udid,config.force_full,output_+4,output_capacity_-4,encoded))!=bb::LinkError::ok)return HCCBackupError::invalid_argument;
     // No request bytes or running state until mount/space preflight succeeds.
     const auto storage=capture_.open(config.use_sd_capacity?std::max(config.minimum_free_bytes,config.reserve_bytes+1):config.minimum_free_bytes);
     if(storage!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=storage==bb::Error::busy?HCCBackupError::busy:storage==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage;}
@@ -40,6 +40,16 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
                static_cast<unsigned long long>(available),static_cast<unsigned long long>(config.reserve_bytes),
                static_cast<unsigned long long>(config.limits.max_batch_bytes));
 #endif
+    }
+    if(config.sample_restore){
+        char root[320];const int n=snprintf(root,sizeof(root),"%s/hcc_restore/restoremdm",BSP_SD_MOUNT_POINT);
+        if(n<0||static_cast<std::size_t>(n)>=sizeof(root))return fail(HCCBackupError::storage);
+        restore_source_.emplace(restore_index_,restore_count_);
+        if(restore_source_->begin(root,udid)!=bb::Error::ok)return fail(HCCBackupError::storage);
+        std::memcpy(restore_udid_,udid.data(),udid.size());restore_udid_[udid.size()]=0;
+        config_=config;began_=last_now_=progress_=now;phase_=HCCBackupPhase::restore_preflight;
+        printf("[HCC RESTORE] preflight start files=%u; no Restore request sent yet\n",static_cast<unsigned>(restore_count_));
+        return HCCBackupError::ok;
     }
     start_.emplace(*observer_,output_,output_capacity_);
     if(start_->begin(udid,config.force_full)!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::transfer;}
@@ -71,6 +81,21 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     const auto deadline=checkDeadline(now);
     if(deadline!=HCCBackupError::would_block)return deadline;
     Progress context{this,io,now};const bb::Duplex tracked{&context,Progress::read,Progress::write};
+    if(phase_==HCCBackupPhase::restore_preflight){
+        const auto e=restore_source_->preflight(scratch_,capacity_);
+        if(e!=bb::Error::ok&&e!=bb::Error::would_block){
+            printf("[HCC RESTORE] source verification failed index=%u; request NOT sent\n",static_cast<unsigned>(restore_source_->checked()));
+            return fail(HCCBackupError::storage);
+        }
+        progress_=now;
+        if(e==bb::Error::ok){
+            start_.emplace(*observer_,output_,output_capacity_);
+            if(start_->begin_sample_restore(restore_udid_)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+            printf("[HCC RESTORE] all %u source files verified; sending experimental Restore\n",static_cast<unsigned>(restore_count_));
+            phase_=HCCBackupPhase::starting;
+        }
+        return HCCBackupError::would_block;
+    }
     if(phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing){
         bb::Error moved=bb::Error::ok;
         if(move_key_!=hcc::plist::none){
@@ -106,7 +131,9 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
                 download_lookup_logged_=true;
             }
 #endif
-            const auto resolved=capture_.lookupDownload(download_entries_[download_prepared_].path,*contents_.scratch,download_sources_[download_prepared_],found);
+            const auto resolved=config_.sample_restore
+                ?restore_source_->lookup(download_entries_[download_prepared_].path,restore_files_[download_prepared_],found)
+                :capture_.lookupDownload(download_entries_[download_prepared_].path,*contents_.scratch,download_sources_[download_prepared_],found);
             if(resolved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
             if(resolved!=bb::Error::ok){
 #ifdef ESP_PLATFORM
@@ -114,7 +141,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
 #endif
                 return fail(HCCBackupError::storage);
             }
-            if(found)download_entries_[download_prepared_].source=download_sources_[download_prepared_].source();
+            if(found)download_entries_[download_prepared_].source=config_.sample_restore?restore_files_[download_prepared_].source():download_sources_[download_prepared_].source();
 #ifdef ESP_PLATFORM
             printf("[HCC BACKUP] DownloadFiles lookup item=%u found=%d\n",static_cast<unsigned>(download_prepared_+1),found);
 #endif
@@ -156,8 +183,11 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
 #ifdef ESP_PLATFORM
             printf("[HCC BACKUP] DownloadFiles reply complete attempted=%u; waiting for next control\n",static_cast<unsigned>(download_->completed_files()));
 #endif
+            if(config_.sample_restore){
+                for(std::size_t i=0;i<download_count_&&download_entries_[i].source.read;++i)++served_files_;
+            }
             if(observer_->complete_request(true)!=bb::SessionError::ok)return fail(HCCBackupError::transfer);
-            download_.reset();for(auto& source:download_sources_)source.reset();phase_=HCCBackupPhase::waiting;
+            download_.reset();for(auto& source:download_sources_)source.reset();for(auto& source:restore_files_)source.reset();phase_=HCCBackupPhase::waiting;
         }
         return HCCBackupError::would_block;
     }
@@ -187,6 +217,12 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         printf("[HCC BACKUP] process %s\n",details);
     }
 #endif
+    if(config_.sample_restore&&(event.kind==bb::EventKind::create_directory||event.kind==bb::EventKind::move_files||event.kind==bb::EventKind::remove_items)){
+        // Source is immutable. Never acknowledge a namespace mutation as done.
+        reply_.emplace(output_,output_capacity_);
+        if(reply_->begin(-1,"Restore source is read-only",true)!=bb::Error::ok)return fail(HCCBackupError::transfer);
+        phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;
+    }
     if(event.kind==bb::EventKind::create_directory){
         reply_.emplace(output_,output_capacity_);
         // Validate response storage before mutating the capture namespace.
@@ -242,7 +278,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         bb::DirectoryListing listing{contents_.entries,contents_.entry_capacity,0};
         // Too many children or any storage/metadata error fails the operation; the
         // listing is never silently truncated or replaced with an empty reply.
-        const auto result=capture_.listDirectory(doc.string(event.payload),listing,*contents_.scratch);
+        const auto result=config_.sample_restore?restore_source_->list(doc.string(event.payload),listing):capture_.listDirectory(doc.string(event.payload),listing,*contents_.scratch);
         if(result!=bb::Error::ok){
 #ifdef ESP_PLATFORM
             printf("[HCC BACKUP] ContentsOfDirectory listing error=%s count=%u capacity=%u\n",bb::error_name(result),static_cast<unsigned>(listing.count),static_cast<unsigned>(listing.capacity));
@@ -263,6 +299,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         const auto files_node=event.payload;const auto* arr=doc.get(files_node);
         if(arr==nullptr)return fail(HCCBackupError::transfer);
         for(auto& source:download_sources_)source.reset();
+        for(auto& source:restore_files_)source.reset();
         std::size_t n=0,used=0;
         for(std::size_t i=0;i<arr->count;++i){
             const auto path=doc.string(doc.at(files_node,i));
@@ -271,7 +308,8 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
             download_entries_[n]={std::string_view(download_arena_+used,path.size()),{nullptr,nullptr}};
             used+=path.size();++n;
         }
-        if(n&&capture_.committedFiles()){
+        download_count_=n;
+        if(n&&(config_.sample_restore||capture_.committedFiles())){
             if(!contents_.scratch)return fail(HCCBackupError::unsupported);
             download_count_=n;download_prepared_=0;download_lookup_logged_=false;phase_=HCCBackupPhase::preparing_download;
             return HCCBackupError::would_block;
