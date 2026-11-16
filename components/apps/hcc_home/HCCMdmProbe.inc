@@ -65,16 +65,16 @@ void HCCUSBTransport::pollMdmBackupWatchdog()
     if (stopped || transport_failed || now-_mdm_probe->last_diagnostic_ms>=5000) {
         _mdm_probe->last_diagnostic_ms=now;
         const auto *tls=_service_tls;
-        printf("[HCC BACKUP] wait phase=%d elapsed_ms=%llu idle_ms=%llu usb_tx=%u tcp=%d tls_rx=%u tls_tx=%u plain_rx=%u partial_control=%u\n",
-               static_cast<int>(op.phase()),static_cast<unsigned long long>(op.elapsedMilliseconds(now)),
+        printf("[HCC %s] wait phase=%d elapsed_ms=%llu idle_ms=%llu usb_tx=%u tcp=%d tls_rx=%u tls_tx=%u plain_rx=%u partial_control=%u\n",
+               _mdm_restore_mode.load()?"RESTORE":"BACKUP",static_cast<int>(op.phase()),static_cast<unsigned long long>(op.elapsedMilliseconds(now)),
                static_cast<unsigned long long>(op.idleMilliseconds(now)),static_cast<unsigned>(_tx_in_flight),
                static_cast<int>(_service_tcp.state),static_cast<unsigned>(tls?tls->rx_length:0),
                static_cast<unsigned>(tls&&tls->tx_length>=tls->tx_offset?tls->tx_length-tls->tx_offset:0),
                static_cast<unsigned>(_notification_rx_stream_length),static_cast<unsigned>(_mdm_probe->link.control_frame_pending()));
     }
     if (stopped || transport_failed) {
-        printf("[HCC MDM] BACKUP watchdog stopped err=%d transport_failed=%u files=%u\n",
-               static_cast<int>(transport_failed?HCCBackupError::transfer:result),static_cast<unsigned>(transport_failed),static_cast<unsigned>(op.committedFiles()));
+        printf("[HCC MDM] %s watchdog stopped err=%d transport_failed=%u files=%u\n",
+               _mdm_restore_mode.load()?"RESTORE":"BACKUP",static_cast<int>(transport_failed?HCCBackupError::transfer:result),static_cast<unsigned>(transport_failed),static_cast<unsigned>(op.committedFiles()));
         finishMdmBackup(!transport_failed && result==HCCBackupError::ok && op.phase()==HCCBackupPhase::succeeded);
     }
 }
@@ -85,7 +85,7 @@ const char *HCCUSBTransport::mdmBackupStatusText()
     if(_mdm_restore_mode.load()){
         switch(_mdm_backup_state.load()){
         case MdmBackupState::none:return "Restore: chưa chạy";
-        case MdmBackupState::running:snprintf(_mdm_backup_text,sizeof(_mdm_backup_text),"Restore thử: kiểm tra/gửi dữ liệu (%u tệp)",files);break;
+        case MdmBackupState::running:snprintf(_mdm_backup_text,sizeof(_mdm_backup_text),"Restore thử: đang gửi dữ liệu (%u tệp)",files);break;
         case MdmBackupState::done:snprintf(_mdm_backup_text,sizeof(_mdm_backup_text),"Restore: iPad báo hoàn tất (%u tệp)",files);break;
         case MdmBackupState::failed:return "Restore dừng/lỗi - chưa xác nhận hoàn tất";
         }
@@ -225,7 +225,7 @@ bool HCCUSBTransport::pollMdmProbe()
         if (_mdm_probe == nullptr) return false;
         if (_mdm_backup_requested.load()) {
             // One explicitly selected operation per negotiated stream. Sample
-            // Restore is gated by serial-bound UI consent and source preflight.
+            // Restore is gated by serial-bound UI consent; source files are checked lazily.
             if (!_mdm_probe->operation) {
                 auto &ctx = *_mdm_probe;
                 ctx.operation.emplace(ctx.link, ctx.op_scratch, sizeof(ctx.op_scratch),
@@ -250,7 +250,7 @@ bool HCCUSBTransport::pollMdmProbe()
                 }
                 _mdm_probe->last_diagnostic_ms=mdmNowMs();
                 _mdm_backup_state.store(MdmBackupState::running);
-                printf("[HCC MDM] %s started\n",config.sample_restore?"RESTORE experiment (verified SD sample)":"BACKUP capture");
+                printf("[HCC MDM] %s started\n",config.sample_restore?"RESTORE experiment (SD sample; on-demand checks)":"BACKUP capture");
             }
             if (op.phase() != HCCBackupPhase::idle) {
                 op.poll({this, mdmRead, mdmWrite}, mdmNowMs(), 8);

@@ -39,6 +39,13 @@ int main(int argc,char** argv){
     bb::RestoreFileSource reader;bool found=true;
     assert(src.lookup(index[0].name,reader,found)==bb::Error::invalid_argument&&!found);
     assert(verify(src)==bb::Error::ok&&src.checked()==2);
+    // Fast startup must not inspect even a missing, unrequested indexed file.
+    const bb::RestoreSampleEntry fast_index[]={index[0],{"not-present",1,0}};
+    bb::RestoreSampleSource fast(fast_index,2);assert(fast.begin(temp,id,false)==bb::Error::ok);
+    assert(!fast.verified()&&fast.checked()==0);
+    assert(fast.lookup(index[0].name,reader,found)==bb::Error::ok&&found);reader.reset();
+    assert(fast.lookup("not-present",reader,found)==bb::Error::io_error&&!found);
+
     for(const auto& path:{std::string(index[0].name),std::string(id)+"/"+index[0].name,std::string(id)+"/ab/"+index[0].name}){
         assert(src.lookup(path,reader,found)==bb::Error::ok&&found);
         std::vector<std::uint8_t> bytes;std::array<std::uint8_t,8192>b{};

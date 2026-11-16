@@ -503,14 +503,14 @@ int main() {
             HCCBackupContentsBuffers{ctx.list_entries,ctx.kListEntries,ctx.list_offsets,bb::contents_object_count(ctx.kListEntries),&ctx.list_scratch},profile,2);
         const auto before=tls.ssl.output.size();assert(t.requestMdmRestore("RESTORE_TEST")&&t.mdmRestoreMode());
         assert(!t.requestMdmBackup());assert(t.pollMdmProbe());
-        assert(ctx.operation->phase()==HCCBackupPhase::restore_preflight&&tls.ssl.output.size()==before);
+        assert(ctx.operation->phase()==HCCBackupPhase::starting&&tls.ssl.output.size()==before);
         assert(HCCSdAccess::gate.owner()==bb::SdOwner::capture);
         if(mode==2){ctx.operation->cancel();t.pollMdmBackupWatchdog();}
         else if(mode==5){now_ms+=60ULL*60*1000;t._tx_in_flight=true;t.pollMdmBackupWatchdog();t._tx_in_flight=false;}
         else {
             for(unsigned i=0;i<2000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running&&ctx.operation->phase()!=HCCBackupPhase::waiting;++i){++now_ms;t.pollMdmProbe();}
         }
-        if(mode==1||mode==2||mode==5){
+        if(mode==2||mode==5){
             assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::failed&&tls.ssl.output.size()==before);
         }else{
             assert(ctx.operation->phase()==HCCBackupPhase::waiting);
@@ -522,7 +522,17 @@ int main() {
             const std::string name=std::string("00008101-001234567890ABCD/ab/")+profile[0].name;
             const auto begin=tls.ssl.output.size();
             frame("<plist><array><string>DLMessageDownloadFiles</string><array><string>"+name+"</string><string>00008101-001234567890ABCD/Info.plist</string></array></array></plist>");
-            for(unsigned i=0;i<30000;++i){++now_ms;assert(t.pollMdmProbe());if(tls.ssl.offset==tls.ssl.input.size()&&ctx.operation->phase()==HCCBackupPhase::waiting)break;}
+            for(unsigned i=0;i<30000;++i){
+                ++now_ms;const bool ok=t.pollMdmProbe();if(mode!=1)assert(ok);
+                if(t.mdmBackupState()!=HCCUSBTransport::MdmBackupState::running)break;
+                if(tls.ssl.offset==tls.ssl.input.size()&&ctx.operation->phase()==HCCBackupPhase::waiting)break;
+            }
+            if(mode==1){
+                // Corrupt metadata no longer delays the request with a full scan.
+                // It must still fail its CRC when actually requested/read.
+                assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::failed);
+                assert(tls.ssl.output.size()>begin);
+            }else{
             assert(ctx.operation->phase()==HCCBackupPhase::waiting&&t.mdmBackupFiles()==2);
             auto offset=begin;
             for(const auto& expected:{payload,metadata}){
@@ -540,12 +550,13 @@ int main() {
             else frame(mode==4?"<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>105</integer></dict></array></plist>":"<plist><array><string>DLMessageProcessMessage</string><dict><key>ErrorCode</key><integer>0</integer></dict></array></plist>");
             for(unsigned i=0;i<2000&&t.mdmBackupState()==HCCUSBTransport::MdmBackupState::running;++i){++now_ms;t.pollMdmProbe();}
             assert(t.mdmBackupState()==(mode==0?HCCUSBTransport::MdmBackupState::done:HCCUSBTransport::MdmBackupState::failed));
+            }
         }
         assert(HCCSdAccess::gate.owner()==bb::SdOwner::free);
         std::ifstream unchanged(root/profile[0].name,std::ios::binary);std::string original{std::istreambuf_iterator<char>(unchanged),{}};assert(original==payload);
         t.releaseMdmProbe();t._service_tls=nullptr;fs::remove_all(root);
     }
-    std::puts("PASS: experimental Restore verifies source before wire I/O, exact 70KB+metadata with TLS retries, explicit remote result, corruption/cancel/close/timeout and immutable source");
+    std::puts("PASS: fast Restore starts without full scan; exact 70KB+metadata, requested-file CRC failures, TLS retries, terminal result, cancel/close/timeout");
     fs::remove_all(sd_root);
     assert(allocations == 0);
     std::puts("11 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");

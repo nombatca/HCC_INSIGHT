@@ -70,7 +70,7 @@ SourceResult RestoreFileSource::read(void* ctx,std::uint8_t* b,std::size_t n){
     }
     return {got,false,Error::ok};
 }
-Error RestoreSampleSource::begin(const char* root,std::string_view udid){
+Error RestoreSampleSource::begin(const char* root,std::string_view udid,bool require_full_scan){
     if(begun_)return Error::busy;
     if(!entries_||!count_||!root||std::strlen(root)>=sizeof(root_)||(udid.size()!=25&&udid.size()!=40)||!trusted_directory(root))return Error::invalid_argument;
     for(std::size_t i=0;i<udid.size();++i){
@@ -78,7 +78,7 @@ Error RestoreSampleSource::begin(const char* root,std::string_view udid){
         const auto c=udid[i];if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return Error::invalid_argument;
     }
     std::memcpy(root_,root,std::strlen(root)+1);std::memcpy(udid_,udid.data(),udid.size());udid_[udid.size()]=0;
-    begun_=true;return Error::ok;
+    begun_=true;ready_=!require_full_scan;return Error::ok;
 }
 Error RestoreSampleSource::preflight(std::uint8_t* b,std::size_t n){
     if(!begun_||!b||!n||n>kObservedChunkSize)return Error::invalid_argument;
@@ -94,12 +94,12 @@ Error RestoreSampleSource::preflight(std::uint8_t* b,std::size_t n){
     if(std::feof(check_)){
         const auto closed=std::fclose(check_);check_=nullptr;
         if(closed||checked_bytes_!=item.size||crc_!=item.crc)return Error::io_error;
-        ++checked_;if(checked_==count_){verified_=true;return Error::ok;}
+        ++checked_;if(checked_==count_){verified_=ready_=true;return Error::ok;}
     }
     return Error::would_block;
 }
 bool RestoreSampleSource::relative(std::string_view path,std::string_view& out) const {
-    if(!verified_)return false;
+    if(!ready_)return false;
     if(path.empty()){out=path;return true;}
     if(!valid_relative_backup_path(path)||path.find('\\')!=std::string_view::npos)return false;
     const std::string_view id(udid_);

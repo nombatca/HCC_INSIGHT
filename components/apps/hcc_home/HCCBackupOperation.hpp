@@ -5,7 +5,7 @@
 #include "hcc_backup_upload_request.hpp"
 #include "hcc_backup_batch.hpp"
 #include <optional>
-enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving,removing,preparing_download,restore_preflight};
+enum class HCCBackupPhase {idle,starting,waiting,replying,receiving,downloading,succeeded,failed,cancelled,moving,removing,preparing_download};
 enum class HCCBackupError {ok,would_block,invalid_argument,busy,storage,quota,transfer,
                            timeout,clock,unsupported,remote,disconnected,cancelled};
 struct HCCBackupConfig {
@@ -84,7 +84,6 @@ private:
     bool download_lookup_logged_=false;
     hcc::backup::RestoreFileSource restore_files_[kMaxDownloadFiles];
     std::optional<hcc::backup::RestoreSampleSource> restore_source_;
-    char restore_udid_[41]{};
     hcc::plist::Document move_doc_{};
     std::uint32_t move_key_=hcc::plist::none,moves_done_=0;
     HCCBackupConfig config_{};

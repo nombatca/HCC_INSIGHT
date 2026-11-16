@@ -2422,7 +2422,7 @@ void HCCHome::showRestoreConfirm(){
     lv_label_set_text(title,"RESTORE THỬ TỪ BACKUP MẪU");lv_obj_align(title,LV_ALIGN_TOP_MID,0,15);
     auto* text=lv_label_create(_restore_dialog);lv_obj_set_width(text,LV_PCT(92));lv_obj_set_style_text_font(text,&lv_font_be_vietnam_18,0);
     char details[850];snprintf(details,sizeof(details),
-        "Thiết bị: %s\nNguồn SD: /hcc_restore/restoremdm\n\nRestore có thể thay đổi hoặc ghi đè dữ liệu/cài đặt iPad.\nChỉ thử trên máy đã sao lưu riêng. Chưa xác nhận tương thích.\n\nHCC kiểm tra đủ 297 tệp trước khi gửi lệnh.\nMáy có thể tự khởi động lại. Không đồng nghĩa đã gỡ MDM.\n\nChọn NHẬN BACKUP để lưu dữ liệu vào SD như trước.",_restore_serial[0]?_restore_serial:"chưa có Serial - không thể Restore");
+        "Thiết bị: %s\nNguồn SD: /hcc_restore/restoremdm\n\nRestore có thể thay đổi hoặc ghi đè dữ liệu/cài đặt iPad.\nChỉ thử trên máy đã sao lưu riêng. Chưa xác nhận tương thích.\n\nHCC gửi ngay, kiểm tra tệp khi iPad yêu cầu.\nMáy có thể tự khởi động lại. Không đồng nghĩa đã gỡ MDM.\n\nChọn NHẬN BACKUP để lưu dữ liệu vào SD như trước.",_restore_serial[0]?_restore_serial:"chưa có Serial - không thể Restore");
     lv_label_set_text(text,details);lv_obj_align(text,LV_ALIGN_TOP_LEFT,20,60);
     auto make=[this](const char* name,lv_event_cb_t callback,int x,int width){
         auto* button=lv_btn_create(_restore_dialog);lv_obj_set_size(button,width,58);lv_obj_align(button,LV_ALIGN_BOTTOM_LEFT,x,-12);

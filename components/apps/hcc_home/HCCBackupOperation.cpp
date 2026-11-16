@@ -6,14 +6,14 @@
 namespace bb=hcc::backup;
 HCCBackupError HCCBackupOperation::fail(HCCBackupError e){
 #ifdef ESP_PLATFORM
-    printf("[HCC BACKUP] stop phase=%d reason=%d\n",static_cast<int>(phase_),static_cast<int>(e));
+    printf("[HCC %s] stop phase=%d reason=%d\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<int>(phase_),static_cast<int>(e));
 #endif
     move_doc_={};move_key_=hcc::plist::none;
     download_.reset();for(auto& source:download_sources_)source.reset();for(auto& source:restore_files_)source.reset();restore_source_.reset();reply_.reset();upload_.reset();if(start_)start_->cancel();if(observer_)observer_->transport_failed();
     phase_=HCCBackupPhase::failed;return error_=e;
 }
 void HCCBackupOperation::cancel(){
-    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing||phase_==HCCBackupPhase::preparing_download||phase_==HCCBackupPhase::restore_preflight){
+    if(phase_==HCCBackupPhase::starting||phase_==HCCBackupPhase::waiting||phase_==HCCBackupPhase::receiving||phase_==HCCBackupPhase::replying||phase_==HCCBackupPhase::downloading||phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing||phase_==HCCBackupPhase::preparing_download){
         fail(HCCBackupError::cancelled);phase_=HCCBackupPhase::cancelled;
     }
 }
@@ -25,7 +25,8 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
        !config.limits.max_frame_payload||!config.limits.max_file_bytes||!config.limits.max_batch_bytes)return HCCBackupError::invalid_argument;
     std::size_t encoded=0;
     if((config.sample_restore?bb::encode_sample_restore_request(udid,output_+4,output_capacity_-4,encoded):bb::encode_backup_request(udid,config.force_full,output_+4,output_capacity_-4,encoded))!=bb::LinkError::ok)return HCCBackupError::invalid_argument;
-    // No request bytes or running state until mount/space preflight succeeds.
+    config_=config;
+    // No request bytes or running state until mount/space checks succeed.
     const auto storage=capture_.open(config.use_sd_capacity?std::max(config.minimum_free_bytes,config.reserve_bytes+1):config.minimum_free_bytes);
     if(storage!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=storage==bb::Error::busy?HCCBackupError::busy:storage==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage;}
     if(config.use_sd_capacity){
@@ -36,7 +37,7 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
         if(available<=config.reserve_bytes){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::quota;}
         config.limits.max_batch_bytes=available-config.reserve_bytes;
 #ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] space free=%llu reserve=%llu payload_budget=%llu\n",
+        printf("[HCC %s] space free=%llu reserve=%llu payload_budget=%llu\n",config_.sample_restore?"RESTORE":"BACKUP",
                static_cast<unsigned long long>(available),static_cast<unsigned long long>(config.reserve_bytes),
                static_cast<unsigned long long>(config.limits.max_batch_bytes));
 #endif
@@ -45,14 +46,11 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
         char root[320];const int n=snprintf(root,sizeof(root),"%s/hcc_restore/restoremdm",BSP_SD_MOUNT_POINT);
         if(n<0||static_cast<std::size_t>(n)>=sizeof(root))return fail(HCCBackupError::storage);
         restore_source_.emplace(restore_index_,restore_count_);
-        if(restore_source_->begin(root,udid)!=bb::Error::ok)return fail(HCCBackupError::storage);
-        std::memcpy(restore_udid_,udid.data(),udid.size());restore_udid_[udid.size()]=0;
-        config_=config;began_=last_now_=progress_=now;phase_=HCCBackupPhase::restore_preflight;
-        printf("[HCC RESTORE] preflight start files=%u; no Restore request sent yet\n",static_cast<unsigned>(restore_count_));
-        return HCCBackupError::ok;
+        if(restore_source_->begin(root,udid,false)!=bb::Error::ok)return fail(HCCBackupError::storage);
+        printf("[HCC RESTORE] fast start: full SD scan skipped; requested files checked while sending\n");
     }
     start_.emplace(*observer_,output_,output_capacity_);
-    if(start_->begin(udid,config.force_full)!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::transfer;}
+    if((config.sample_restore?start_->begin_sample_restore(udid):start_->begin(udid,config.force_full))!=bb::Error::ok){phase_=HCCBackupPhase::failed;return error_=HCCBackupError::transfer;}
     config_=config;began_=last_now_=progress_=now;phase_=HCCBackupPhase::starting;return HCCBackupError::ok;
 }
 bb::IoResult HCCBackupOperation::Progress::read(void* p,std::uint8_t* b,std::size_t n){auto& s=*static_cast<Progress*>(p);auto r=s.io.read(s.io.context,b,n);if(r.bytes)s.operation->progress_=s.now;return r;}
@@ -65,7 +63,7 @@ HCCBackupError HCCBackupOperation::checkDeadline(std::uint64_t now){
     last_now_=now;
     if(now-began_>=config_.total_timeout_ms||now-progress_>=config_.idle_timeout_ms){
 #ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] timeout kind=%s elapsed_ms=%llu idle_ms=%llu total_limit_ms=%llu idle_limit_ms=%llu\n",
+        printf("[HCC %s] timeout kind=%s elapsed_ms=%llu idle_ms=%llu total_limit_ms=%llu idle_limit_ms=%llu\n",config_.sample_restore?"RESTORE":"BACKUP",
                now-began_>=config_.total_timeout_ms?"total":"idle",
                static_cast<unsigned long long>(now-began_),static_cast<unsigned long long>(now-progress_),
                static_cast<unsigned long long>(config_.total_timeout_ms),static_cast<unsigned long long>(config_.idle_timeout_ms));
@@ -81,21 +79,6 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     const auto deadline=checkDeadline(now);
     if(deadline!=HCCBackupError::would_block)return deadline;
     Progress context{this,io,now};const bb::Duplex tracked{&context,Progress::read,Progress::write};
-    if(phase_==HCCBackupPhase::restore_preflight){
-        const auto e=restore_source_->preflight(scratch_,capacity_);
-        if(e!=bb::Error::ok&&e!=bb::Error::would_block){
-            printf("[HCC RESTORE] source verification failed index=%u; request NOT sent\n",static_cast<unsigned>(restore_source_->checked()));
-            return fail(HCCBackupError::storage);
-        }
-        progress_=now;
-        if(e==bb::Error::ok){
-            start_.emplace(*observer_,output_,output_capacity_);
-            if(start_->begin_sample_restore(restore_udid_)!=bb::Error::ok)return fail(HCCBackupError::transfer);
-            printf("[HCC RESTORE] all %u source files verified; sending experimental Restore\n",static_cast<unsigned>(restore_count_));
-            phase_=HCCBackupPhase::starting;
-        }
-        return HCCBackupError::would_block;
-    }
     if(phase_==HCCBackupPhase::moving||phase_==HCCBackupPhase::removing){
         bb::Error moved=bb::Error::ok;
         if(move_key_!=hcc::plist::none){
@@ -108,7 +91,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         }
 #ifdef ESP_PLATFORM
         if(moved!=bb::Error::ok||move_key_==hcc::plist::none||moves_done_%8==0)
-            printf("[HCC BACKUP] %s progress=%u result=%s\n",phase_==HCCBackupPhase::removing?"RemoveItems":"MoveItems",moves_done_,bb::error_name(moved));
+            printf("[HCC %s] %s progress=%u result=%s\n",config_.sample_restore?"RESTORE":"BACKUP",phase_==HCCBackupPhase::removing?"RemoveItems":"MoveItems",moves_done_,bb::error_name(moved));
 #endif
         if(moved!=bb::Error::ok||move_key_==hcc::plist::none){
             if(moved==bb::Error::ok){reply_.emplace(output_,output_capacity_);if(reply_->begin(0,nullptr,true)!=bb::Error::ok)return fail(HCCBackupError::transfer);}
@@ -127,7 +110,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
             for(std::size_t i=0;i<length;++i){const auto c=static_cast<unsigned char>(requested[i]);name[i]=c>=32&&c<127?static_cast<char>(c):'?';}
             name[length]=0;
             if(!download_lookup_logged_){
-                printf("[HCC BACKUP] DownloadFiles request item=%u path=%s%s\n",static_cast<unsigned>(download_prepared_+1),name,requested.size()>length?"...":"");
+                printf("[HCC %s] DownloadFiles request item=%u path=%s%s\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(download_prepared_+1),name,requested.size()>length?"...":"");
                 download_lookup_logged_=true;
             }
 #endif
@@ -137,13 +120,13 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
             if(resolved==bb::Error::would_block){progress_=now;return HCCBackupError::would_block;}
             if(resolved!=bb::Error::ok){
 #ifdef ESP_PLATFORM
-                printf("[HCC BACKUP] DownloadFiles lookup item=%u error=%s\n",static_cast<unsigned>(download_prepared_+1),bb::error_name(resolved));
+                printf("[HCC %s] DownloadFiles lookup item=%u error=%s\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(download_prepared_+1),bb::error_name(resolved));
 #endif
                 return fail(HCCBackupError::storage);
             }
             if(found)download_entries_[download_prepared_].source=config_.sample_restore?restore_files_[download_prepared_].source():download_sources_[download_prepared_].source();
 #ifdef ESP_PLATFORM
-            printf("[HCC BACKUP] DownloadFiles lookup item=%u found=%d\n",static_cast<unsigned>(download_prepared_+1),found);
+            printf("[HCC %s] DownloadFiles lookup item=%u found=%d\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(download_prepared_+1),found);
 #endif
             ++download_prepared_;download_lookup_logged_=false;progress_=now;
         }
@@ -181,7 +164,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
         if(download_->done()){
 #ifdef ESP_PLATFORM
-            printf("[HCC BACKUP] DownloadFiles reply complete attempted=%u; waiting for next control\n",static_cast<unsigned>(download_->completed_files()));
+            printf("[HCC %s] DownloadFiles reply complete attempted=%u; waiting for next control\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(download_->completed_files()));
 #endif
             if(config_.sample_restore){
                 for(std::size_t i=0;i<download_count_&&download_entries_[i].source.read;++i)++served_files_;
@@ -197,7 +180,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     if(e!=bb::LinkError::ok){
 #ifdef ESP_PLATFORM
         const auto rejected=link_.rejected_message();
-        printf("[HCC BACKUP] control receive failed error=%s command=%.*s files=%u bytes=%llu\n",
+        printf("[HCC %s] control receive failed error=%s command=%.*s files=%u bytes=%llu\n",config_.sample_restore?"RESTORE":"BACKUP",
                bb::link_error_name(e),static_cast<int>(rejected.size()),rejected.data(),
                static_cast<unsigned>(files_),static_cast<unsigned long long>(bytes_));
 #endif
@@ -209,12 +192,12 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
 #ifdef ESP_PLATFORM
     // Diagnostic: show every control message the device sends during a backup so
     // unhandled requests (e.g. DownloadFiles) are visible instead of a silent stall.
-    printf("[HCC BACKUP] event kind=%d msg=%.*s\n",static_cast<int>(event.kind),
+    printf("[HCC %s] event kind=%d msg=%.*s\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<int>(event.kind),
            static_cast<int>(event.message.size()),event.message.data());
     if(event.kind==bb::EventKind::process_message||event.kind==bb::EventKind::result){
         char details[448];
         bb::format_process_message_diagnostic(doc,event.payload,details,sizeof(details));
-        printf("[HCC BACKUP] process %s\n",details);
+        printf("[HCC %s] process %s\n",config_.sample_restore?"RESTORE":"BACKUP",details);
     }
 #endif
     if(config_.sample_restore&&(event.kind==bb::EventKind::create_directory||event.kind==bb::EventKind::move_files||event.kind==bb::EventKind::remove_items)){
@@ -257,7 +240,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         reply_.emplace(output_,output_capacity_);
         const auto usable=config_.use_sd_capacity?(available_bytes>config_.reserve_bytes?available_bytes-config_.reserve_bytes:0):available_bytes;
 #ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] free-space actual=%llu advertised=%llu remaining_budget=%llu\n",
+        printf("[HCC %s] free-space actual=%llu advertised=%llu remaining_budget=%llu\n",config_.sample_restore?"RESTORE":"BACKUP",
                static_cast<unsigned long long>(available_bytes),static_cast<unsigned long long>(std::min(usable,remaining)),
                static_cast<unsigned long long>(remaining));
 #endif
@@ -273,7 +256,7 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         char requested[161];const auto path=doc.string(event.payload);const auto length=std::min(path.size(),sizeof(requested)-1);
         for(std::size_t i=0;i<length;++i){const auto c=static_cast<unsigned char>(path[i]);requested[i]=c>=32&&c<127?static_cast<char>(c):'?';}
         requested[length]=0;
-        printf("[HCC BACKUP] ContentsOfDirectory request path=%s%s entry_capacity=%u reply_capacity=%u\n",requested,path.size()>length?"...":"",static_cast<unsigned>(contents_.entry_capacity),static_cast<unsigned>(output_capacity_));
+        printf("[HCC %s] ContentsOfDirectory request path=%s%s entry_capacity=%u reply_capacity=%u\n",config_.sample_restore?"RESTORE":"BACKUP",requested,path.size()>length?"...":"",static_cast<unsigned>(contents_.entry_capacity),static_cast<unsigned>(output_capacity_));
 #endif
         bb::DirectoryListing listing{contents_.entries,contents_.entry_capacity,0};
         // Too many children or any storage/metadata error fails the operation; the
@@ -281,14 +264,14 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
         const auto result=config_.sample_restore?restore_source_->list(doc.string(event.payload),listing):capture_.listDirectory(doc.string(event.payload),listing,*contents_.scratch);
         if(result!=bb::Error::ok){
 #ifdef ESP_PLATFORM
-            printf("[HCC BACKUP] ContentsOfDirectory listing error=%s count=%u capacity=%u\n",bb::error_name(result),static_cast<unsigned>(listing.count),static_cast<unsigned>(listing.capacity));
+            printf("[HCC %s] ContentsOfDirectory listing error=%s count=%u capacity=%u\n",config_.sample_restore?"RESTORE":"BACKUP",bb::error_name(result),static_cast<unsigned>(listing.count),static_cast<unsigned>(listing.capacity));
 #endif
             return fail(result==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::storage);
         }
         reply_.emplace(output_,output_capacity_);
         const auto encoded=reply_->begin_contents(listing,contents_.offsets,contents_.offset_capacity);
 #ifdef ESP_PLATFORM
-        printf("[HCC BACKUP] ContentsOfDirectory reply entries=%u result=%s capacity=%u\n",static_cast<unsigned>(listing.count),bb::error_name(encoded),static_cast<unsigned>(output_capacity_));
+        printf("[HCC %s] ContentsOfDirectory reply entries=%u result=%s capacity=%u\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(listing.count),bb::error_name(encoded),static_cast<unsigned>(output_capacity_));
 #endif
         if(encoded!=bb::Error::ok)return fail(encoded==bb::Error::too_large?HCCBackupError::quota:HCCBackupError::transfer);
         phase_=HCCBackupPhase::replying;return HCCBackupError::would_block;

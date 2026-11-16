@@ -26,9 +26,9 @@ public:
     RestoreSampleSource(const RestoreSampleSource&)=delete;
     RestoreSampleSource& operator=(const RestoreSampleSource&)=delete;
     ~RestoreSampleSource(){if(check_)std::fclose(check_);}
-    Error begin(const char* trusted_root,std::string_view udid);
-    // One bounded read per call. Size+ZIP CRC32 preflight must finish before
-    // Restore. CRC32 detects accidental corruption, not malicious tampering.
+    Error begin(const char* trusted_root,std::string_view udid,bool require_full_scan=true);
+    // Optional offline/full scan: one bounded read per call. Fast firmware mode
+    // serves only requested files; their size/read/CRC checks remain active.
     Error preflight(std::uint8_t*,std::size_t);
     Error lookup(std::string_view,RestoreFileSource&,bool& found) const;
     Error list(std::string_view,DirectoryListing&) const;
@@ -41,6 +41,6 @@ private:
     char root_[256]{},udid_[41]{};
     FILE* check_=nullptr;std::size_t checked_=0;
     std::uint64_t checked_bytes_=0;std::uint32_t crc_=0;
-    bool begun_=false,verified_=false;
+    bool begun_=false,verified_=false,ready_=false;
 };
 }

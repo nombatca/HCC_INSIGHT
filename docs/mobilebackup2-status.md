@@ -3,7 +3,8 @@
 Current experiment: an explicit, serial-confirmed sample Restore is now available;
 see [P4_RESTORE_EXPERIMENT.md](P4_RESTORE_EXPERIMENT.md). Earlier sections below
 record incremental capture milestones and their then-current limitations.
-The Restore path has not been validated on an actual iPad.
+The user reported one terminal ErrorCode=0 Restore (56 files) on 120fed3.
+The new fast-start path skips the full source scan; its hardware timing is pending.
 
 
 Hardware checkpoint reported on 2026-11-08: the P4 negotiated DeviceLink and

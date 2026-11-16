@@ -41,27 +41,28 @@ and serial port are already configured.
 4. Check the Serial and source path. Choose **TÔI ĐỒNG Ý RESTORE THỬ** only if the
    displayed test device may have its data/settings changed. **NHẬN BACKUP**
    retains the capture action; **HỦY** sends neither request.
-5. Preserve the full serial log from `[HCC RESTORE] preflight start` to the final
+5. Preserve the full serial log from `[HCC RESTORE] fast start` to the final
    response/failure. Do not repeatedly press actions or use other SD apps.
 
 The request is serial-bound at confirmation and accepted only once in a Ready
 session. A new operation requires a new negotiated stream. Before sending any
 Restore bytes, the USB owner task acquires the shared SD lease, creates a separate
-capture session for inbound device uploads, then checks all 297 source sizes and
-ZIP CRC32 values, at most one 32 KiB read per poll. Missing/changed files or mount,
-space, CRC, ownership errors stop without sending a Restore request. CRC32 is
-an accidental-corruption check, not cryptographic source authentication. The Mac
+capture session for inbound device uploads, opens the source root and sends Restore without scanning all 297 files. Only
+requested files are opened: their size is checked before reading and their CRC32
+is checked while streaming. Missing/corrupt requested files fail when encountered;
+unrequested files do not delay startup. A late error cannot undo data already
+sent/applied. Mount, source-root, space and SD-ownership checks remain. CRC32 is an
+accidental-corruption check, not cryptographic source authentication. The Mac
 preparation tool's ZIP SHA-256 establishes which supplied package was used.
 
 Expected log boundary:
 
 ```
-[HCC RESTORE] preflight start files=297; no Restore request sent yet
-[HCC RESTORE] all 297 source files verified; sending experimental Restore
+[HCC RESTORE] fast start: full SD scan skipped; requested files checked while sending
 ```
 
-Control-event logs retain the shared `[HCC BACKUP]` prefix. The operation start,
-source verification, and final firmware-glue result identify RESTORE explicitly.
+Restore operation/watchdog/control logs use `[HCC RESTORE]`; capture logs keep
+`[HCC BACKUP]`. There is no phase-12 full-scan delay in the firmware path.
 A successful file/status write is not operation success. Only a terminal device
 `ErrorCode=0` sets **Restore: iPad báo hoàn tất**. Disconnect/reboot before a final
 response, nonzero device error, deadline, media error or transport failure remains
@@ -100,10 +101,20 @@ those fields nor claims to have resolved their semantics. The original bytes are
 preserved, rather than manufacturing a modified backup.
 
 Host validation covers exact request decoding with independent plistlib, original
-297-file preflight/streaming offline, missing/corrupt/changed sources, path aliases,
+297-file preflight/streaming offline (optional source API), fast startup without
+reading unrequested files, missing/corrupt/changed requested sources, path aliases,
 sharded tree preparation, source immutability, symlink confinement, partial TLS
-writes, exact 70 KiB+metadata transmission, explicit final result, preflight
-cancellation, closure and deadlines. SDK/TLS stubs do not prove real USB/TLS or
+writes, exact 70 KiB+metadata transmission, explicit final result, cancellation
+before the first request write, closure and deadlines. SDK/TLS stubs do not prove real USB/TLS or
 Restore compatibility. The P4 context is about 2.72 MB in PSRAM; allocation or
 real FAT errors still need hardware confirmation. Legacy SD users do not all
 participate in the shared lease.
+
+## Hardware checkpoint and fast-start change (2026-11-16)
+
+The user supplied a terminal `DLMessageProcessMessage`, MessageName Response,
+ErrorCode 0 followed by `RESTORE complete files=56` for the 120fed3 baseline. This
+confirms that Restore session's completion, not persistent MDM removal. The
+preceding wait log showed elapsed_ms=228717; it is not an exact final duration.
+At the user's request, subsequent firmware skips the full SD preflight; the same
+SD sample remains compatible. Fast-start duration still requires a hardware run.
