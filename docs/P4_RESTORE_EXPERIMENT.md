@@ -37,14 +37,20 @@ and serial port are already configured.
 
 1. Insert the prepared SD, open USB HUB, connect/unlock/trust the test iPad.
 2. Tap MDM to arm/negotiate; reconnect when requested by the existing probe.
-3. When the service is Ready, hold MDM to show the operation dialog.
-4. Check the Serial and source path. Choose **TÔI ĐỒNG Ý RESTORE THỬ** only if the
-   displayed test device may have its data/settings changed. **NHẬN BACKUP**
-   retains the capture action; **HỦY** sends neither request.
-5. Preserve the full serial log from `[HCC RESTORE] fast start` to the final
-   response/failure. Do not repeatedly press actions or use other SD apps.
+3. Wait for the device information and service negotiation. The button changes
+   from **MDM** to **ACTIVE MDM** only with a complete info stage, nonempty Serial,
+   Ready service and no operation already started.
+4. Tap **ACTIVE MDM** once to start Restore directly. This second tap is the
+   explicit action requested by the user; no extra dialog or long press is
+   required. The action rechecks the Serial displayed in the ready state.
+5. While running, the button shows **ACTIVE MDM / Đang chạy** and ignores extra
+   clicks. Completion shows **RESTORE / Hoàn tất** only after the terminal device
+   result. Reconnect for another session.
+6. Long press remains an advanced shortcut to the previous capture/Restore dialog.
+   Preserve the serial log from `[HCC RESTORE] fast start` to the final result.
+   Do not use other SD apps during the operation.
 
-The request is serial-bound at confirmation and accepted only once in a Ready
+The request is serial-bound at the explicit ACTIVE MDM tap (or advanced-dialog confirmation) and accepted only once in a Ready
 session. A new operation requires a new negotiated stream. Before sending any
 Restore bytes, the USB owner task acquires the shared SD lease, creates a separate
 capture session for inbound device uploads, opens the source root and sends Restore without scanning all 297 files. Only

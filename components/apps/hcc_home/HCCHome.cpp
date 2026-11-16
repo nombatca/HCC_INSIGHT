@@ -1583,14 +1583,32 @@ void HCCHome::updateActionLabels(HCCHome *app)
     // Android repurposes the MDM slot as "reboot to bootloader"; PURPLE has no Android meaning.
     const bool android = app->_usb_mode == USBMode::ANDROID || app->_usb_mode == USBMode::ANDROID_FASTBOOT;
     if (app->_bootloader_button_label != nullptr) {
-        lv_label_set_text(app->_bootloader_button_label,
-                          !android ? (app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Ready
-                              ? (app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::done
-                                  ? "MDM\nĐã xong - cắm lại"
-                                  : app->_usb_transport.mdmBackupState() == HCCUSBTransport::MdmBackupState::running
-                                      ? (app->_usb_transport.mdmRestoreMode()?"RESTORE\nĐang xử lý":"BACKUP\nĐang nhận")
-                                      : "MDM\nGiữ: chọn tác vụ") : "MDM")
-                              : (app->_usb_mode == USBMode::ANDROID ? "FASTBOOT" : "-"));
+        const auto mdm=app->_usb_transport.mdmState();
+        const auto operation=app->_usb_transport.mdmBackupState();
+        const bool ready=app->_usb_mode==USBMode::NORMAL &&
+            mdm==HCCUSBTransport::MdmState::Ready &&
+            app->_usb_transport.deviceInfoReady() &&
+            operation==HCCUSBTransport::MdmBackupState::none &&
+            app->_usb_transport.serialNumber()[0];
+        // Bind the ACTIVE MDM action to the Serial shown with this ready state.
+        // The transport rechecks it when clicked, so a replaced device is refused.
+        if(ready&&!app->_restore_dialog)snprintf(app->_restore_serial,sizeof(app->_restore_serial),"%s",app->_usb_transport.serialNumber());
+        else if(!app->_restore_dialog)app->_restore_serial[0]=0;
+        const char* label="MDM";bool disabled=false;
+        if(android)label=app->_usb_mode==USBMode::ANDROID?"FASTBOOT":"-";
+        else if(operation==HCCUSBTransport::MdmBackupState::running){
+            label=app->_usb_transport.mdmRestoreMode()?"ACTIVE MDM\nĐang chạy":"BACKUP\nĐang nhận";disabled=true;
+        }else if(mdm==HCCUSBTransport::MdmState::Armed){label="MDM\nChờ kết nối";disabled=true;}
+        else if(mdm==HCCUSBTransport::MdmState::Opening||mdm==HCCUSBTransport::MdmState::Negotiating){label="MDM\nĐang kiểm tra";disabled=true;}
+        else if(mdm==HCCUSBTransport::MdmState::Ready){
+            if(operation==HCCUSBTransport::MdmBackupState::done){label=app->_usb_transport.mdmRestoreMode()?"RESTORE\nHoàn tất":"BACKUP\nHoàn tất";disabled=true;}
+            else if(ready)label="ACTIVE MDM";
+            else{label="MDM\nChờ thông tin";disabled=true;}
+        }
+        lv_label_set_text(app->_bootloader_button_label,label);
+        auto* button=lv_obj_get_parent(app->_bootloader_button_label);
+        if(disabled)lv_obj_add_state(button,LV_STATE_DISABLED);
+        else lv_obj_clear_state(button,LV_STATE_DISABLED);
     }
     if (app->_purple_button_label != nullptr) {
         lv_label_set_text(app->_purple_button_label, android ? "-" : "PURPLE");
@@ -2403,6 +2421,7 @@ void HCCHome::onRestoreConfirm(lv_event_t* event){
     const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmRestore(app->_restore_serial);
     if(app->_restore_dialog)lv_obj_del(app->_restore_dialog);
     if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?app->_usb_transport.mdmBackupStatusText():"Không chạy Restore: thiết bị/phiên đã thay đổi");
+    HCCHome::updateActionLabels(app);
     if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
 }
 void HCCHome::onCaptureConfirm(lv_event_t* event){
@@ -2439,12 +2458,27 @@ void HCCHome::onMdmClicked(lv_event_t *event)
 {
     auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr) return;
+    if(app->_usb_mode!=USBMode::NORMAL&&app->_usb_mode!=USBMode::NO_DEVICE)return;
+    const auto operation=app->_usb_transport.mdmBackupState();
+    if(operation==HCCUSBTransport::MdmBackupState::running){
+        if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,app->_usb_transport.mdmBackupStatusText());
+        return;
+    }
+    if(app->_usb_transport.mdmState()==HCCUSBTransport::MdmState::Ready){
+        if(operation==HCCUSBTransport::MdmBackupState::none&&app->_usb_transport.deviceInfoReady()&&app->_restore_serial[0]){
+            // The second short press is the user's explicit Restore action.
+            HCCHome::onRestoreConfirm(event);
+        }
+        HCCHome::updateActionLabels(app);
+        return;
+    }
     if (HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::running) {
         if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, HCCBackupSdSelfTest::statusText());
         return;
     }
     HCCBackupSdSelfTest::clear();
     app->_usb_transport.requestMdmProbe();
+    HCCHome::updateActionLabels(app);
     if (app->_usb_status_label != nullptr) {
         lv_label_set_text(app->_usb_status_label, app->_usb_transport.mdmStatusText());
     }
@@ -2792,8 +2826,9 @@ void HCCHome::showUSB()
         lv_obj_center(label);
         lv_obj_set_style_text_font(label, &lv_font_be_vietnam_16, 0);
 
-        // MDM: short press probes; long press tests SD after Ready. Android keeps
-        // FASTBOOT on short press. PURPLE remains an inert placeholder.
+        // MDM: first short press arms the probe; Ready + device info shows
+        // ACTIVE MDM, whose next short press starts Restore. Long press keeps
+        // the advanced capture/Restore dialog. Android retains FASTBOOT.
         if (i == 0) {
             _recovery_button_label = label;
             lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
