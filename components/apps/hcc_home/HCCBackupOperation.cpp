@@ -1,4 +1,5 @@
 #include "HCCBackupOperation.hpp"
+#include "hcc_restore_sample17_index.hpp"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "esp_vfs_fat.h"
 #include <algorithm>
@@ -21,7 +22,7 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
     if(phase_!=HCCBackupPhase::idle)return HCCBackupError::busy;
     observer_=link_.session_observer();
     if(!observer_||observer_->phase()!=bb::Phase::ready||link_.control_frame_pending()||!scratch_||!capacity_||capacity_>bb::kObservedChunkSize||!output_||output_capacity_<4||
-       (config.use_sd_capacity&&config.reserve_bytes==UINT64_MAX)||!config.minimum_free_bytes||!config.idle_timeout_ms||!config.total_timeout_ms||!config.limits.max_files||config.limits.max_files>1024||
+       (config.use_sd_capacity&&config.reserve_bytes==UINT64_MAX)||(config.restore_sample17&&!config.sample_restore)||!config.minimum_free_bytes||!config.idle_timeout_ms||!config.total_timeout_ms||!config.limits.max_files||config.limits.max_files>1024||
        !config.limits.max_frame_payload||!config.limits.max_file_bytes||!config.limits.max_batch_bytes)return HCCBackupError::invalid_argument;
     std::size_t encoded=0;
     if((config.sample_restore?bb::encode_sample_restore_request(udid,output_+4,output_capacity_-4,encoded):bb::encode_backup_request(udid,config.force_full,output_+4,output_capacity_-4,encoded))!=bb::LinkError::ok)return HCCBackupError::invalid_argument;
@@ -43,10 +44,11 @@ HCCBackupError HCCBackupOperation::start(std::string_view udid,std::uint64_t now
 #endif
     }
     if(config.sample_restore){
-        char root[320];const int n=snprintf(root,sizeof(root),"%s/hcc_restore/restoremdm",BSP_SD_MOUNT_POINT);
+        char root[320];const int n=snprintf(root,sizeof(root),"%s/hcc_restore/%s",BSP_SD_MOUNT_POINT,config.restore_sample17?"restoremdm17":"restoremdm");
         if(n<0||static_cast<std::size_t>(n)>=sizeof(root))return fail(HCCBackupError::storage);
-        restore_source_.emplace(restore_index_,restore_count_);
+        restore_source_.emplace(config.restore_sample17?bb::kRestoreSample17:restore_index_,config.restore_sample17?bb::kRestoreSample17Count:restore_count_);
         if(restore_source_->begin(root,udid,false)!=bb::Error::ok)return fail(HCCBackupError::storage);
+        printf("[HCC RESTORE] selected sample=%s files=%u root=%s; experimental, OS compatibility unverified\n",config.restore_sample17?"17":"legacy",static_cast<unsigned>(config.restore_sample17?bb::kRestoreSample17Count:restore_count_),root);
         printf("[HCC RESTORE] fast start: full SD scan skipped; requested files checked while sending\n");
     }
     start_.emplace(*observer_,output_,output_capacity_);

@@ -858,6 +858,7 @@ void HCCHome::detachScreenObjects()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     // Detach EEPROM labels before the old screen is cleaned so a pending
@@ -1609,6 +1610,14 @@ void HCCHome::updateActionLabels(HCCHome *app)
         auto* button=lv_obj_get_parent(app->_bootloader_button_label);
         if(disabled)lv_obj_add_state(button,LV_STATE_DISABLED);
         else lv_obj_clear_state(button,LV_STATE_DISABLED);
+    }
+    if(app->_restore27_button_label){
+        const bool ready=app->_usb_mode==USBMode::NORMAL && app->_usb_transport.mdmState()==HCCUSBTransport::MdmState::Ready &&
+            app->_usb_transport.deviceInfoReady() && app->_usb_transport.serialNumber()[0] &&
+            app->_usb_transport.mdmBackupState()==HCCUSBTransport::MdmBackupState::none;
+        lv_label_set_text(app->_restore27_button_label,app->_usb_transport.mdmRestoreSample17()&&app->_usb_transport.mdmBackupState()==HCCUSBTransport::MdmBackupState::running?"RESTORE iOS27\nĐang chạy":"RESTORE iOS27\nTHỬ (bộ 17)");
+        auto* button=lv_obj_get_parent(app->_restore27_button_label);
+        if(ready)lv_obj_clear_state(button,LV_STATE_DISABLED);else lv_obj_add_state(button,LV_STATE_DISABLED);
     }
     if (app->_purple_button_label != nullptr) {
         lv_label_set_text(app->_purple_button_label, android ? "-" : "PURPLE");
@@ -2424,6 +2433,14 @@ void HCCHome::onRestoreConfirm(lv_event_t* event){
     HCCHome::updateActionLabels(app);
     if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
 }
+void HCCHome::onRestore27Clicked(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL && app->_usb_transport.deviceInfoReady() &&
+        app->_usb_transport.requestMdmRestore(app->_restore_serial,true);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?"Restore thử: bộ restoremdm17 (chưa xác nhận iOS 27)":"Không chạy Restore: thiết bị/phiên chưa sẵn sàng");
+    HCCHome::updateActionLabels(app);
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
 void HCCHome::onCaptureConfirm(lv_event_t* event){
     auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
     const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmBackup();
@@ -2634,6 +2651,7 @@ bool HCCHome::close(void)
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     _scan_status_label = nullptr;
@@ -2727,6 +2745,7 @@ void HCCHome::showUSB()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
 
@@ -2804,16 +2823,17 @@ void HCCHome::showUSB()
         "RECOVERY",
         "MDM",
         "PURPLE",
-        "REBOOT"
+        "REBOOT",
+        "RESTORE iOS27\nTHỬ (bộ 17)"
     };
 
     const int action_x[] = {
-        28, 274, 520, 766
+        28, 224, 420, 616, 812
     };
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         lv_obj_t *button = lv_btn_create(_screen);
-        lv_obj_set_size(button, 220, 72);
+        lv_obj_set_size(button, 174, 72);
         lv_obj_align(
             button,
             LV_ALIGN_TOP_LEFT,
@@ -2839,9 +2859,13 @@ void HCCHome::showUSB()
             lv_obj_add_event_cb(button, onBootloaderClicked, LV_EVENT_LONG_PRESSED, this);
         } else if (i == 2) {
             _purple_button_label = label;
-        } else {
+        } else if(i==3) {
             _reboot_button_label = label;
             lv_obj_add_event_cb(button, onRebootClicked, LV_EVENT_CLICKED, this);
+        } else {
+            _restore27_button_label=label;
+            lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_add_event_cb(button,onRestore27Clicked,LV_EVENT_SHORT_CLICKED,this);
         }
     }
     _recovery_confirm_pending = false;
@@ -3663,6 +3687,7 @@ void HCCHome::showEeprom()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     _eeprom_status_label = nullptr;
@@ -6297,6 +6322,7 @@ void HCCHome::detachUsbLabels()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
 }

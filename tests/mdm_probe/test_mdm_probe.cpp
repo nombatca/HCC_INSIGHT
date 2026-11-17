@@ -481,6 +481,26 @@ int main() {
     }
     std::puts("PASS: unconsumed RX remains bounded and overflow never overwrites ring data");
 
+    {
+        HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
+        t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
+        for(unsigned i=0;i<2000&&t.mdmState()!=State::Ready;++i){++now_ms;assert(t.pollMdmProbe());}
+        std::strcpy(t._session_udid.data(),"00008101-001234567890ABCD");
+        std::strcpy(t._session_info[HCCUSBTransport::SessionInfoSerialNumber].data(),"SAMPLE17_TEST");
+        assert(!t.requestMdmRestore("WRONG_SERIAL",true)&&!t.mdmRestoreSample17());
+        // The legacy directory cannot satisfy a missing sample17 root.
+        fs::create_directories(fs::path(sd_root)/"hcc_restore/restoremdm");
+        fs::remove_all(fs::path(sd_root)/"hcc_restore/restoremdm17");
+        const auto before=tls.ssl.output.size();
+        assert(t.requestMdmRestore("SAMPLE17_TEST",true)&&t.mdmRestoreSample17());
+        assert(!t.requestMdmRestore("SAMPLE17_TEST",false)&&t.mdmRestoreSample17());
+        assert(!t.pollMdmProbe());
+        assert(t.mdmBackupState()==HCCUSBTransport::MdmBackupState::failed);
+        assert(tls.ssl.output.size()==before); // no request sent for missing source
+        t.releaseMdmProbe();t._service_tls=nullptr;
+    }
+    std::puts("PASS: explicit sample17 selection binds Serial, refuses duplicate switches and never falls back to legacy SD root");
+
     for(unsigned mode=0;mode<6;++mode){
         HCCUSBTransport t;HCCUSBTransport::ServiceTlsContext tls;tls.ssl.input=handshake();
         t._service_tls=&tls;t._notification_service_ssl=true;prepare(t);
@@ -498,7 +518,7 @@ int main() {
         std::ofstream(root/profile[1].name,std::ios::binary)<<(mode==1?"metadatz":metadata);
         auto& ctx=*t._mdm_probe;
         // Dependency-injected synthetic profile; production always uses the
-        // compiled 297-entry index. Never distribute/restore these fixture bytes.
+        // compiled sample index. Never distribute/restore these fixture bytes.
         ctx.operation.emplace(ctx.link,ctx.op_scratch,sizeof(ctx.op_scratch),ctx.op_output,sizeof(ctx.op_output),
             HCCBackupContentsBuffers{ctx.list_entries,ctx.kListEntries,ctx.list_offsets,bb::contents_object_count(ctx.kListEntries),&ctx.list_scratch},profile,2);
         const auto before=tls.ssl.output.size();assert(t.requestMdmRestore("RESTORE_TEST")&&t.mdmRestoreMode());
@@ -559,5 +579,5 @@ int main() {
     std::puts("PASS: fast Restore starts without full scan; exact 70KB+metadata, requested-file CRC failures, TLS retries, terminal result, cancel/close/timeout");
     fs::remove_all(sd_root);
     assert(allocations == 0);
-    std::puts("11 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
+    std::puts("12 firmware-glue groups passed using host SDK/I/O stubs; not a firmware build.");
 }

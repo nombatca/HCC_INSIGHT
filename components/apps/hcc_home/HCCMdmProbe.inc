@@ -21,17 +21,18 @@ struct HCCUSBTransport::MdmProbeContext {
 };
 
 bool HCCUSBTransport::requestMdmBackup(){return requestMdmOperation(false);}
-bool HCCUSBTransport::requestMdmRestore(const char* serial){
+bool HCCUSBTransport::requestMdmRestore(const char* serial,bool sample17){
     if(!serial||!serial[0]||strcmp(serial,serialNumber())!=0)return false;
-    return requestMdmOperation(true);
+    return requestMdmOperation(true,sample17);
 }
-bool HCCUSBTransport::requestMdmOperation(bool restore)
+bool HCCUSBTransport::requestMdmOperation(bool restore,bool sample17)
 {
     // One operation per negotiated stream. A terminal stream must be reconnected.
     if (_mdm_state.load() != MdmState::Ready) return false;
     auto expected = MdmBackupState::none;
     if (!_mdm_backup_state.compare_exchange_strong(expected, MdmBackupState::running)) return false;
     _mdm_restore_mode.store(restore);
+    _mdm_restore_sample17.store(restore&&sample17);
     _mdm_backup_files.store(0);
     _mdm_backup_requested.store(true);
     if (_mdm_state.load() != MdmState::Ready) {
@@ -139,6 +140,7 @@ bool HCCUSBTransport::beginMdmProbe()
     _mdm_probe = new (storage) MdmProbeContext();
     _mdm_backup_requested.store(false);
     _mdm_restore_mode.store(false);
+    _mdm_restore_sample17.store(false);
     _mdm_backup_files.store(0);
     _mdm_backup_state.store(MdmBackupState::none);
     if (_mdm_probe->link.start(mdmNowMs()) != hcc::backup::LinkError::ok) return false;
@@ -240,6 +242,7 @@ bool HCCUSBTransport::pollMdmProbe()
                 HCCBackupConfig config; // 1 MiB min free, <=1024 files; bounded P4 capture
                 // Real P4 transfer was still progressing at the old 10-minute cap.
                 config.sample_restore=_mdm_restore_mode.load();
+                config.restore_sample17=_mdm_restore_sample17.load();
                 config.use_sd_capacity=!config.sample_restore; // SD free minus reserved filesystem headroom
                 config.total_timeout_ms=60ULL*60*1000; // 1 hour; idle remains 60 seconds
                 const auto started = op.start(std::string_view(udid, ulen), mdmNowMs(), config);

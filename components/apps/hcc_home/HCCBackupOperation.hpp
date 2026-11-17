@@ -13,6 +13,7 @@ struct HCCBackupConfig {
     std::uint64_t minimum_free_bytes=1048576;
     std::uint64_t idle_timeout_ms=60000,total_timeout_ms=600000;
     bool force_full=false;
+    bool restore_sample17=false; // Explicit experimental selection; no automatic OS claim.
     bool sample_restore=false; // Explicit confirmation required by caller/UI.
     bool use_sd_capacity=false;
     std::uint64_t reserve_bytes=64ULL*1024*1024;

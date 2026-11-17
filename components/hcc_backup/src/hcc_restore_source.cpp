@@ -108,7 +108,9 @@ bool RestoreSampleSource::relative(std::string_view path,std::string_view& out) 
     out=path;return true;
 }
 const RestoreSampleEntry* RestoreSampleSource::entry(std::string_view path) const {
+    for(std::size_t i=0;i<count_;++i)if(path==entries_[i].name)return &entries_[i];
     if(path=="Info.plist")path="info.plist";
+    else if(path=="info.plist")path="Info.plist";
     for(std::size_t i=0;i<count_;++i){
         const std::string_view name(entries_[i].name);
         if(path==name)return &entries_[i];

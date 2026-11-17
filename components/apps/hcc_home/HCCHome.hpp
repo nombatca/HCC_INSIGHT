@@ -100,6 +100,8 @@ private:
     static void onMdmClicked(lv_event_t *event);
     void showRestoreConfirm();
     static void onRestoreConfirm(lv_event_t*);
+    static void onRestore27Clicked(lv_event_t*);
+    lv_obj_t* _restore27_button_label=nullptr;
     static void onRestoreCancel(lv_event_t*);
     static void onRestoreDialogDeleted(lv_event_t*);
     static void onCaptureConfirm(lv_event_t*);

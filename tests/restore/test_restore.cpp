@@ -1,4 +1,5 @@
 #include "hcc_restore_source.hpp"
+#include "hcc_restore_sample17_index.hpp"
 #include "hcc_backup_start.hpp"
 #include <array>
 #include <cassert>
@@ -13,19 +14,38 @@ static constexpr char id[]="00008101-001234567890ABCD";
 static void write(const fs::path& p,const std::string& s){std::ofstream f(p,std::ios::binary);f<<s;assert(f.good());}
 static bb::Error verify(bb::RestoreSampleSource& s){std::uint8_t scratch[17];for(unsigned i=0;i<10000;++i){auto e=s.preflight(scratch,sizeof(scratch));if(e!=bb::Error::would_block)return e;}std::abort();}
 int main(int argc,char** argv){
-    if(argc==2){
-        bb::RestoreSampleSource source;assert(source.begin(argv[1],id)==bb::Error::ok);
+    if(argc==2||argc==3){
+        const bool newer=argc==3;
+        const auto* entries=newer?bb::kRestoreSample17:bb::kRestoreSample;
+        const auto entry_count=newer?bb::kRestoreSample17Count:bb::kRestoreSampleCount;
+        bb::RestoreSampleSource source(entries,entry_count);assert(source.begin(argv[1],id)==bb::Error::ok);
         std::array<std::uint8_t,32768> scratch{};bb::Error e=bb::Error::would_block;
         for(unsigned i=0;i<10000&&e==bb::Error::would_block;++i)e=source.preflight(scratch.data(),scratch.size());
-        assert(e==bb::Error::ok&&source.checked()==bb::kRestoreSampleCount);
+        assert(e==bb::Error::ok&&source.checked()==entry_count);
         std::uint64_t total=0;
-        for(const auto& item:bb::kRestoreSample){
+        for(std::size_t i=0;i<entry_count;++i){
+            const auto& item=entries[i];
             bb::RestoreFileSource reader;bool found=false;assert(source.lookup(std::string(id)+"/"+item.name,reader,found)==bb::Error::ok&&found);
             std::uint64_t count=0;
             for(;;){auto r=reader.source().read(reader.source().context,scratch.data(),scratch.size());assert(r.error==bb::Error::ok);count+=r.bytes;if(r.eof)break;}
             assert(count==item.size);total+=count;
         }
-        assert(total==12299936);std::puts("PASS: original 297-file encrypted sample preflight and exact streaming CRC checks; no device contacted");return 0;
+        assert(total==(newer?21074143:12299936));std::puts("PASS: supplied encrypted sample full preflight and exact streaming CRC checks; no device contacted");return 0;
+    }
+    // New sample uses capitalized Info.plist; legacy uses lowercase.
+    {
+        char temp17[]="/tmp/hcc-restore17-test-XXXXXX";assert(mkdtemp(temp17));
+        const std::string meta="sample17";
+        const bb::RestoreSampleEntry entries[]={{"Info.plist",8,bb::restore_crc32(0,reinterpret_cast<const std::uint8_t*>(meta.data()),meta.size())}};
+        write(fs::path(temp17)/"Info.plist",meta);
+        bb::RestoreSampleSource sample(entries,1);assert(sample.begin(temp17,id,false)==bb::Error::ok);
+        bb::RestoreFileSource reader;bool found=false;
+        for(const auto* name:{"Info.plist","info.plist"}){
+            assert(sample.lookup(name,reader,found)==bb::Error::ok&&found);
+            std::uint8_t bytes[8];auto r=reader.source().read(reader.source().context,bytes,sizeof(bytes));
+            assert(r.error==bb::Error::ok&&r.eof&&r.bytes==8&&std::memcmp(bytes,meta.data(),8)==0);
+        }
+        reader.reset();fs::remove_all(temp17);
     }
     const std::string payload(70000,'x');const std::string meta="metadata";
     const bb::RestoreSampleEntry index[]={

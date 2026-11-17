@@ -118,8 +118,9 @@ public:
     // Bounded by the coordinator's prototype caps (partial backup).
     enum class MdmBackupState { none, running, done, failed };
     bool requestMdmBackup();
-    bool requestMdmRestore(const char* confirmed_serial);
+    bool requestMdmRestore(const char* confirmed_serial, bool sample17=false);
     bool mdmRestoreMode() const {return _mdm_restore_mode.load();}
+    bool mdmRestoreSample17() const {return _mdm_restore_sample17.load();}
     MdmBackupState mdmBackupState() const { return _mdm_backup_state.load(); }
     uint32_t mdmBackupFiles() const { return _mdm_backup_files.load(); }
     const char *mdmBackupStatusText();
@@ -265,7 +266,7 @@ private:
     bool beginMdmProbe();
     bool pollMdmProbe();
     bool pumpMdmServiceRx();
-    bool requestMdmOperation(bool restore);
+    bool requestMdmOperation(bool restore, bool sample17=false);
     void finishMdmBackup(bool success);
     void pollMdmBackupWatchdog();
     void releaseMdmProbe();
@@ -402,6 +403,7 @@ private:
     std::atomic<MdmState> _mdm_state{MdmState::Idle};
     std::atomic<bool> _mdm_backup_requested{false};
     std::atomic<bool> _mdm_restore_mode{false};
+    std::atomic<bool> _mdm_restore_sample17{false};
     std::atomic<MdmBackupState> _mdm_backup_state{MdmBackupState::none};
     std::atomic<uint32_t> _mdm_backup_files{0};
     char _mdm_backup_text[96]{};

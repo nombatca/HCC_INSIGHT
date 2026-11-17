@@ -124,3 +124,36 @@ confirms that Restore session's completion, not persistent MDM removal. The
 preceding wait log showed elapsed_ms=228717; it is not an exact final duration.
 At the user's request, subsequent firmware skips the full SD preflight; the same
 SD sample remains compatible. Fast-start duration still requires a hardware run.
+
+
+## Separate sample17 experiment button (iOS 27 trial)
+
+The USB screen now has five action buttons. First use MDM to negotiate the service and wait for complete device information / ACTIVE MDM. The separate **RESTORE iOS27 / THỬ (bộ 17)** button selects the supplied `restoremdm17.7z` sample explicitly. It is disabled before Ready and during any operation. It uses the displayed Serial guard and one-operation-per-stream gate. Reconnect after a terminal result to run another experiment.
+
+This is a trial of the existing HCC Restore protocol with a different backup, **not an implementation or verification of 4uKey's iOS 27 algorithm**. No automatic OS-version selection is made. The old ACTIVE MDM button retains the legacy 297-file source.
+
+Extract `restoremdm17.7z` on the computer. Copy the resulting `restoremdm17` folder into `hcc_restore` at the SD root, preserving shard directories. The P4 does not decompress 7z. Expected source:
+
+```
+/sdcard/hcc_restore/restoremdm17/Info.plist
+/sdcard/hcc_restore/restoremdm17/Manifest.plist
+/sdcard/hcc_restore/restoremdm17/Manifest.db
+/sdcard/hcc_restore/restoremdm17/Status.plist
+/sdcard/hcc_restore/restoremdm17/<shard>/<hash>
+```
+
+The exact supplied archive SHA-256 is `e432e664de8080f2454e5ed88d8cbdbae1d5db3c67b878c2d173157656bd1d6f`. The immutable index contains 857 files / 21,074,143 bytes (853 blobs and four metadata files). The existing request password independently opened its keybag and produced a SQLite Manifest header. This confirms sample readability, not device compatibility. All requested files retain size / streaming CRC / EOF checks, and both Info.plist case aliases work. Full SD scanning is still skipped on P4. A missing selected root fails before request; there is no fallback to the other sample.
+
+Optional computer-side verification and staging (standard Python, no device connection):
+
+```sh
+python3 tools/prepare_restore_sample17.py "/path/extracted/restoremdm17" "/Volumes/SD_CARD"
+```
+
+This verifies all indexed sizes/CRCs before publishing the prepared folder, refuses existing destinations and leaves the legacy folder alone. No third-party backup payload is distributed in Git. Logs identify selection:
+
+```
+[HCC RESTORE] selected sample=17 files=857 root=/sdcard/hcc_restore/restoremdm17; experimental, OS compatibility unverified
+```
+
+The selected source uses the same Restore request/options as the baseline. Success still requires a terminal device ErrorCode=0; restart/disconnect does not mean success or persistent MDM removal. No hardware or iOS 27 result is claimed by host tests.

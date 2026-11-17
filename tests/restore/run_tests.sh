@@ -16,4 +16,4 @@ assert r['Options']==dict(Password='a',RestoreDontCopyBackup=True,RemoveItemsNot
 print('PASS: independent plistlib verifies exact experimental request')
 PY
 
-python3 -m unittest discover -s . -p 'test_prepare.py' -v
+python3 -m unittest discover -s . -p 'test_prepare*.py' -v
