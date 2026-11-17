@@ -1,6 +1,9 @@
 #include "HCCHome.hpp"
 #include "hcc_cores.h"
 #include "HCCUsbDisk.hpp"
+#include "HCCSdFiles.hpp"
+#include "HCCSdFilesView.hpp"
+#include "HCCBackupSdSelfTest.hpp"
 #include "setting/hcc_clock.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "driver/i2c_master.h"
@@ -855,6 +858,7 @@ void HCCHome::detachScreenObjects()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     // Detach EEPROM labels before the old screen is cleaned so a pending
@@ -914,6 +918,7 @@ void HCCHome::detachScreenObjects()
     _ud_info = nullptr;
     _ud_btn = nullptr;
     _ud_btn_label = nullptr;
+    _ud_files_btn = nullptr;
 }
 
 void HCCHome::showHome()
@@ -1154,6 +1159,10 @@ void HCCHome::usbClientTask(void *arg)
 
     app->_usb_client_registered = true;
 
+    auto last_mdm_state = app->_usb_transport.mdmState();
+    auto last_sd_test = HCCBackupSdSelfTest::result();
+    auto last_backup_state = app->_usb_transport.mdmBackupState();
+    std::uint32_t last_backup_files = 0;
     while (!app->_usb_shutdown_requested) {
         // Submit the deferred SETUP before choosing this iteration's event wait.
         // This guarantees a newly submitted SETUP selects the finite diagnostic
@@ -1165,12 +1174,26 @@ void HCCHome::usbClientTask(void *arg)
             printf("[HCC USB] Deferred USBMUX TCP submit failed\n");
         }
 
+        const auto mdm_state = app->_usb_transport.mdmState();
+        const auto sd_test = HCCBackupSdSelfTest::result();
+        const auto backup_state = app->_usb_transport.mdmBackupState();
+        const std::uint32_t backup_files = app->_usb_transport.mdmBackupFiles();
+        if (mdm_state != last_mdm_state || sd_test != last_sd_test ||
+            backup_state != last_backup_state || backup_files != last_backup_files) {
+            last_mdm_state = mdm_state;
+            last_sd_test = sd_test;
+            last_backup_state = backup_state;
+            last_backup_files = backup_files;
+            lv_async_call(HCCHome::applyUSBResult, app);
+        }
         const bool dwc_delayed_snapshot_pending = app->_usb_transport.needsDwcDelayedSnapshot();
         const bool pair_time_wait = !dwc_delayed_snapshot_pending && app->_usb_transport.preparePairTimeWait();
         const bool credential_work_wait = !dwc_delayed_snapshot_pending && !pair_time_wait &&
                                           (app->_pair_credentials.hasDeferredWork() ||
                                            app->_usb_transport.serviceRetryPending() ||
-                                           app->_adb.needsPoll());
+                                           app->_adb.needsPoll() ||
+                                           app->_usb_transport.mdmPollingPending() ||
+                                           HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::running);
         const TickType_t event_timeout = dwc_delayed_snapshot_pending ? pdMS_TO_TICKS(250) :
                                          (pair_time_wait ? pdMS_TO_TICKS(1000) :
                                           (credential_work_wait ? pdMS_TO_TICKS(250) : portMAX_DELAY));
@@ -1469,7 +1492,16 @@ void HCCHome::applyUSBResult(void *arg)
     }
 
     if (app->_usb_status_label != nullptr) {
-        lv_label_set_text(app->_usb_status_label, app->_usb_status);
+        const bool apple = app->_usb_mode == USBMode::NORMAL || app->_usb_mode == USBMode::NO_DEVICE;
+        const char *status = app->_usb_status;
+        if (apple && app->_usb_transport.mdmState() != HCCUSBTransport::MdmState::Idle)
+            status = app->_usb_transport.mdmStatusText();
+        if (apple && HCCBackupSdSelfTest::result() != HCCBackupSdSelfTest::Result::idle)
+            status = HCCBackupSdSelfTest::statusText();
+        // A running/finished backup supersedes the generic MDM/self-test line.
+        if (apple && app->_usb_transport.mdmBackupState() != HCCUSBTransport::MdmBackupState::none)
+            status = app->_usb_transport.mdmBackupStatusText();
+        lv_label_set_text(app->_usb_status_label, status);
     }
 
     if (app->_usb_mode_label != nullptr) {
@@ -1549,11 +1581,43 @@ void HCCHome::updateActionLabels(HCCHome *app)
                           app->_usb_mode == USBMode::RECOVERY ? "EXIT REC" : "RECOVERY");
     }
 
-    // Android repurposes the DFU slot as "reboot to bootloader"; PURPLE has no Android meaning.
+    // Android repurposes the MDM slot as "reboot to bootloader"; PURPLE has no Android meaning.
     const bool android = app->_usb_mode == USBMode::ANDROID || app->_usb_mode == USBMode::ANDROID_FASTBOOT;
     if (app->_bootloader_button_label != nullptr) {
-        lv_label_set_text(app->_bootloader_button_label,
-                          !android ? "DFU" : (app->_usb_mode == USBMode::ANDROID ? "FASTBOOT" : "-"));
+        const auto mdm=app->_usb_transport.mdmState();
+        const auto operation=app->_usb_transport.mdmBackupState();
+        const bool ready=app->_usb_mode==USBMode::NORMAL &&
+            mdm==HCCUSBTransport::MdmState::Ready &&
+            app->_usb_transport.deviceInfoReady() &&
+            operation==HCCUSBTransport::MdmBackupState::none &&
+            app->_usb_transport.serialNumber()[0];
+        // Bind the ACTIVE MDM action to the Serial shown with this ready state.
+        // The transport rechecks it when clicked, so a replaced device is refused.
+        if(ready&&!app->_restore_dialog)snprintf(app->_restore_serial,sizeof(app->_restore_serial),"%s",app->_usb_transport.serialNumber());
+        else if(!app->_restore_dialog)app->_restore_serial[0]=0;
+        const char* label="MDM";bool disabled=false;
+        if(android)label=app->_usb_mode==USBMode::ANDROID?"FASTBOOT":"-";
+        else if(operation==HCCUSBTransport::MdmBackupState::running){
+            label=app->_usb_transport.mdmRestoreMode()?"ACTIVE MDM\nĐang chạy":"BACKUP\nĐang nhận";disabled=true;
+        }else if(mdm==HCCUSBTransport::MdmState::Armed){label="MDM\nChờ kết nối";disabled=true;}
+        else if(mdm==HCCUSBTransport::MdmState::Opening||mdm==HCCUSBTransport::MdmState::Negotiating){label="MDM\nĐang kiểm tra";disabled=true;}
+        else if(mdm==HCCUSBTransport::MdmState::Ready){
+            if(operation==HCCUSBTransport::MdmBackupState::done){label=app->_usb_transport.mdmRestoreMode()?"RESTORE\nHoàn tất":"BACKUP\nHoàn tất";disabled=true;}
+            else if(ready)label="ACTIVE MDM";
+            else{label="MDM\nChờ thông tin";disabled=true;}
+        }
+        lv_label_set_text(app->_bootloader_button_label,label);
+        auto* button=lv_obj_get_parent(app->_bootloader_button_label);
+        if(disabled)lv_obj_add_state(button,LV_STATE_DISABLED);
+        else lv_obj_clear_state(button,LV_STATE_DISABLED);
+    }
+    if(app->_restore27_button_label){
+        const bool ready=app->_usb_mode==USBMode::NORMAL && app->_usb_transport.mdmState()==HCCUSBTransport::MdmState::Ready &&
+            app->_usb_transport.deviceInfoReady() && app->_usb_transport.serialNumber()[0] &&
+            app->_usb_transport.mdmBackupState()==HCCUSBTransport::MdmBackupState::none;
+        lv_label_set_text(app->_restore27_button_label,app->_usb_transport.mdmRestoreSample17()&&app->_usb_transport.mdmBackupState()==HCCUSBTransport::MdmBackupState::running?"RESTORE iOS27\nĐang chạy":"RESTORE iOS27\nTHỬ (bộ 17)");
+        auto* button=lv_obj_get_parent(app->_restore27_button_label);
+        if(ready)lv_obj_clear_state(button,LV_STATE_DISABLED);else lv_obj_add_state(button,LV_STATE_DISABLED);
     }
     if (app->_purple_button_label != nullptr) {
         lv_label_set_text(app->_purple_button_label, android ? "-" : "PURPLE");
@@ -2332,7 +2396,16 @@ void HCCHome::onBootloaderClicked(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app != nullptr) {
-        HCCHome::requestAndroidAction(app, AndroidAction::Bootloader);
+        if (lv_event_get_code(event) == LV_EVENT_LONG_PRESSED) {
+            if (app->_usb_mode == USBMode::NORMAL && app->_usb_transport.mdmState() == HCCUSBTransport::MdmState::Ready) {
+                app->showRestoreConfirm();
+                if (app->_usb_client_registered && app->_usb_client) usb_host_client_unblock(app->_usb_client);
+            }
+            return;
+        }
+        if (!HCCHome::requestAndroidAction(app, AndroidAction::Bootloader)) {
+            HCCHome::onMdmClicked(event);
+        }
     }
 }
 
@@ -2341,6 +2414,93 @@ void HCCHome::onRebootClicked(lv_event_t *event)
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app != nullptr) {
         HCCHome::requestAndroidAction(app, AndroidAction::Reboot);
+    }
+}
+
+void HCCHome::onRestoreDialogDeleted(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));
+    if(app&&app->_restore_dialog==lv_event_get_target(event))app->_restore_dialog=nullptr;
+}
+void HCCHome::onRestoreCancel(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));
+    if(app&&app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+}
+void HCCHome::onRestoreConfirm(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmRestore(app->_restore_serial);
+    if(app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?app->_usb_transport.mdmBackupStatusText():"Không chạy Restore: thiết bị/phiên đã thay đổi");
+    HCCHome::updateActionLabels(app);
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
+void HCCHome::onRestore27Clicked(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL && app->_usb_transport.deviceInfoReady() &&
+        app->_usb_transport.requestMdmRestore(app->_restore_serial,true);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?"Restore thử: bộ restoremdm17 (chưa xác nhận iOS 27)":"Không chạy Restore: thiết bị/phiên chưa sẵn sàng");
+    HCCHome::updateActionLabels(app);
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
+void HCCHome::onCaptureConfirm(lv_event_t* event){
+    auto* app=static_cast<HCCHome*>(lv_event_get_user_data(event));if(!app)return;
+    const bool sent=app->_usb_mode==USBMode::NORMAL&&app->_usb_transport.requestMdmBackup();
+    if(app->_restore_dialog)lv_obj_del(app->_restore_dialog);
+    if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,sent?app->_usb_transport.mdmBackupStatusText():"Không chạy Backup: phiên không sẵn sàng");
+    if(sent&&app->_usb_client_registered&&app->_usb_client)usb_host_client_unblock(app->_usb_client);
+}
+void HCCHome::showRestoreConfirm(){
+    if(_restore_dialog||!_screen||_usb_transport.mdmBackupState()!=HCCUSBTransport::MdmBackupState::none)return;
+    snprintf(_restore_serial,sizeof(_restore_serial),"%s",_usb_transport.serialNumber());
+    _restore_dialog=lv_obj_create(_screen);lv_obj_set_size(_restore_dialog,LV_PCT(100),LV_PCT(100));lv_obj_center(_restore_dialog);
+    lv_obj_set_style_bg_color(_restore_dialog,lv_color_hex(HCC_BG),0);lv_obj_clear_flag(_restore_dialog,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(_restore_dialog,onRestoreDialogDeleted,LV_EVENT_DELETE,this);
+    auto* title=lv_label_create(_restore_dialog);lv_obj_set_style_text_font(title,&lv_font_be_vietnam_22,0);
+    lv_label_set_text(title,"RESTORE THỬ TỪ BACKUP MẪU");lv_obj_align(title,LV_ALIGN_TOP_MID,0,15);
+    auto* text=lv_label_create(_restore_dialog);lv_obj_set_width(text,LV_PCT(92));lv_obj_set_style_text_font(text,&lv_font_be_vietnam_18,0);
+    char details[850];snprintf(details,sizeof(details),
+        "Thiết bị: %s\nNguồn SD: /hcc_restore/restoremdm\n\nRestore có thể thay đổi hoặc ghi đè dữ liệu/cài đặt iPad.\nChỉ thử trên máy đã sao lưu riêng. Chưa xác nhận tương thích.\n\nHCC gửi ngay, kiểm tra tệp khi iPad yêu cầu.\nMáy có thể tự khởi động lại. Không đồng nghĩa đã gỡ MDM.\n\nChọn NHẬN BACKUP để lưu dữ liệu vào SD như trước.",_restore_serial[0]?_restore_serial:"chưa có Serial - không thể Restore");
+    lv_label_set_text(text,details);lv_obj_align(text,LV_ALIGN_TOP_LEFT,20,60);
+    auto make=[this](const char* name,lv_event_cb_t callback,int x,int width){
+        auto* button=lv_btn_create(_restore_dialog);lv_obj_set_size(button,width,58);lv_obj_align(button,LV_ALIGN_BOTTOM_LEFT,x,-12);
+        lv_obj_add_event_cb(button,callback,LV_EVENT_CLICKED,this);auto* label=lv_label_create(button);
+        lv_obj_set_style_text_font(label,&lv_font_be_vietnam_18,0);lv_label_set_text(label,name);lv_obj_center(label);return button;
+    };
+    make("HỦY",onRestoreCancel,20,140);make("NHẬN BACKUP",onCaptureConfirm,190,240);
+    auto* confirm=make("TÔI ĐỒNG Ý RESTORE THỬ",onRestoreConfirm,460,460);
+    lv_obj_set_style_bg_color(confirm,lv_color_hex(0xB03A2E),0);
+    if(!_restore_serial[0])lv_obj_add_state(confirm,LV_STATE_DISABLED);
+}
+
+void HCCHome::onMdmClicked(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr) return;
+    if(app->_usb_mode!=USBMode::NORMAL&&app->_usb_mode!=USBMode::NO_DEVICE)return;
+    const auto operation=app->_usb_transport.mdmBackupState();
+    if(operation==HCCUSBTransport::MdmBackupState::running){
+        if(app->_usb_status_label)lv_label_set_text(app->_usb_status_label,app->_usb_transport.mdmBackupStatusText());
+        return;
+    }
+    if(app->_usb_transport.mdmState()==HCCUSBTransport::MdmState::Ready){
+        if(operation==HCCUSBTransport::MdmBackupState::none&&app->_usb_transport.deviceInfoReady()&&app->_restore_serial[0]){
+            // The second short press is the user's explicit Restore action.
+            HCCHome::onRestoreConfirm(event);
+        }
+        HCCHome::updateActionLabels(app);
+        return;
+    }
+    if (HCCBackupSdSelfTest::result() == HCCBackupSdSelfTest::Result::running) {
+        if (app->_usb_status_label) lv_label_set_text(app->_usb_status_label, HCCBackupSdSelfTest::statusText());
+        return;
+    }
+    HCCBackupSdSelfTest::clear();
+    app->_usb_transport.requestMdmProbe();
+    HCCHome::updateActionLabels(app);
+    if (app->_usb_status_label != nullptr) {
+        lv_label_set_text(app->_usb_status_label, app->_usb_transport.mdmStatusText());
+    }
+    if (app->_usb_client_registered && app->_usb_client != nullptr) {
+        usb_host_client_unblock(app->_usb_client);
     }
 }
 
@@ -2491,6 +2651,7 @@ bool HCCHome::close(void)
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     _scan_status_label = nullptr;
@@ -2584,6 +2745,7 @@ void HCCHome::showUSB()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
 
@@ -2659,18 +2821,19 @@ void HCCHome::showUSB()
 
     const char *action_names[] = {
         "RECOVERY",
-        "DFU",
+        "MDM",
         "PURPLE",
-        "REBOOT"
+        "REBOOT",
+        "RESTORE iOS27\nTHỬ (bộ 17)"
     };
 
     const int action_x[] = {
-        28, 274, 520, 766
+        28, 224, 420, 616, 812
     };
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         lv_obj_t *button = lv_btn_create(_screen);
-        lv_obj_set_size(button, 220, 72);
+        lv_obj_set_size(button, 174, 72);
         lv_obj_align(
             button,
             LV_ALIGN_TOP_LEFT,
@@ -2683,19 +2846,26 @@ void HCCHome::showUSB()
         lv_obj_center(label);
         lv_obj_set_style_text_font(label, &lv_font_be_vietnam_16, 0);
 
-        // RECOVERY works for iPhone and Android; FASTBOOT (DFU slot) and REBOOT act on
-        // Android only. PURPLE remains an inert placeholder.
+        // MDM: first short press arms the probe; Ready + device info shows
+        // ACTIVE MDM, whose next short press starts Restore. Long press keeps
+        // the advanced capture/Restore dialog. Android retains FASTBOOT.
         if (i == 0) {
             _recovery_button_label = label;
             lv_obj_add_event_cb(button, onRecoveryClicked, LV_EVENT_CLICKED, this);
         } else if (i == 1) {
             _bootloader_button_label = label;
-            lv_obj_add_event_cb(button, onBootloaderClicked, LV_EVENT_CLICKED, this);
+            lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_add_event_cb(button, onBootloaderClicked, LV_EVENT_SHORT_CLICKED, this);
+            lv_obj_add_event_cb(button, onBootloaderClicked, LV_EVENT_LONG_PRESSED, this);
         } else if (i == 2) {
             _purple_button_label = label;
-        } else {
+        } else if(i==3) {
             _reboot_button_label = label;
             lv_obj_add_event_cb(button, onRebootClicked, LV_EVENT_CLICKED, this);
+        } else {
+            _restore27_button_label=label;
+            lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_add_event_cb(button,onRestore27Clicked,LV_EVENT_SHORT_CLICKED,this);
         }
     }
     _recovery_confirm_pending = false;
@@ -3517,6 +3687,7 @@ void HCCHome::showEeprom()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
     _eeprom_status_label = nullptr;
@@ -5599,10 +5770,10 @@ void HCCHome::showUsbDisk()
     lv_label_set_long_mode(guide, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(guide, 940);
     lv_label_set_text(guide,
-                      "Bật để máy tính thấy thẻ SD như một ổ USB (chép nhạc vào thư mục music, lấy case trong kb/v1/cases...).\n"
-                      "1. Bấm BẬT USB DISK.  2. Cắm cáp vào cổng USB của chip ESP32-P4 (KHÔNG phải cổng UART dùng để flash/monitor).\n"
-                      "3. Chép xong: EJECT ổ đĩa trên máy tính rồi mới bấm TẮT USB DISK.\n"
-                      "Trong lúc bật: board không dùng được thẻ SD. Cổng UART vẫn monitor bình thường.");
+                      "Bật USB DISK để chép dữ liệu giữa thẻ SD và máy tính.\n"
+                      "Cắm cáp vào cổng USB của ESP32-P4, không phải cổng UART flash/monitor.\n"
+                      "Chép xong: EJECT trên máy tính rồi mới bấm TẮT USB DISK.\n"
+                      "Khi USB DISK đã tắt, bấm QUẢN LÝ TỆP để xem và xóa dữ liệu trực tiếp trên thẻ.");
     lv_obj_align(guide, LV_ALIGN_TOP_LEFT, 28, 70);
     lv_obj_set_style_text_color(guide, lv_color_hex(0xB8C5CF), 0);
     lv_obj_set_style_text_font(guide, &lv_font_be_vietnam_16, 0);
@@ -5626,6 +5797,17 @@ void HCCHome::showUsbDisk()
     _ud_btn_label = lv_label_create(_ud_btn);
     lv_obj_center(_ud_btn_label);
     lv_obj_set_style_text_font(_ud_btn_label, &lv_font_be_vietnam_18, 0);
+
+    _ud_files_btn = lv_btn_create(_screen);
+    lv_obj_set_size(_ud_files_btn, 300, 64);
+    lv_obj_align(_ud_files_btn, LV_ALIGN_TOP_LEFT, 350, 320);
+    lv_obj_set_style_radius(_ud_files_btn, 12, 0);
+    lv_obj_set_style_bg_color(_ud_files_btn, lv_color_hex(0x2478D0), 0);
+    lv_obj_add_event_cb(_ud_files_btn, onSdFilesClicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *files_label = lv_label_create(_ud_files_btn);
+    lv_label_set_text(files_label, "QUẢN LÝ TỆP");
+    lv_obj_set_style_text_font(files_label, &lv_font_be_vietnam_18, 0);
+    lv_obj_center(files_label);
 
     lv_obj_t *back = lv_btn_create(_screen);
     lv_obj_set_size(back, 160, 52);
@@ -5671,14 +5853,34 @@ void HCCHome::refreshUsbDisk()
     const bool busy = st == State::Starting || st == State::Stopping;
     lv_label_set_text(_ud_btn_label, busy ? "ĐANG XỬ LÝ..." : (on ? "TẮT USB DISK" : "BẬT USB DISK"));
     lv_obj_set_style_bg_color(_ud_btn, lv_color_hex(on ? 0xC0392B : 0x2478D0), 0);
-    if (busy) lv_obj_add_state(_ud_btn, LV_STATE_DISABLED);
+    if (busy || HCCSdFiles::busy()) lv_obj_add_state(_ud_btn, LV_STATE_DISABLED);
     else lv_obj_clear_state(_ud_btn, LV_STATE_DISABLED);
+    if (_ud_files_btn) {
+        if (st != State::Off || HCCSdFiles::busy()) lv_obj_add_state(_ud_files_btn, LV_STATE_DISABLED);
+        else lv_obj_clear_state(_ud_files_btn, LV_STATE_DISABLED);
+    }
+}
+
+void HCCHome::onSdFilesClicked(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (!app || HCCUsbDisk::state() != HCCUsbDisk::State::Off || HCCSdFiles::busy()) return;
+    app->detachScreenObjects();
+    lv_obj_clean(app->_screen);
+    HCCSdFilesView::show(app->_screen, onSdFilesBack, app);
+}
+
+void HCCHome::onSdFilesBack(lv_event_t *event)
+{
+    auto *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app) app->showUsbDisk();
 }
 
 void HCCHome::onUsbDiskToggle(lv_event_t *event)
 {
     HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
     if (app == nullptr) return;
+    if (HCCSdFiles::busy()) return;
     using HCCUsbDisk::State;
     const State st = HCCUsbDisk::state();
     if (st == State::Ready || st == State::Connected || st == State::Error) {
@@ -6120,6 +6322,7 @@ void HCCHome::detachUsbLabels()
     _usb_mode_label = nullptr;
     _recovery_button_label = nullptr;
     _bootloader_button_label = nullptr;
+    _restore27_button_label = nullptr;
     _purple_button_label = nullptr;
     _reboot_button_label = nullptr;
 }

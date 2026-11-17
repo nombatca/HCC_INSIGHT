@@ -42,6 +42,9 @@ sdkconfig.old
 *.bin
 *.uf2
 *.hex
+__pycache__/
+*.py[cod]
+/dist/
 
 # Root development copies - canonical HCC sources are under components/apps/hcc_home/
 /HCCHome.cpp
