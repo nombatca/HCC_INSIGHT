@@ -88,42 +88,42 @@ Error inspect_file_frame(const std::uint8_t* b, std::size_t n, FileFrameView& v)
 }
 
 BlobSender::BlobSender(std::uint8_t* b, std::size_t n) : scratch_(b), capacity_(n) {}
-Error BlobSender::fail(Error e) { state_ = State::failed; return error_ = e; }
+Error BlobSender::fail(Error e,const char* origin) { error_origin_=origin;state_ = State::failed; return error_ = e; }
 Error BlobSender::start(Source s) {
     if (state_ != State::idle && state_ != State::done && state_ != State::failed) return Error::busy;
     if (!scratch_ || !capacity_ || capacity_ > kObservedChunkSize || !s.read) return Error::invalid_argument;
     source_ = s; writer_.reset(); state_ = State::fill;
-    error_ = Error::ok; completed_ = 0; pending_size_ = 0; eof_after_data_ = false;
+    error_ = Error::ok; error_origin_="none"; completed_ = 0; pending_size_ = 0; eof_after_data_ = false;
     return Error::ok;
 }
 Error BlobSender::pump(Sink sink) {
     if (state_ == State::idle) return Error::invalid_argument;
     if (state_ == State::failed) return error_;
-    if (!sink.write) return fail(Error::invalid_argument);
+    if (!sink.write) return fail(Error::invalid_argument,"sender_argument");
     for (;;) {
         if (state_ == State::done) return Error::ok;
         if (state_ == State::fill) {
             const auto r = source_.read(source_.context, scratch_, capacity_);
-            if (r.bytes > capacity_) return fail(Error::io_error);
+            if (r.bytes > capacity_) return fail(Error::io_error,"source_read");
             if (r.error == Error::would_block) {
-                if (r.bytes || r.eof) return fail(Error::io_error);
+                if (r.bytes || r.eof) return fail(Error::io_error,"source_read");
                 return Error::would_block;
             }
-            if (r.error != Error::ok) return fail(r.error);
-            if (!r.bytes && !r.eof) return fail(Error::no_progress);
+            if (r.error != Error::ok) return fail(r.error,"source_read");
+            if (!r.bytes && !r.eof) return fail(Error::no_progress,"source_read");
             pending_size_ = r.bytes; eof_after_data_ = r.eof;
             const auto e = r.bytes ? writer_.begin_data(scratch_, r.bytes) : writer_.begin_file_end();
-            if (e != Error::ok) return fail(e);
+            if (e != Error::ok) return fail(e,"frame_prepare");
             state_ = r.bytes ? State::data : State::end;
         }
         const auto e = writer_.pump(sink);
         if (e == Error::would_block) return e;
-        if (e != Error::ok) return fail(e);
+        if (e != Error::ok) return fail(e,"sink_write");
         if (state_ == State::end) { state_ = State::done; return Error::ok; }
         completed_ += pending_size_;
         if (eof_after_data_) {
             const auto end = writer_.begin_file_end();
-            if (end != Error::ok) return fail(end);
+            if (end != Error::ok) return fail(end,"frame_prepare");
             state_ = State::end;
         } else state_ = State::fill;
     }

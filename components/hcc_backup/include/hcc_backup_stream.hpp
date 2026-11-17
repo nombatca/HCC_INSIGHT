@@ -81,15 +81,17 @@ public:
     Error pump(Sink sink);
     bool done() const { return state_ == State::done; }
     std::uint64_t completed_payload_bytes() const { return completed_; }
+    const char* failure_origin() const {return error_origin_;}
 private:
     enum class State { idle, fill, data, end, done, failed };
-    Error fail(Error error);
+    Error fail(Error error,const char* origin);
     std::uint8_t* scratch_;
     std::size_t capacity_, pending_size_ = 0;
     Source source_{};
     FileFrameWriter writer_;
     State state_ = State::idle;
     Error error_ = Error::ok;
+    const char* error_origin_="none";
     bool eof_after_data_ = false;
     std::uint64_t completed_ = 0;
 };

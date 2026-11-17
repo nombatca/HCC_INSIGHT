@@ -47,6 +47,19 @@ int main(int argc,char** argv){
         }
         reader.reset();fs::remove_all(temp17);
     }
+    // Error diagnostics preserve the requested path and distinguish source vs sink.
+    for(bool source_failure:{true,false}){
+        std::uint8_t names[512],scratch[32];
+        bb::DownloadBatchSender sender(names,sizeof(names),scratch,sizeof(scratch));
+        bb::DownloadFile item{"Info.plist",{nullptr,[](void*,std::uint8_t*,std::size_t)->bb::SourceResult{return {0,false,bb::Error::io_error};}}};
+        assert(sender.start(&item,1)==bb::Error::ok);
+        bb::Sink sink{&source_failure,[](void* ctx,const std::uint8_t*,std::size_t n)->bb::IoResult{
+            return *static_cast<bool*>(ctx)?bb::IoResult{n,bb::IoState::ok}:bb::IoResult{0,bb::IoState::error};
+        }};
+        assert(sender.pump(sink)==bb::Error::io_error);
+        assert(sender.current_path()=="Info.plist"&&sender.completed_files()==0&&sender.current_payload_bytes()==0);
+        assert(std::strcmp(sender.failure_origin(),source_failure?"source_read":"sink_write")==0);
+    }
     const std::string payload(70000,'x');const std::string meta="metadata";
     const bb::RestoreSampleEntry index[]={
         {"ab11111111111111111111111111111111111111",static_cast<std::uint32_t>(payload.size()),bb::restore_crc32(0,reinterpret_cast<const std::uint8_t*>(payload.data()),payload.size())},

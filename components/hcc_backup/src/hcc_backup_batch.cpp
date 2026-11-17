@@ -3,7 +3,7 @@
 namespace hcc::backup {
 DownloadBatchSender::DownloadBatchSender(std::uint8_t* names,std::size_t nc,std::uint8_t* scratch,std::size_t sc)
     :names_(names),name_capacity_(nc),scratch_capacity_(sc),scratch_(scratch),blob_(scratch,sc),status_(names,nc) {}
-Error DownloadBatchSender::fail(Error e) {state_=State::failed;return error_=e;}
+Error DownloadBatchSender::fail(Error e,const char* origin) {failed_payload_bytes_=current_payload_bytes();error_origin_=origin;state_=State::failed;return error_=e;}
 // CODE_ERROR_LOCAL frame body for an absent file: one code byte + ASCII reason.
 static constexpr std::uint8_t kCodeErrorLocal=0x06;
 static constexpr char kAbsentMessage[]="No such file or directory";
@@ -61,22 +61,22 @@ Error DownloadBatchSender::pump(Sink sink,std::size_t budget) {
         if(state_==State::data) {
             const auto e=blob_.pump(bounded);
             if(e==Error::would_block) return e;
-            if(e!=Error::ok) return fail(e);
+            if(e!=Error::ok) return fail(e,blob_.failure_origin());
             ++index_;
             if(index_<count_) prepare_name();
             else {write_be32(names_,0);size_=4;sent_=0;state_=State::terminator;}
         } else if(state_==State::status) {
             const auto e=status_.pump(bounded);
             if(e==Error::would_block) return e;
-            if(e!=Error::ok) return fail(e);
+            if(e!=Error::ok) return fail(e,"status_write");
             state_=State::done;return Error::ok;
         } else {
             const auto remaining=size_-sent_;
             const auto r=bounded.write(bounded.context,names_+sent_,remaining);
-            if(r.bytes>remaining) return fail(Error::io_error);
+            if(r.bytes>remaining) return fail(Error::io_error,"sink_write");
             sent_+=r.bytes;
-            if(r.state==IoState::error) return fail(Error::io_error);
-            if(r.state==IoState::closed) return fail(Error::closed);
+            if(r.state==IoState::error) return fail(Error::io_error,"sink_write");
+            if(r.state==IoState::closed) return fail(Error::closed,"sink_write");
             if(sent_==size_) {
                 if(state_==State::name) {
                     if(files_[index_].source.read) {
@@ -97,7 +97,7 @@ Error DownloadBatchSender::pump(Sink sink,std::size_t budget) {
                 }
             }
             if(r.state==IoState::would_block) return Error::would_block;
-            if(!r.bytes) return fail(Error::no_progress);
+            if(!r.bytes) return fail(Error::no_progress,"sink_write");
         }
     }
     return Error::would_block;

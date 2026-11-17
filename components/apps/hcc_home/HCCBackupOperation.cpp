@@ -163,7 +163,15 @@ HCCBackupError HCCBackupOperation::poll(bb::Duplex io,std::uint64_t now,std::siz
     }
     if(phase_==HCCBackupPhase::downloading){
         const auto e=download_->pump({tracked.context,tracked.write},budget);
-        if(e!=bb::Error::ok&&e!=bb::Error::would_block)return fail(HCCBackupError::transfer);
+        if(e!=bb::Error::ok&&e!=bb::Error::would_block){
+            const auto path=download_->current_path();
+            const auto length=std::min<std::size_t>(path.size(),255);
+            printf("[HCC %s] DownloadFiles send failed origin=%s error=%s batch_item=%u path=%.*s%s file_payload_sent=%llu completed_batches_files=%u\n",
+                   config_.sample_restore?"RESTORE":"BACKUP",download_->failure_origin(),bb::error_name(e),
+                   static_cast<unsigned>(download_->completed_files()+1),static_cast<int>(length),path.empty()?"":path.data(),path.size()>length?"...":"",
+                   static_cast<unsigned long long>(download_->current_payload_bytes()),static_cast<unsigned>(committedFiles()));
+            return fail(HCCBackupError::transfer);
+        }
         if(download_->done()){
 #ifdef ESP_PLATFORM
             printf("[HCC %s] DownloadFiles reply complete attempted=%u; waiting for next control\n",config_.sample_restore?"RESTORE":"BACKUP",static_cast<unsigned>(download_->completed_files()));

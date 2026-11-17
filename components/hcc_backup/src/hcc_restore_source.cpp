@@ -1,6 +1,7 @@
 #include "hcc_restore_source.hpp"
 #include <algorithm>
 #include <cstring>
+#include <cerrno>
 #include <sys/stat.h>
 namespace hcc::backup {
 namespace {
@@ -57,15 +58,28 @@ SourceResult RestoreFileSource::read(void* ctx,std::uint8_t* b,std::size_t n){
     if(s.done_)return {0,true,Error::ok};
     if(!b||!n||!s.path_[0])return {0,false,Error::invalid_argument};
     if(!s.file_){
-        if(!regular(s.path_,s.remaining_))return {0,false,Error::io_error};
-        s.file_=std::fopen(s.path_,"rb");if(!s.file_)return {0,false,Error::io_error};
+        errno=0;
+        if(!regular(s.path_,s.remaining_)){
+            printf("[HCC RESTORE] source failure step=stat_type_size path=%s expected_size=%llu errno=%d\n",s.path_,static_cast<unsigned long long>(s.remaining_),errno);
+            return {0,false,Error::io_error};
+        }
+        s.file_=std::fopen(s.path_,"rb");if(!s.file_){
+            printf("[HCC RESTORE] source failure step=open path=%s errno=%d\n",s.path_,errno);
+            return {0,false,Error::io_error};
+        }
     }
     const auto take=static_cast<std::size_t>(std::min<std::uint64_t>(n,s.remaining_));
-    const auto got=std::fread(b,1,take,s.file_);s.crc_=restore_crc32(s.crc_,b,got);s.remaining_-=got;
-    if(got!=take){s.failed_=true;std::fclose(s.file_);s.file_=nullptr;return {got,false,Error::io_error};}
+    errno=0;const auto got=std::fread(b,1,take,s.file_);s.crc_=restore_crc32(s.crc_,b,got);s.remaining_-=got;
+    if(got!=take){
+        printf("[HCC RESTORE] source failure step=read path=%s wanted=%u got=%u remaining=%llu ferror=%d errno=%d\n",s.path_,static_cast<unsigned>(take),static_cast<unsigned>(got),static_cast<unsigned long long>(s.remaining_),std::ferror(s.file_),errno);
+        s.failed_=true;std::fclose(s.file_);s.file_=nullptr;return {got,false,Error::io_error};}
     if(!s.remaining_){
-        const auto extra=std::fgetc(s.file_);const bool good=extra==EOF&&!std::ferror(s.file_)&&s.crc_==s.expected_;
-        const auto closed=std::fclose(s.file_);s.file_=nullptr;s.done_=good&&closed==0;s.failed_=!s.done_;
+        errno=0;const auto extra=std::fgetc(s.file_);const auto read_error=std::ferror(s.file_);const auto read_errno=errno;
+        const bool good=extra==EOF&&!read_error&&s.crc_==s.expected_;
+        errno=0;const auto closed=std::fclose(s.file_);const auto close_errno=errno;
+        s.file_=nullptr;s.done_=good&&closed==0;s.failed_=!s.done_;
+        if(s.failed_)printf("[HCC RESTORE] source failure step=%s path=%s expected_crc=%08lx actual_crc=%08lx extra=%d ferror=%d read_errno=%d close_result=%d close_errno=%d\n",
+            extra!=EOF?"extra_data":read_error?"eof_read":s.crc_!=s.expected_?"crc":"close",s.path_,static_cast<unsigned long>(s.expected_),static_cast<unsigned long>(s.crc_),extra,read_error,read_errno,closed,close_errno);
         return {got,s.done_,s.done_?Error::ok:Error::io_error};
     }
     return {got,false,Error::ok};

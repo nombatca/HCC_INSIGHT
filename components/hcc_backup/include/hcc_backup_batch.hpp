@@ -22,9 +22,12 @@ public:
     Error pump(Sink,std::size_t max_writes=8);
     bool done() const { return state_==State::done; }
     std::size_t completed_files() const { return index_; }
+    std::string_view current_path() const {return files_&&index_<count_?files_[index_].path:std::string_view{};}
+    const char* failure_origin() const {return error_origin_;}
+    std::uint64_t current_payload_bytes() const {return state_==State::failed?failed_payload_bytes_:state_==State::data?blob_.completed_payload_bytes():0;}
 private:
     enum class State { idle,name,data,error_frame,terminator,status,done,failed };
-    Error fail(Error);
+    Error fail(Error,const char* origin="batch");
     void prepare_name();
     void prepare_error(); // builds the CODE_ERROR_LOCAL frame for an absent file
     std::uint8_t* names_;std::size_t name_capacity_,scratch_capacity_;
@@ -35,5 +38,7 @@ private:
     BlobSender blob_;
     StatusReplyWriter status_;
     State state_=State::idle;Error error_=Error::ok;
+    const char* error_origin_="none";
+    std::uint64_t failed_payload_bytes_=0;
 };
 } // namespace hcc::backup

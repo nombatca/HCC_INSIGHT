@@ -157,3 +157,8 @@ This verifies all indexed sizes/CRCs before publishing the prepared folder, refu
 ```
 
 The selected source uses the same Restore request/options as the baseline. Success still requires a terminal device ErrorCode=0; restart/disconnect does not mean success or persistent MDM removal. No hardware or iOS 27 result is claimed by host tests.
+
+
+## Diagnose a transfer stop
+
+A stop with phase=5 / reason=6 is a sender failure, not a specific device rejection. Before cleanup, the operation now logs `DownloadFiles send failed` with the bounded requested path, batch item, original error, error origin (`source_read`, `sink_write`, `status_write`, or framing), and completed payload bytes for the current blob. Source failures add `source failure` with the SD path and step (`stat_type_size`, `open`, `read`, `extra_data`, `eof_read`, `crc`, or `close`), sizes/CRC and relevant errno values. Logs are emitted on errors only; transfer bytes, checks and request options are unchanged. `completed_batches_files` still counts prior completed responses, not files applied on the device.
