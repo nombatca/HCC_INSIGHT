@@ -5039,8 +5039,12 @@ void HCCHome::openConfirmRepair()
     // Gõ tiếng Việt cho cả 2 ô.
     for (lv_obj_t *ta : {_repair_action, _rp_m_point}) HCCViText::markVietnamese(ta);
 
-    // Bàn phím lớn + Telex (ẩn cho tới khi focus 1 ô).
+    // Bàn phím Telex (ẩn cho tới khi focus 1 ô). Cao vừa phải để không che
+    // form nhập liệu: ~250/600 px, nằm dưới panel (panel kết thúc ~y312).
     _repair_kb = HCCViText::createKeyboard(_repair_dialog, nullptr);
+    lv_obj_set_size(_repair_kb, LV_PCT(100), 250);
+    lv_obj_set_style_text_font(_repair_kb, &lv_font_be_vietnam_20, 0);
+    lv_obj_align(_repair_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(_repair_kb, LV_OBJ_FLAG_HIDDEN);
 }
 
