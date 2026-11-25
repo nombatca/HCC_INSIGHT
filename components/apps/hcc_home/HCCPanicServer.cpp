@@ -19,7 +19,7 @@
 
 static const char *TAG = "PanicSrv";
 static const char *RAW_DIR = "panic/raw";
-static const char *MDNS_HOST = "hccpanic";  // -> hccpanic.local
+static const char *MDNS_HOST = "panic";  // -> panic.local
 static constexpr int MAX_UPLOAD = 2 * 1024 * 1024;  // trần upload (đủ cho ảnh panic)
 
 static httpd_handle_t s_server = nullptr;
@@ -109,7 +109,7 @@ static void onIpEvent(void *, esp_event_base_t, int32_t id, void *data)
     }
 }
 
-// Khởi tạo mDNS để truy cập qua http://hccpanic.local:<port>
+// Khởi tạo mDNS để truy cập qua http://panic.local:<port>
 static void startMdns(uint16_t port)
 {
     if (s_mdns_started) return;

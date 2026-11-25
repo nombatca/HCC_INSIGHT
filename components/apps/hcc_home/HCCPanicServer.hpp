@@ -16,7 +16,7 @@ public:
     // Lấy URL theo IP (vd "http://192.168.1.20:8080"). Trả false nếu chưa có IP.
     static bool deviceUrl(char *out, size_t out_size);
 
-    // URL theo tên mDNS: "http://hccpanic.local:<port>".
+    // URL theo tên mDNS: "http://panic.local:<port>".
     static void hostUrl(char *out, size_t out_size);
 
     // Thư mục lưu raw panic (tương đối gốc SD) - giữ cho file cũ còn trên thẻ.
