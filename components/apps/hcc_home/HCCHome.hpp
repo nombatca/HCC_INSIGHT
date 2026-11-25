@@ -177,6 +177,7 @@ private:
     static void onRepairVerifyClicked(lv_event_t *event);
     static void onRepairCloseClicked(lv_event_t *event);
     static void onRepairFieldFocused(lv_event_t *event);
+    static void onRepairHideKeyboardClicked(lv_event_t *event);
     void openConfirmRepair();
     bool submitRepairCase(bool verified);
     void showPanic();

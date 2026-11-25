@@ -4927,6 +4927,17 @@ void HCCHome::onRepairFieldFocused(lv_event_t *event)
     lv_obj_clear_flag(app->_repair_kb, LV_OBJ_FLAG_HIDDEN);
 }
 
+void HCCHome::onRepairHideKeyboardClicked(lv_event_t *event)
+{
+    // Ẩn bàn phím để không che các ô nhập liệu. Chạm vào 1 ô sẽ hiện lại.
+    HCCHome *app = static_cast<HCCHome *>(lv_event_get_user_data(event));
+    if (app == nullptr || app->_repair_kb == nullptr) return;
+    lv_obj_add_flag(app->_repair_kb, LV_OBJ_FLAG_HIDDEN);
+    // Bỏ trạng thái focus của ô đang gõ (bàn phím chỉ hiện lại khi chạm vào ô).
+    lv_obj_t *ta = lv_keyboard_get_textarea(app->_repair_kb);
+    if (ta != nullptr) lv_obj_clear_state(ta, LV_STATE_FOCUSED);
+}
+
 void HCCHome::openConfirmRepair()
 {
     // Panic đang chọn (RAM/SD), hoặc chữ AI đã chép từ ảnh panic.
@@ -4973,6 +4984,7 @@ void HCCHome::openConfirmRepair()
         lv_obj_set_style_text_font(l, &lv_font_be_vietnam_16, 0);
     };
     button("XÁC NHẬN SỬA CHỮA", 0, 300, 0x3DD66E, onRepairVerifyClicked, true);
+    button("ẨN BÀN PHÍM", 312, 170, 0x27506B, onRepairHideKeyboardClicked, false);
     button("ĐÓNG", -1, 120, 0x1F3242, onRepairCloseClicked, false);
 
     // Vùng cuộn chứa các trường.
