@@ -192,6 +192,31 @@ lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     // Font lớn -> phím to, dễ bấm.
     lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_22, 0);
+
+    // ===== Giao diện giống bàn phím iPhone/iPad =====
+    // Nền bàn phím: xám xanh nhạt như iOS, có khoảng cách đều giữa các phím.
+    lv_obj_set_style_bg_color(kb, lv_color_hex(0xD1D4DB), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(kb, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(kb, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(kb, 6, LV_PART_MAIN);
+    // Phím: nền trắng bo góc, chữ đen, bóng đổ mềm phía dưới như phím iOS.
+    lv_obj_set_style_bg_color(kb, lv_color_hex(0xFFFFFF), LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, lv_color_hex(0x1C1C1E), LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 8, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_color(kb, lv_color_hex(0x7A7D85), LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(kb, 3, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_ofs_y(kb, 2, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_opa(kb, LV_OPA_40, LV_PART_ITEMS);
+    // Khi nhấn: phím xám đậm hơn (phản hồi giống iOS).
+    lv_obj_set_style_bg_color(kb, lv_color_hex(0xB4B8C0), LV_PART_ITEMS | LV_STATE_PRESSED);
+    // Phím bật to lên khi nhấn, như popover của bàn phím iOS.
+    lv_keyboard_set_popovers(kb, true);
+
     if (textarea) lv_keyboard_set_textarea(kb, textarea);
     enableTelex(kb);
     return kb;
