@@ -279,10 +279,10 @@ void iosKbEventCb(lv_event_t *e)
 lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
 {
     lv_obj_t *kb = lv_keyboard_create(parent);
-    lv_obj_set_size(kb, LV_PCT(100), 320);
+    lv_obj_set_size(kb, LV_PCT(100), 240);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    // Font lớn -> phím to, dễ bấm.
-    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_22, 0);
+    // Font vừa -> phím thấp gọn nhưng vẫn dễ bấm.
+    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_20, 0);
 
     // Bố cục phím giống iPhone/iPad: thay map 3 trang + handler riêng.
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, kMapLower, kCtrlLetters);
@@ -299,9 +299,9 @@ lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
     lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(kb, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(kb, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(kb, 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(kb, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(kb, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(kb, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(kb, 5, LV_PART_MAIN);
     // Phím: nền trắng bo góc, chữ đen, bóng đổ mềm phía dưới như phím iOS.
     lv_obj_set_style_bg_color(kb, lv_color_hex(0xFFFFFF), LV_PART_ITEMS);
     lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
