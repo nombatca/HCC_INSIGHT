@@ -279,10 +279,10 @@ void iosKbEventCb(lv_event_t *e)
 lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
 {
     lv_obj_t *kb = lv_keyboard_create(parent);
-    lv_obj_set_size(kb, LV_PCT(100), 240);
+    lv_obj_set_size(kb, LV_PCT(100), 200);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    // Font vừa -> phím thấp gọn nhưng vẫn dễ bấm.
-    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_20, 0);
+    // Font nhỏ gọn -> bàn phím thấp, chừa nhiều chỗ cho form.
+    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_18, 0);
 
     // Bố cục phím giống iPhone/iPad: thay map 3 trang + handler riêng.
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, kMapLower, kCtrlLetters);
