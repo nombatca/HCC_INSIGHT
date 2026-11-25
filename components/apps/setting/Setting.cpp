@@ -20,6 +20,7 @@
 #include "nvs.h"
 
 #include "ui/ui.h"
+#include "hcc_home/HCCViText.hpp"
 #include "Setting.hpp"
 #include "app_sntp.h"
 
@@ -192,6 +193,13 @@ bool AppSettings::run(void)
                                LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_TextAreaScreenSettingVerificationPassword, &lv_font_be_vietnam_30,
                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    // Dùng chung bàn phím kiểu iPhone/iPad (bố cục QWERTY + handler riêng). Gắn cố định
+    // textarea mật khẩu để ký tự luôn vào đúng ô ngay từ phím đầu; phím "return" phát
+    // LV_EVENT_READY -> handler bên dưới xử lý kết nối WiFi. Ô mật khẩu là ASCII (không
+    // markVietnamese) nên Telex tự tắt.
+    HCCViText::applyIosStyle(ui_KeyboardScreenSettingVerification);
+    lv_keyboard_set_textarea(ui_KeyboardScreenSettingVerification,
+                             ui_TextAreaScreenSettingVerificationPassword);
 
     lv_obj_set_width(ui_SliderPanelScreenSettingLightSwitch1, 500);
     lv_obj_set_height(ui_SliderPanelScreenSettingLightSwitch1, 44);

@@ -204,8 +204,8 @@ static const char *kMapUpper[] = {
 
 static const char *kMapSpecial[] = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
-    "-", "/", ":", ";", "(", ")", "$", "&", "@", "\"", "\n",
-    ".", ",", "?", "!", "'", "+", "=", LV_SYMBOL_BACKSPACE, "\n",
+    "@", "#", "$", "%", "&", "*", "-", "+", "=", "/", "\n",
+    "(", ")", "_", "!", "?", ".", ",", ":", ";", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", " ", "return", ""};
 
 // Cờ phím điều khiển: bấm 1 lần, không lặp.
@@ -221,8 +221,8 @@ static const lv_btnmatrix_ctrl_t kCtrlLetters[] = {
 
 static const lv_btnmatrix_ctrl_t kCtrlSpecial[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1,   // hàng 1: 1..0
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,   // hàng 2: - .. "
-    1, 1, 1, 1, 1, 1, 1, (lv_btnmatrix_ctrl_t)(KB_CTL | 2),  // hàng 3: . , ? ! ' + = ⌫
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,   // hàng 2: @ # $ % & * - + = /
+    1, 1, 1, 1, 1, 1, 1, 1, 1, (lv_btnmatrix_ctrl_t)(KB_CTL | 2),  // hàng 3: ( ) _ ! ? . , : ; ⌫
     (lv_btnmatrix_ctrl_t)(KB_CTL | 3), 6, (lv_btnmatrix_ctrl_t)(KB_CTL | 4)};  // ABC space return
 
 #undef KB_CTL
@@ -276,13 +276,9 @@ void iosKbEventCb(lv_event_t *e)
 
 }  // namespace
 
-lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
+void HCCViText::applyIosStyle(lv_obj_t *kb)
 {
-    lv_obj_t *kb = lv_keyboard_create(parent);
-    lv_obj_set_size(kb, LV_PCT(100), 200);
-    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    // Font nhỏ gọn -> bàn phím thấp, chừa nhiều chỗ cho form.
-    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_18, 0);
+    if (!kb) return;
 
     // Bố cục phím giống iPhone/iPad: thay map 3 trang + handler riêng.
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, kMapLower, kCtrlLetters);
@@ -290,7 +286,10 @@ lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, kMapSpecial, kCtrlSpecial);
     lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
     // Gỡ handler mặc định (chỉ hiểu "abc"/"ABC"/"1#") để dùng nhãn iOS.
+    // Gỡ cả handler của ta (nếu áp lại lần 2 trên cùng bàn phím) để không nhân đôi.
     lv_obj_remove_event_cb(kb, lv_keyboard_def_event_cb);
+    lv_obj_remove_event_cb(kb, iosKbEventCb);
+    lv_obj_remove_event_cb(kb, telexKbCb);
     lv_obj_add_event_cb(kb, iosKbEventCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
     // ===== Giao diện giống bàn phím iPhone/iPad =====
@@ -317,7 +316,20 @@ lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
     // Phím bật to lên khi nhấn, như popover của bàn phím iOS.
     lv_keyboard_set_popovers(kb, true);
 
-    if (textarea) lv_keyboard_set_textarea(kb, textarea);
+    // Telex chỉ tác động lên textarea đã markVietnamese -> vô hại với ô ASCII (WiFi).
     enableTelex(kb);
+}
+
+lv_obj_t *HCCViText::createKeyboard(lv_obj_t *parent, lv_obj_t *textarea)
+{
+    lv_obj_t *kb = lv_keyboard_create(parent);
+    lv_obj_set_size(kb, LV_PCT(100), 200);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Font nhỏ gọn -> bàn phím thấp, chừa nhiều chỗ cho form.
+    lv_obj_set_style_text_font(kb, &lv_font_be_vietnam_18, 0);
+
+    applyIosStyle(kb);
+
+    if (textarea) lv_keyboard_set_textarea(kb, textarea);
     return kb;
 }

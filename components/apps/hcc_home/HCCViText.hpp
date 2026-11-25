@@ -7,8 +7,13 @@
 // và dấu s/f/r/x/j (sắc/huyền/hỏi/ngã/nặng), z để xoá dấu.
 class HCCViText {
 public:
-    // Tạo bàn phím lớn (font 22, cao ~320px) gắn vào textarea + bật gõ tiếng Việt.
+    // Tạo bàn phím lớn gắn vào textarea + áp giao diện/bố cục iOS + bật gõ tiếng Việt.
     static lv_obj_t *createKeyboard(lv_obj_t *parent, lv_obj_t *textarea);
+
+    // Áp bố cục + giao diện iPhone/iPad (map QWERTY, handler riêng, style, popover,
+    // Telex) lên MỘT bàn phím lv_keyboard đã tạo sẵn (vd bàn phím của SquareLine).
+    // Không đổi size/vị trí/font -> người gọi tự đặt trước khi gọi.
+    static void applyIosStyle(lv_obj_t *keyboard);
 
     // Bật gõ tiếng Việt cho một bàn phím đã có (gắn thêm xử lý Telex).
     static void enableTelex(lv_obj_t *keyboard);
