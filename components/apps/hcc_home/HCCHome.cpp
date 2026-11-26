@@ -4888,6 +4888,13 @@ static lv_obj_t *repairField(lv_obj_t *parent, const char *label, const char *pr
     lv_textarea_set_one_line(ta, true);
     if (prefill && prefill[0]) lv_textarea_set_text(ta, prefill);
     lv_obj_set_style_text_font(ta, &lv_font_be_vietnam_16, 0);
+    // Ô nhập nền trắng, chữ đen cho dễ đọc (trước đây chữ vàng trên nền tối khó nhìn).
+    lv_obj_set_style_bg_color(ta, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(ta, lv_color_hex(0x111111), 0);
+    lv_obj_set_style_border_color(ta, lv_color_hex(0x94A3B8), 0);
+    lv_obj_set_style_border_width(ta, 1, 0);
+    lv_obj_set_style_radius(ta, 8, 0);
     lv_obj_add_event_cb(ta, focus_cb, LV_EVENT_FOCUSED, user);
     return ta;
 }
@@ -5032,7 +5039,6 @@ void HCCHome::openConfirmRepair()
     _repair_note = nullptr;
 
     _repair_action = repairField(form, "ĐÃ SỬA / THAY THẾ GÌ", "", onRepairFieldFocused, this);
-    lv_obj_set_style_text_color(_repair_action, lv_color_hex(0xF2C94C), 0);  // chữ màu vàng
     _rp_m_point = repairField(form, "ĐO ĐẠC / KIỂM TRA (điểm đo, giá trị trước/sau)", "",
                               onRepairFieldFocused, this);
 
