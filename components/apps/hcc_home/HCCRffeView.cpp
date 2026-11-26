@@ -12,6 +12,7 @@
 
 #include "HCCRffe.hpp"
 #include "HCCRffeImage.hpp"
+#include "HCCRffeMonitorView.hpp"
 #include "bsp/touch.h"
 
 namespace HCCRffeView {
@@ -86,6 +87,11 @@ struct View {
 };
 
 static View s_v;
+
+// Lưu để chuyển qua/lại màn RFFE MONITOR (dùng chung screen; back về đúng launcher cũ).
+static lv_obj_t *s_screen = nullptr;
+static lv_event_cb_t s_back_cb = nullptr;
+static void *s_back_user = nullptr;
 
 // ==================== Tiện ích dựng widget ====================
 
@@ -1005,6 +1011,21 @@ static void onTimer(lv_timer_t *)
     renderReport();
 }
 
+// Quay lại màn RFFE Scan từ MONITOR (dựng lại với đúng back_cb của launcher).
+static void onMonitorBack(lv_event_t *)
+{
+    lv_obj_clean(s_screen);
+    show(s_screen, s_back_cb, s_back_user);
+}
+
+// Mở màn RFFE MONITOR (thụ động). Giữ nguyên dữ liệu tham chiếu đang nạp để map USID -> IC.
+static void onMonitorClicked(lv_event_t *)
+{
+    std::vector<HCCRffe::RefEntry> ref = s_v.ref;  // copy trước khi lv_obj_clean xoá s_v
+    lv_obj_clean(s_screen);
+    HCCRffeMonitorView::show(s_screen, onMonitorBack, nullptr, ref);
+}
+
 static void onRootDeleted(lv_event_t *)
 {
     viewerClose();  // lớp phủ ảnh nằm trên lv_layer_top, phải xóa riêng
@@ -1021,6 +1042,9 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
     if (s_v.root) {
         lv_obj_del(s_v.root);  // onRootDeleted dọn trạng thái
     }
+    s_screen = screen;
+    s_back_cb = back_cb;
+    s_back_user = back_user_data;
     lv_obj_set_style_bg_color(screen, C_BG, 0);
 
     lv_obj_t *root = lv_obj_create(screen);
@@ -1066,6 +1090,10 @@ void show(lv_obj_t *screen, lv_event_cb_t back_cb, void *back_user_data)
 
     lv_obj_t *refresh = makeButton(root, "LÀM MỚI", C_BORDER, 130, 40, onRefreshClicked, nullptr);
     lv_obj_align(refresh, LV_ALIGN_TOP_LEFT, 668, 92);
+
+    // Nút mở màn RFFE MONITOR (nghe thụ động bus) - tách khỏi SCAN chủ động.
+    lv_obj_t *mon_btn = makeButton(root, "MONITOR", lv_color_hex(0x16A34A), 180, 40, onMonitorClicked, nullptr);
+    lv_obj_align(mon_btn, LV_ALIGN_TOP_RIGHT, -28, 92);
 
     s_v.data_info = makeLabel(root, "", C_MUTED, &lv_font_be_vietnam_14);
     lv_obj_align(s_v.data_info, LV_ALIGN_TOP_LEFT, 28, 138);
