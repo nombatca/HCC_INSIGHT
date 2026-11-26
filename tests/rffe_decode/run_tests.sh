@@ -10,3 +10,8 @@ SRC=../../components/apps/hcc_home
     "$SRC/HCCSpmiDecode.cpp" "$SRC/HCCRffeDecode.cpp" tests/test_decode.cpp \
     -o build/rffe_decode_tests
 ./build/rffe_decode_tests
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror ${HCC_TEST_FLAGS:-} \
+    -I"$SRC" \
+    "$SRC/HCCSpmiDecode.cpp" "$SRC/HCCRffeDecode.cpp" "$SRC/HCCRffeMonitor.cpp" tests/test_monitor.cpp \
+    -o build/rffe_monitor_tests
+./build/rffe_monitor_tests
